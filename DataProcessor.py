@@ -24,19 +24,23 @@ class DataProcessor:
         process_show = []
         if np.abs(min_all) > np.abs(max_all):
             # n-type 信号中心为黑色，最强值为负
-            data_type = 'central black'
+            data_type = 'central negative'
             for every_data in data:
                 normalized_data = (every_data - min_all) / (max_all - min_all)
                 process_show.append(normalized_data)
             max_mean = np.min(vmean_array)
+            phy_max = -min_all
+            phy_min = -max_all
         else:
-            # p-type 信号中心为白色，最强值为负
-            data_type = 'central white'
+            # p-type 信号中心为白色，最强值为正
+            data_type = 'central positive'
             for every_data in data:
                 normalized_data = (max_all - every_data) / (max_all - min_all)
                 process_show.append(normalized_data)
             max_mean = np.max(vmean_array)
-        return process_show, data_type, max_mean
+            phy_max = max_all
+            phy_min = min_all
+        return process_show, data_type, max_mean, phy_max, phy_min
 
     def process_files(self, files, time_start_input, time_unit):
         images_original = []
@@ -52,11 +56,21 @@ class DataProcessor:
         #   以最值为边界
         vmax = np.max(vmax_array)
         vmin = np.min(vmin_array)
-        images_show, data_type, max_mean = self.process_data(images_original, vmax, vmin, vmean_array)
+
+        # 处理坏点的临时方法
+        images_original[12]= (images_original[10] + images_original[11]  + images_original[13]  + images_original[14])/4
+        images_original[25]= (images_original[23] + images_original[24]  + images_original[26]  + images_original[27])/4
+        # z_scores = (vmean_array - np.mean(vmean_array)) / np.std(vmean_array)
+        # bad_frames = np.where(np.abs(z_scores) > 3.0)[0]
+
+        images_show, data_type, max_mean, phy_max, phy_min = self.process_data(images_original, vmax, vmin, vmean_array)
+
         return {
             'data_origin': np.stack(images_original, axis=0),
             'data_type': data_type,
             'images': np.stack(images_show, axis=0),
             'time_points': np.arange(float(time_start_input.value()) + len(images_show)) * time_unit,
-            'data_mean': max_mean
+            'data_mean': max_mean,
+            'boundary': {'max':phy_max,'min':phy_min},
+            # 'bad_frames_auto': bad_frames.tolist()
         }

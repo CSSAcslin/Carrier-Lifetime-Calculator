@@ -1,17 +1,16 @@
 import numpy as np
+from scipy.stats import pearsonr
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget
                              )
-from PyQt5.QtCore import Qt
-import pandas as pd
+from PyQt5.QtCore import Qt, pyqtSignal
 
 from DataProcessor import DataProcessor
 from ImageDisplayWidget import ImageDisplayWidget
 from LifetimeCalculator import LifetimeCalculator
 from ResultDisplayWidget import ResultDisplayWidget
-from RegionAnalyzer import RegionAnalyzer
 
 class MainWindow(QMainWindow):
     """主窗口"""
@@ -23,6 +22,8 @@ class MainWindow(QMainWindow):
         self.time_points = None
         self.time_unit = 1.0
         self.space_unit = 1.0
+        self.image_display.mouse_position_signal.connect(self._handle_hover)
+        self.image_display.mouse_clicked_signal.connect(self._handle_click)
 
 
     def init_ui(self):
@@ -128,8 +129,7 @@ class MainWindow(QMainWindow):
         space_layout.addWidget(QLabel('     (最小分辨率：1 nm)'))
         # 鼠标悬停显示
         self.mouse_pos_label = QLabel("鼠标位置: x= -, y= -, t= -\n值: -")
-        self.update_mouse_position(0, 0, 0, 0)
-        self.mouse_pos_label.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
+        self.mouse_pos_label.setStyleSheet("background-color: #f0f0f0; padding-top: 5px;")
         space_layout.addWidget(self.mouse_pos_label)
         space_set.setLayout(space_layout)
         left_layout.addWidget(space_set)
@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
         self.region_size_input.setMaximum(50)
         self.region_size_input.setValue(5)
         self.analyze_region_btn = QPushButton("分析选定区域")
-        self.analyze_region_btn.clicked.connect(self.analyze_selected_region)
+        self.analyze_region_btn.clicked.connect(self.region_analyze)
         # 区域坐标输入
         self.region_x_input = QSpinBox()
         self.region_y_input = QSpinBox()
@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         heatmap_group = self.QGroupBoxCreator(style = "inner")
         heatmap_layout = QVBoxLayout()
         self.analyze_btn = QPushButton("开始分析")
-        self.analyze_btn.clicked.connect(self.analyze_lifetime)
+        self.analyze_btn.clicked.connect(self.distribution_analyze)
         heatmap_layout.addWidget(self.analyze_btn)
         heatmap_group.setLayout(heatmap_layout)
         self.function_stack.addWidget(heatmap_group)
@@ -194,7 +194,6 @@ class MainWindow(QMainWindow):
         operation_layout.addWidget(self.function_stack)
         self.function_combo.currentIndexChanged.connect(self.function_stack.setCurrentIndex)
 
-        operation_layout.addSpacing(10)
         operation_set.setLayout(operation_layout)
         left_layout.addWidget(operation_set)
         # 添加分析按钮和导出按钮
@@ -208,8 +207,8 @@ class MainWindow(QMainWindow):
         self.parameter_panel.setLayout(left_layout)
 
         # 连接导出按钮
-        self.export_image_btn.clicked.connect(self.export_heatmap_image)
-        self.export_data_btn.clicked.connect(self.export_lifetime_data)
+        self.export_image_btn.clicked.connect(self.export_image)
+        self.export_data_btn.clicked.connect(self.export_data)
 
     def QGroupBoxCreator(self,title="",style="default"):
         # 全局Box样式定义
@@ -244,7 +243,7 @@ class MainWindow(QMainWindow):
         group_box.setStyleSheet(styles.get(style, styles["default"]))
         return group_box
 
-    def update_mouse_position(self, x, y, t, value):
+    def _handle_hover(self, x, y, t, value):
         """更新鼠标位置显示"""
         if hasattr(self, 'time_points') and self.time_points is not None:
             time_val = self.time_points[t]
@@ -252,10 +251,13 @@ class MainWindow(QMainWindow):
             time_val = t
 
         self.mouse_pos_label.setText(
-            f"鼠标位置: x={x}, y={y}, t={time_val:.2f}μs\n值: {value:.2f}")
+            f"鼠标位置: x={x}, y={y}, t={time_val:.2f}\n值: {value:.2f}")
 
-        self.region_x_input.setValue(x)
-        self.region_y_input.setValue(y)
+    def _handle_click(self, x, y):
+        """处理图像点击事件"""
+        if self.function_combo.currentIndex() == 1:  # 区域分析模式
+            self.region_x_input.setValue(x)
+            self.region_y_input.setValue(y)
 
     def load_tiff_folder(self):
         """加载TIFF文件夹"""
@@ -280,7 +282,6 @@ class MainWindow(QMainWindow):
                 self.folder_path_label.setText("无法读取TIFF文件")
                 return
 
-
             # 设置时间滑块
             self.time_slider.setMaximum(len(self.data['images']) - 1)
             self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
@@ -297,51 +298,29 @@ class MainWindow(QMainWindow):
             self.image_display.display_image(self.data['images'][idx])
 
 
-    def analyze_selected_region(self):
+    def region_analyze(self):
         """分析选定区域"""
         if self.data is None or not hasattr(self, 'time_points'):
             return
 
         # 获取参数
+        self.time_unit = float(self.time_step_input.value())
+        self.time_points = self.data['time_points']
         center = (self.region_y_input.value(), self.region_x_input.value())
         shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
 
         # 执行区域分析
-        avg_curve, lifetime, fit_curve, mask = RegionAnalyzer.analyze_region(
+        lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
             self.data, self.time_points, center, shape, size, model_type)
 
         # 显示结果
-        self.show_region_analysis_result(avg_curve, lifetime, fit_curve)
+        self.result_display.display_lifetime_curve(phy_signal, lifetime, r_squared, fit_curve,self.time_points, self.data['boundary'])
 
-    def show_region_analysis_result(self, avg_curve, lifetime, fit_curve):
-        """显示区域分析结果"""
-        # 使用原来的结果显示区域
-        self.result_display.figure.clear()
-        ax = self.result_display.figure.add_subplot(111)
 
-        # 绘制原始曲线
-        time_points = self.time_points - self.time_points[0]  # 从0开始
-        ax.plot(time_points, avg_curve, 'b-', label='原始数据')
 
-        # 绘制拟合曲线
-        max_idx = np.argmax(avg_curve)
-        fit_time = time_points[max_idx:]
-        ax.plot(fit_time, fit_curve, 'r--', label=f'拟合曲线 (τ={lifetime:.2f})')
-
-        # 标记最大值
-        ax.axvline(time_points[max_idx], color='g', linestyle=':', label='峰值位置')
-
-        ax.set_xlabel('时间')
-        ax.set_ylabel('信号强度')
-        ax.set_title('区域平均载流子衰减曲线')
-        ax.legend()
-        ax.grid(True)
-
-        self.result_display.canvas.draw()
-
-    def analyze_lifetime(self):
+    def distribution_analyze(self):
         """分析载流子寿命"""
         if self.data is None:
             return
@@ -349,6 +328,7 @@ class MainWindow(QMainWindow):
         # 获取时间点
         self.time_unit = float(self.time_step_input.value())
         self.time_points = self.data['time_points']
+        self.data_type = self.data['data_type']
         self.value_mean_max = np.abs(self.data['data_mean'])
 
         # 获取模型类型
@@ -361,38 +341,51 @@ class MainWindow(QMainWindow):
         for i in range(height):
             for j in range(width):
                 time_series = self.data['data_origin'][:, i, j]
-                if np.abs(np.max(time_series)) >= self.value_mean_max:
-                    _, lifetime = LifetimeCalculator.calculate_lifetime(time_series, self.time_points, model_type)
-                else:
+                # 用皮尔逊系数判断噪音(滑动窗口法)
+                window_size = min(10, len(self.time_points) // 2)
+                pr = []
+                for k in range(len(time_series) - window_size):
+                    window = time_series[k:k + window_size]
+                    time_window = self.time_points[k:k + window_size]
+                    r, _ = pearsonr(time_window, window)
+                    pr.append(r)
+                    if abs(r) >= 0.8:
+                        _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(self.data_type, time_series, self.time_points, model_type)
+                        continue
+                    else:
+                        pass
+                if np.all(np.abs(pr) < 0.8):
                     lifetime = np.nan
+                else:
+                    pass
                 lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
 
         # 显示结果
-        self.result_display.display_heatmap(lifetime_map)
+        smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
+        self.result_display.display_distribution_map(smoothed_map)
 
-    def export_heatmap_image(self):
+    def export_image(self):
         """导出热图为图片"""
         if hasattr(self.result_display, 'current_data'):
             file_path, _ = QFileDialog.getSaveFileName(
-                self, "保存热图", "", "PNG图像 (*.png);;JPEG图像 (*.jpg *.jpeg);;TIFF图像 (*.tif *.tiff)")
+                self, "保存图像", "", "PNG图像 (*.png);;JPEG图像 (*.jpg *.jpeg);;TIFF图像 (*.tif *.tiff)")
 
             if file_path:
                 # 从matplotlib保存图像
                 self.result_display.figure.savefig(file_path, dpi=300, bbox_inches='tight')
 
-    def export_lifetime_data(self):
+    def export_data(self):
         """导出寿命数据"""
         if hasattr(self.result_display, 'current_data'):
             file_path, _ = QFileDialog.getSaveFileName(
-                self, "保存寿命数据", "", "CSV文件 (*.csv);;文本文件 (*.txt)")
+                self, "保存数据", "", "CSV文件 (*.csv);;文本文件 (*.txt)")
 
             if file_path:
                 # 保存为CSV或TXT
-                df = pd.DataFrame(self.result_display.current_data)
                 if file_path.lower().endswith('.csv'):
-                    df.to_csv(file_path, index=False, header=False)
+                    self.result_display.current_data.to_csv(file_path, index=False, header=False)
                 else:
-                    df.to_csv(file_path, sep='\t', index=False, header=False)
+                    self.result_display.current_data.to_csv(file_path, sep='\t', index=False, header=False)
 
 
 if __name__ == "__main__":

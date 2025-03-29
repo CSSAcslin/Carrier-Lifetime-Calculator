@@ -15,15 +15,17 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
                              )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 import pandas as pd
 
 class ImageDisplayWidget(QWidget):
     """图像显示部件 (使用QPixmap实现)"""
-
+    mouse_position_signal = pyqtSignal(int, int, int, float)
+    mouse_clicked_signal = pyqtSignal(int, int)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mouse_pos = None
+
         self.current_time_idx = 0
         self.init_ui()
 
@@ -58,6 +60,19 @@ class ImageDisplayWidget(QWidget):
         self.graphics_view.setMouseTracking(True)
         self.graphics_view.viewport().setMouseTracking(True)
         self.graphics_view.mouseMoveEvent = self.mouse_move_event
+        self.graphics_view.mousePressEvent = self.mouse_press_event
+
+    def mouse_press_event(self, event):
+        """鼠标点击事件处理"""
+        if event.button() == Qt.LeftButton and hasattr(self, 'current_image'):
+            # 获取点击位置图像坐标（不考虑缩放）
+            pos = self.graphics_view.mapToScene(event.pos())
+            x, y = int(pos.x()), int(pos.y())
+
+            # 检查坐标有效性
+            h, w = self.current_image.shape
+            if 0 <= x < w and 0 <= y < h:
+                self.mouse_clicked_signal.emit(x,y)
 
     def mouse_move_event(self, event):
         """鼠标移动事件处理"""
@@ -77,10 +92,8 @@ class ImageDisplayWidget(QWidget):
         if 0 <= x_img < w and 0 <= y_img < h:
             self.mouse_pos = (x_img, y_img)
             value = self.current_image[y_img, x_img]
-
             # 发射信号(需要主窗口连接此信号)
-            if hasattr(self.parent(), 'update_mouse_position'):
-                self.parent().update_mouse_position(x_img, y_img, self.current_time_idx, value)
+            self.mouse_position_signal.emit(x_img, y_img, self.current_time_idx, value)
 
         super().mouseMoveEvent(event)
 
