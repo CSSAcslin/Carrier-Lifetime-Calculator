@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
         self.folder_path_label = QLabel("未选择文件夹")
         self.folder_path_label.setMaximumWidth(300)
         self.folder_path_label.setWordWrap(True)
+        self.folder_path_label.setStyleSheet("font-size: 10px;") #后续还要改
         self.group_selector = QComboBox()
         self.group_selector.addItems(['n', 'p'])
 
@@ -100,7 +101,7 @@ class MainWindow(QMainWindow):
         self.time_start_input.setMinimum(0)
         self.time_start_input.setValue(0)
         time_start_layout.addWidget(self.time_start_input)
-        time_start_layout.addWidget(QLabel("μs"))
+        time_start_layout.addWidget(QLabel("帧"))
         time_layout.addLayout(time_start_layout)
 
         time_step_layout = QHBoxLayout()
@@ -109,9 +110,9 @@ class MainWindow(QMainWindow):
         self.time_step_input.setMinimum(0.001)
         self.time_step_input.setValue(1.0)
         time_step_layout.addWidget(self.time_step_input)
-        time_step_layout.addWidget(QLabel("μs/帧"))
+        time_step_layout.addWidget(QLabel("ps/帧"))
         time_layout.addLayout(time_step_layout)
-        time_layout.addWidget(QLabel("     (最小分辨率：1 ns)"))
+        time_layout.addWidget(QLabel("     (最小分辨率：1 fs)"))
         time_set.setLayout(time_layout)
         left_layout.addWidget(time_set)
 
@@ -143,7 +144,7 @@ class MainWindow(QMainWindow):
         self.model_combo.addItems(["单指数衰减", "双指数衰减"])
         operation_layout.addWidget(self.model_combo)
         # 区域分析设置
-        operation_layout.addSpacing(10)
+        # operation_layout.addSpacing(10)
         operation_layout.addWidget(QLabel("\n分析模式:"))
         self.function_combo = QComboBox()
         self.function_combo.addItems(["载流子热图分析", "特定区域寿命分析"])
@@ -251,7 +252,7 @@ class MainWindow(QMainWindow):
             time_val = t
 
         self.mouse_pos_label.setText(
-            f"鼠标位置: x={x}, y={y}, t={time_val:.2f}\n值: {value:.2f}")
+            f"鼠标位置: x={x}, y={y}, t={time_val}\n值: {value:.2f}")
 
     def _handle_click(self, x, y):
         """处理图像点击事件"""
@@ -261,7 +262,7 @@ class MainWindow(QMainWindow):
 
     def load_tiff_folder(self):
         """加载TIFF文件夹"""
-
+        self.time_unit = float(self.time_step_input.value())
         folder_path = QFileDialog.getExistingDirectory(self, "选择TIFF图像文件夹")
         loader = DataProcessor(folder_path)
         if folder_path:
@@ -327,7 +328,7 @@ class MainWindow(QMainWindow):
 
         # 获取时间点
         self.time_unit = float(self.time_step_input.value())
-        self.time_points = self.data['time_points']
+        self.time_points = self.data['time_points'] * self.time_unit
         self.data_type = self.data['data_type']
         self.value_mean_max = np.abs(self.data['data_mean'])
 

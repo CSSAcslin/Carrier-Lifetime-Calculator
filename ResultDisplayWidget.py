@@ -91,7 +91,7 @@ class ResultDisplayWidget(QWidget):
                  ha='left', va='top',
                  bbox=dict(facecolor='white', alpha=0.8))
 
-        ax.set_xlabel('时间')
+        ax.set_xlabel('时间/ps')
         ax.set_ylabel('信号强度')
         ax.set_title('载流子寿命曲线')
         ax.legend()
