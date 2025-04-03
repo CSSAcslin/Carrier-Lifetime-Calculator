@@ -5,7 +5,7 @@ import tifffile as tiff
 
 
 class DataProcessor:
-    """数据处理"""
+    """本类仅包含导入数据时的数据处理"""
     def __init__(self,path):
         self.path = path
 

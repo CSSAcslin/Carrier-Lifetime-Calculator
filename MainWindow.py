@@ -3,7 +3,7 @@ from scipy.stats import pearsonr
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
-                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget
+                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget
                              )
 from PyQt5.QtCore import Qt, pyqtSignal
 
@@ -11,6 +11,7 @@ from DataProcessor import DataProcessor
 from ImageDisplayWidget import ImageDisplayWidget
 from LifetimeCalculator import LifetimeCalculator
 from ResultDisplayWidget import ResultDisplayWidget
+from ConsoleUtils import *
 
 class MainWindow(QMainWindow):
     """主窗口"""
@@ -18,10 +19,15 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.init_ui()
+        self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carrier_lifetime.log")
+        self.setup_logging()
+        self.log_startup_message()
+        # 参数初始化
         self.data = None
         self.time_points = None
         self.time_unit = 1.0
         self.space_unit = 1.0
+        # 信号连接
         self.image_display.mouse_position_signal.connect(self._handle_hover)
         self.image_display.mouse_clicked_signal.connect(self._handle_click)
 
@@ -65,6 +71,9 @@ class MainWindow(QMainWindow):
         self.result_display = ResultDisplayWidget()
         right_layout.addWidget(self.result_display, stretch=2)
         main_layout.addWidget(right_panel, stretch=3)
+
+        # 设置控制台
+        self.setup_console()
 
     def setup_parameter_panel(self):
         """设置参数面板"""
@@ -244,6 +253,79 @@ class MainWindow(QMainWindow):
         group_box.setStyleSheet(styles.get(style, styles["default"]))
         return group_box
 
+    def setup_console(self):
+        """设置控制台停靠窗口"""
+        self.console_dock = QDockWidget("控制台", self)
+        self.console_dock.setObjectName("ConsoleDock")
+
+        # 创建控制台部件
+        self.console_widget = ConsoleWidget(self)
+        self.command_processor = CommandProcessor(self)
+
+        # 连接信号
+        self.command_processor.terminate_requested.connect(self.stop_calculation)
+        self.command_processor.save_config_requested.connect(self.save_config)
+        self.command_processor.load_config_requested.connect(self.load_config)
+
+        self.console_dock.setWidget(self.console_widget)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
+
+        # 设置控制台特性
+        self.console_dock.setMinimumHeight(200)
+        self.console_dock.setFeatures(QDockWidget.DockWidgetMovable |
+                                      QDockWidget.DockWidgetFloatable |
+                                      QDockWidget.DockWidgetClosable)
+
+        # 添加菜单项
+        view_menu = self.menuBar().addMenu("视图")
+        toggle_console = view_menu.addAction("显示/隐藏控制台")
+        toggle_console.triggered.connect(lambda: self.console_dock.setVisible(not self.console_dock.isVisible()))
+
+    def setup_logging(self):
+        """配置日志系统"""
+        # 确保日志目录存在
+        log_dir = os.path.dirname(self.log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+
+        # 设置轮转文件处理器 (每个文件最大5MB，保留3个备份)
+        file_handler = RotatingFileHandler(
+            self.log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8'
+        )
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        ))
+
+        # 设置控制台处理器
+        console_handler = ConsoleHandler(self)
+
+        # 配置根日志记录器
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        logger.handlers.clear()  # 清除现有处理器
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+
+    def log_to_console(self, message):
+        """将消息输出到控制台"""
+        self.console_widget.console_output.append(message)
+        self.console_widget.console_output.verticalScrollBar().setValue(
+            self.console_widget.console_output.verticalScrollBar().maximum()
+        )
+
+    def log_startup_message(self):
+        """记录程序启动消息"""
+        startup_msg = f"""
+        ============================================
+        载流子寿命分析工具启动
+        启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        日志文件: {self.log_file}
+        程序版本: 1.0.0
+        ============================================
+        """
+        logging.info(startup_msg.strip())
+        logging.info("程序已进入准备状态，等待用户操作...")
+
     def _handle_hover(self, x, y, t, value):
         """更新鼠标位置显示"""
         if hasattr(self, 'time_points') and self.time_points is not None:
@@ -331,6 +413,8 @@ class MainWindow(QMainWindow):
         self.time_points = self.data['time_points'] * self.time_unit
         self.data_type = self.data['data_type']
         self.value_mean_max = np.abs(self.data['data_mean'])
+        self.loading_bar = pyqtSignal(int, int)
+        self.loading_bar.connect(ConsoleWidget.update_progress)
 
         # 获取模型类型
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
@@ -338,7 +422,9 @@ class MainWindow(QMainWindow):
         # 计算每个像素的寿命
         height, width = self.data['data_origin'].shape[1], self.data['data_origin'].shape[2]
         lifetime_map = np.zeros((height, width))
-
+        logging.info("开始计算载流子寿命...")
+        l=0 #进度条
+        total_l = height * width
         for i in range(height):
             for j in range(width):
                 time_series = self.data['data_origin'][:, i, j]
@@ -360,7 +446,8 @@ class MainWindow(QMainWindow):
                 else:
                     pass
                 lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
-
+                self.loading_bar.emit(l+1, total_l)
+        logging.info("计算完成!")
         # 显示结果
         smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
         self.result_display.display_distribution_map(smoothed_map)
