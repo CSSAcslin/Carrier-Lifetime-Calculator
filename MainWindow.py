@@ -1,15 +1,16 @@
 import numpy as np
+from PyQt5.QtGui import QPixmap
 from scipy.stats import pearsonr
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
-                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget
+                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget, QStatusBar
                              )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QThread
 
 from DataProcessor import DataProcessor
 from ImageDisplayWidget import ImageDisplayWidget
-from LifetimeCalculator import LifetimeCalculator
+from LifetimeCalculator import LifetimeCalculator, CalculationThread
 from ResultDisplayWidget import ResultDisplayWidget
 from ConsoleUtils import *
 
@@ -22,6 +23,7 @@ class MainWindow(QMainWindow):
         self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carrier_lifetime.log")
         self.setup_logging()
         self.log_startup_message()
+
         # 参数初始化
         self.data = None
         self.time_points = None
@@ -31,12 +33,19 @@ class MainWindow(QMainWindow):
         self._is_calculating = False
         # 信号连接
         self.signal_connect()
+        # # 线程管理
+        self.thread = QThread()
+        self.cal_thread = CalculationThread()
+        self.cal_thread.moveToThread(self.thread)
 
 
 
     def init_ui(self):
         self.setWindowTitle("载流子寿命分析工具")
         self.setGeometry(100, 100, 1100, 900)
+        #   加入菜单栏
+        self.view_menu = self.menuBar()
+        self.view_menu.addMenu('主窗口')
         # 主部件和布局
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -72,6 +81,8 @@ class MainWindow(QMainWindow):
         self.result_display = ResultDisplayWidget()
         right_layout.addWidget(self.result_display, stretch=2)
         main_layout.addWidget(right_panel, stretch=3)
+
+        self.setup_status_bar()
 
         # 设置控制台
         self.setup_console()
@@ -250,6 +261,44 @@ class MainWindow(QMainWindow):
         group_box.setStyleSheet(styles.get(style, styles["default"]))
         return group_box
 
+    def setup_status_bar(self):
+        """设置状态栏"""
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+
+        # 状态指示灯 (红绿灯)
+        self.status_light = QLabel()
+        self.status_light.setPixmap(QPixmap(":/icons/red_light.png").scaled(16, 16))
+        self.status_bar.addPermanentWidget(self.status_light)
+
+        # 状态文本
+        self.status_label = QLabel("准备就绪")
+        self.status_bar.addWidget(self.status_label, 1)
+
+        # 进度条
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedWidth(200)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                background: white;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+                width: 10px;
+            }
+        """)
+        self.status_bar.addPermanentWidget(self.progress_bar)
+
+        def update_status(self, status, is_working=False):
+            """更新状态显示"""
+            self.status_label.setText(status)
+            light = "green_light.png" if not is_working else "yellow_light.png"
+            self.status_light.setPixmap(QPixmap(f":/icons/{light}").scaled(16, 16))
+
     def setup_console(self):
         """设置控制台停靠窗口"""
         self.console_dock = QDockWidget("控制台", self)
@@ -271,8 +320,8 @@ class MainWindow(QMainWindow):
                                       QDockWidget.DockWidgetClosable)
 
         # 添加菜单项
-        view_menu = self.menuBar().addMenu("视图")
-        toggle_console = view_menu.addAction("显示/隐藏控制台")
+        self.view_menu.addMenu("视图")
+        toggle_console = self.view_menu.addAction("显示/隐藏控制台")
         toggle_console.triggered.connect(lambda: self.console_dock.setVisible(not self.console_dock.isVisible()))
 
     def setup_logging(self):
@@ -395,6 +444,19 @@ class MainWindow(QMainWindow):
             self.image_display.current_image = self.data['images'][idx]
             self.image_display.display_image(self.data['images'][idx])
 
+    def update_progress(self, current, total=None):
+        """更新进度条"""
+        if total is not None:
+            self.progress_bar.setMaximum(total)
+
+        self.progress_bar.setValue(current)
+
+        if current == 0:
+            self.progress_bar.show()
+            self.update_status("计算中...", True)
+        elif current >= self.progress_bar.maximum():
+            self.progress_bar.hide()
+            self.update_status("计算完成")
 
     def region_analyze(self):
         """分析选定区域"""
@@ -460,6 +522,7 @@ class MainWindow(QMainWindow):
                     else:
                         pass
                     lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
+                    self.update_progress(loading_bar+1, total_l)
                     self.console_widget.update_progress(loading_bar+1, total_l)
             else:
                 logging.info("计算终止")

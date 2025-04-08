@@ -1,4 +1,5 @@
 import glob
+import logging
 import os
 import re
 
@@ -17,13 +18,14 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
                              )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QObject
 import pandas as pd
+from scipy.stats import pearsonr
 
 
 class LifetimeCalculator:
     """
-    载流子寿命计算类
+    载流子寿命计算类（此类为静态方法类，不要放别的进来）
     """
     @staticmethod
     def single_exponential(t, A, tau, C):
@@ -197,3 +199,81 @@ class LifetimeCalculator:
 
         # 边界处理采用镜像模式
         return convolve(data, kernel, mode='mirror')
+
+class CalculationThread(QObject):
+    def __init__(self):
+        super(CalculationThread,self).__init__()
+
+    def region_analyze(self):
+        """分析选定区域"""
+        if self.data is None or not hasattr(self, 'time_points'):
+            return
+
+        # 获取参数
+        self.time_unit = float(self.time_step_input.value())
+        self.time_points = self.data['time_points']
+        center = (self.region_y_input.value(), self.region_x_input.value())
+        shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
+        size = self.region_size_input.value()
+        model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
+
+        # 执行区域分析
+        lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
+            self.data, self.time_points, center, shape, size, model_type)
+
+        # 显示结果
+        self.result_display.display_lifetime_curve(phy_signal, lifetime, r_squared, fit_curve,self.time_points, self.data['boundary'])
+
+
+    def distribution_analyze(self):
+        """分析载流子寿命"""
+        if self.data is None:
+            return
+
+        # 获取时间点
+        self._is_calculating = True
+        self.time_unit = float(self.time_step_input.value())
+        self.time_points = self.data['time_points'] * self.time_unit
+        self.data_type = self.data['data_type']
+        self.value_mean_max = np.abs(self.data['data_mean'])
+
+        # 获取模型类型
+        model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
+
+        # 计算每个像素的寿命
+        height, width = self.data['data_origin'].shape[1], self.data['data_origin'].shape[2]
+        lifetime_map = np.zeros((height, width))
+        logging.info("开始计算载流子寿命...")
+        loading_bar =0 #进度条
+        total_l = height * width
+        for i in range(height):
+            if self._is_calculating :
+                for j in range(width):
+                    time_series = self.data['data_origin'][:, i, j]
+                    # 用皮尔逊系数判断噪音(滑动窗口法)
+                    window_size = min(10, len(self.time_points) // 2)
+                    pr = []
+                    for k in range(len(time_series) - window_size):
+                        window = time_series[k:k + window_size]
+                        time_window = self.time_points[k:k + window_size]
+                        r, _ = pearsonr(time_window, window)
+                        pr.append(r)
+                        if abs(r) >= 0.8:
+                            _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(self.data_type, time_series, self.time_points, model_type)
+                            continue
+                        else:
+                            pass
+                    if np.all(np.abs(pr) < 0.8):
+                        lifetime = np.nan
+                    else:
+                        pass
+                    lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
+                    self.update_progress(loading_bar+1, total_l)
+                    self.console_widget.update_progress(loading_bar+1, total_l)
+            else:
+                logging.info("计算终止")
+                return
+        logging.info("计算完成!")
+        # 显示结果
+        smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
+        self.result_display.display_distribution_map(smoothed_map)
