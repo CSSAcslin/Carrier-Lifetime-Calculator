@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 from PyQt5.QtGui import QPixmap
 from scipy.stats import pearsonr
@@ -6,7 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget, QStatusBar
                              )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject
 
 from DataProcessor import DataProcessor
 from ImageDisplayWidget import ImageDisplayWidget
@@ -31,21 +33,23 @@ class MainWindow(QMainWindow):
         self.space_unit = 1.0
         # 状态控制
         self._is_calculating = False
-        # 信号连接
-        self.signal_connect()
-        # # 线程管理
+        # 线程管理
         self.thread = QThread()
         self.cal_thread = CalculationThread()
         self.cal_thread.moveToThread(self.thread)
+        # 信号连接
+        self.signal_connect()
+
+
 
 
 
     def init_ui(self):
         self.setWindowTitle("载流子寿命分析工具")
-        self.setGeometry(100, 100, 1100, 900)
+        self.setGeometry(100, 20, 1300, 850)
         #   加入菜单栏
-        self.view_menu = self.menuBar()
-        self.view_menu.addMenu('主窗口')
+        self.menu = self.menuBar()
+        self.menu.addMenu('主窗口')
         # 主部件和布局
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -311,7 +315,7 @@ class MainWindow(QMainWindow):
 
 
         self.console_dock.setWidget(self.console_widget)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.console_dock)
 
         # 设置控制台特性
         self.console_dock.setMinimumHeight(200)
@@ -320,8 +324,8 @@ class MainWindow(QMainWindow):
                                       QDockWidget.DockWidgetClosable)
 
         # 添加菜单项
-        self.view_menu.addMenu("视图")
-        toggle_console = self.view_menu.addAction("显示/隐藏控制台")
+        view_menu = self.menu.addMenu("控制台")
+        toggle_console = view_menu.addAction("显示/隐藏控制台")
         toggle_console.triggered.connect(lambda: self.console_dock.setVisible(not self.console_dock.isVisible()))
 
     def setup_logging(self):
@@ -363,7 +367,7 @@ class MainWindow(QMainWindow):
         载流子寿命分析工具启动
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         日志文件: {self.log_file}
-        程序版本: 1.0.0
+        程序版本: 1.2.2
         ============================================
         """
         logging.info(startup_msg.strip())
@@ -372,8 +376,8 @@ class MainWindow(QMainWindow):
     def signal_connect(self):
         # 连接参数区域按钮
         self.folder_btn.clicked.connect(self.load_tiff_folder)
-        self.analyze_region_btn.clicked.connect(self.region_analyze)
-        self.analyze_btn.clicked.connect(self.distribution_analyze)
+        self.analyze_region_btn.clicked.connect(self.region_analyze_start)
+        self.analyze_btn.clicked.connect(self.distribution_analyze_start)
         self.function_combo.currentIndexChanged.connect(self.function_stack.setCurrentIndex)
         self.export_image_btn.clicked.connect(self.export_image)
         self.export_data_btn.clicked.connect(self.export_data)
@@ -386,7 +390,10 @@ class MainWindow(QMainWindow):
         self.command_processor.terminate_requested.connect(self.stop_calculation)
         self.command_processor.save_config_requested.connect(self.save_config)
         self.command_processor.load_config_requested.connect(self.load_config)
-
+        # 计算状态更新
+        self.cal_thread.calculating_progress_signal.connect(self.update_progress)
+        self.cal_thread.result_data_signal.connect(self.result_display.display_lifetime_curve)
+        self.cal_thread.result_map_signal.connect(self.result_display.display_distribution_map)
 
     '''上面是初始化预设，下面是功能响应'''
     def _handle_hover(self, x, y, t, value):
@@ -450,6 +457,7 @@ class MainWindow(QMainWindow):
             self.progress_bar.setMaximum(total)
 
         self.progress_bar.setValue(current)
+        self.console_widget.update_progress(current, total)
 
         if current == 0:
             self.progress_bar.show()
@@ -458,79 +466,84 @@ class MainWindow(QMainWindow):
             self.progress_bar.hide()
             self.update_status("计算完成")
 
-    def region_analyze(self):
+    def region_analyze_start(self):
         """分析选定区域"""
         if self.data is None or not hasattr(self, 'time_points'):
-            return
+            return logging.info('无数据载入')
 
-        # 获取参数
+        self.thread.start()
+        self.status_label.setText('计算进行中...')
         self.time_unit = float(self.time_step_input.value())
-        self.time_points = self.data['time_points']
         center = (self.region_y_input.value(), self.region_x_input.value())
         shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
+        self.cal_thread.region_analyze(self.data,self.time_unit,center,shape,size,model_type)
 
-        # 执行区域分析
-        lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
-            self.data, self.time_points, center, shape, size, model_type)
+
+        # # 获取参数
+        # self.time_unit = float(self.time_step_input.value())
+        # self.time_points = self.data['time_points']
+
+        #
+        # # 执行区域分析
+        # lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
+        #     self.data, self.time_points, center, shape, size, model_type)
 
         # 显示结果
-        self.result_display.display_lifetime_curve(phy_signal, lifetime, r_squared, fit_curve,self.time_points, self.data['boundary'])
+        # self.result_display.display_lifetime_curve(phy_signal, lifetime, r_squared, fit_curve,self.time_points, self.data['boundary'])
 
+        self.thread.quit()
 
-    def distribution_analyze(self):
+    def distribution_analyze_start(self):
         """分析载流子寿命"""
         if self.data is None:
-            return
-
-        # 获取时间点
-        self._is_calculating = True
+            return logging.info('无数据载入')
+        self.thread.start()
         self.time_unit = float(self.time_step_input.value())
-        self.time_points = self.data['time_points'] * self.time_unit
-        self.data_type = self.data['data_type']
-        self.value_mean_max = np.abs(self.data['data_mean'])
-
-        # 获取模型类型
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
+        self.status_label.setText('长时计算进行中...')
+        self.cal_thread.distribution_analyze(self.data,self.time_unit,model_type)
 
-        # 计算每个像素的寿命
-        height, width = self.data['data_origin'].shape[1], self.data['data_origin'].shape[2]
-        lifetime_map = np.zeros((height, width))
-        logging.info("开始计算载流子寿命...")
-        loading_bar =0 #进度条
-        total_l = height * width
-        for i in range(height):
-            if self._is_calculating :
-                for j in range(width):
-                    time_series = self.data['data_origin'][:, i, j]
-                    # 用皮尔逊系数判断噪音(滑动窗口法)
-                    window_size = min(10, len(self.time_points) // 2)
-                    pr = []
-                    for k in range(len(time_series) - window_size):
-                        window = time_series[k:k + window_size]
-                        time_window = self.time_points[k:k + window_size]
-                        r, _ = pearsonr(time_window, window)
-                        pr.append(r)
-                        if abs(r) >= 0.8:
-                            _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(self.data_type, time_series, self.time_points, model_type)
-                            continue
-                        else:
-                            pass
-                    if np.all(np.abs(pr) < 0.8):
-                        lifetime = np.nan
-                    else:
-                        pass
-                    lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
-                    self.update_progress(loading_bar+1, total_l)
-                    self.console_widget.update_progress(loading_bar+1, total_l)
-            else:
-                logging.info("计算终止")
-                return
-        logging.info("计算完成!")
-        # 显示结果
-        smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
-        self.result_display.display_distribution_map(smoothed_map)
+        # # 计算每个像素的寿命
+        # height, width = self.data['data_origin'].shape[1], self.data['data_origin'].shape[2]
+        # lifetime_map = np.zeros((height, width))
+        # logging.info("开始计算载流子寿命...")
+        # loading_bar =0 #进度条
+        # total_l = height * width
+        # for i in range(height):
+        #     if self._is_calculating :
+        #         for j in range(width):
+        #             time_series = self.data['data_origin'][:, i, j]
+        #             # 用皮尔逊系数判断噪音(滑动窗口法)
+        #             window_size = min(10, len(self.time_points) // 2)
+        #             pr = []
+        #             for k in range(len(time_series) - window_size):
+        #                 window = time_series[k:k + window_size]
+        #                 time_window = self.time_points[k:k + window_size]
+        #                 r, _ = pearsonr(time_window, window)
+        #                 pr.append(r)
+        #                 if abs(r) >= 0.8:
+        #                     _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(self.data_type, time_series, self.time_points, model_type)
+        #                     continue
+        #                 else:
+        #                     pass
+        #             if np.all(np.abs(pr) < 0.8):
+        #                 lifetime = np.nan
+        #             else:
+        #                 pass
+        #             lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
+        #             self.update_progress(loading_bar+1, total_l)
+        #             self.console_widget.update_progress(loading_bar+1, total_l)
+        #     else:
+        #         logging.info("计算终止")
+        #         return
+        # logging.info("计算完成!")
+        # # 显示结果
+        # smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
+        # self.result_display.display_distribution_map(smoothed_map)
+
+        self.thread.quit()
 
     def export_image(self):
         """导出热图为图片"""
@@ -556,17 +569,13 @@ class MainWindow(QMainWindow):
                     self.result_display.current_data.to_csv(file_path, sep='\t', index=False, header=False)
 
     '''以下控制台命令更新'''
-    def update_progress(self, current, total):
-        """更新计算进度"""
-        self.console_widget.update_progress(current, total)
-
 
     def stop_calculation(self):
         """终止当前计算"""
         # 这里需要实现终止计算的逻辑
         # 可以通过设置标志位或直接终止计算线程
         logging.warning("计算终止请求已接收，正在停止...")
-        self._is_calculating = False
+        self.cal_thread.stop()
         # 实际终止逻辑需要根据你的计算实现来添加
 
 

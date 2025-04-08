@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
                              )
-from PyQt5.QtCore import Qt, QObject
+from PyQt5.QtCore import Qt, QObject, pyqtSignal
 import pandas as pd
 from scipy.stats import pearsonr
 
@@ -201,65 +201,63 @@ class LifetimeCalculator:
         return convolve(data, kernel, mode='mirror')
 
 class CalculationThread(QObject):
+
+    result_data_signal = pyqtSignal(np.ndarray, float, float, np.ndarray, np.ndarray, dict)
+    result_map_signal = pyqtSignal(object)
+    calculating_progress_signal = pyqtSignal(int, int)
+
+
     def __init__(self):
         super(CalculationThread,self).__init__()
+        logging.info('计算线程已载入')
+        self._is_calculating = False
 
-    def region_analyze(self):
+    def region_analyze(self,data,time_unit,center,shape,size,model_type):
         """分析选定区域"""
-        if self.data is None or not hasattr(self, 'time_points'):
-            return
-
+        logging.info("开始计算选区载流子寿命...")
         # 获取参数
-        self.time_unit = float(self.time_step_input.value())
-        self.time_points = self.data['time_points']
-        center = (self.region_y_input.value(), self.region_x_input.value())
-        shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
-        size = self.region_size_input.value()
-        model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
+
+        time_points = data['time_points'] * time_unit
+
 
         # 执行区域分析
         lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
-            self.data, self.time_points, center, shape, size, model_type)
+            data, time_points, center, shape, size, model_type)
 
         # 显示结果
-        self.result_display.display_lifetime_curve(phy_signal, lifetime, r_squared, fit_curve,self.time_points, self.data['boundary'])
+        # self.result_display.display_lifetime_curve(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'])
+        self.result_data_signal.emit(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'])
+        logging.info("计算完成!")
 
-
-    def distribution_analyze(self):
+    def distribution_analyze(self,data,time_unit,model_type):
         """分析载流子寿命"""
-        if self.data is None:
-            return
 
-        # 获取时间点
         self._is_calculating = True
-        self.time_unit = float(self.time_step_input.value())
-        self.time_points = self.data['time_points'] * self.time_unit
-        self.data_type = self.data['data_type']
-        self.value_mean_max = np.abs(self.data['data_mean'])
 
-        # 获取模型类型
-        model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
+        time_points = data['time_points'] * time_unit
+        data_type = data['data_type']
+
 
         # 计算每个像素的寿命
-        height, width = self.data['data_origin'].shape[1], self.data['data_origin'].shape[2]
+        height, width = data['data_origin'].shape[1], data['data_origin'].shape[2]
         lifetime_map = np.zeros((height, width))
         logging.info("开始计算载流子寿命...")
         loading_bar =0 #进度条
         total_l = height * width
         for i in range(height):
-            if self._is_calculating :
+            if self._is_calculating :# 线程关闭
                 for j in range(width):
-                    time_series = self.data['data_origin'][:, i, j]
+                    time_series = data['data_origin'][:, i, j]
                     # 用皮尔逊系数判断噪音(滑动窗口法)
-                    window_size = min(10, len(self.time_points) // 2)
+                    window_size = min(10, len(time_points) // 2)
                     pr = []
                     for k in range(len(time_series) - window_size):
                         window = time_series[k:k + window_size]
-                        time_window = self.time_points[k:k + window_size]
+                        time_window = time_points[k:k + window_size]
                         r, _ = pearsonr(time_window, window)
                         pr.append(r)
                         if abs(r) >= 0.8:
-                            _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(self.data_type, time_series, self.time_points, model_type)
+                            _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(data_type, time_series, time_points, model_type)
                             continue
                         else:
                             pass
@@ -268,12 +266,15 @@ class CalculationThread(QObject):
                     else:
                         pass
                     lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
-                    self.update_progress(loading_bar+1, total_l)
-                    self.console_widget.update_progress(loading_bar+1, total_l)
+                    self.calculating_progress_signal.emit(loading_bar+1, total_l)
             else:
                 logging.info("计算终止")
                 return
         logging.info("计算完成!")
         # 显示结果
         smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
-        self.result_display.display_distribution_map(smoothed_map)
+        self.result_map_signal.emit(smoothed_map)
+
+        self._is_calculating = False
+    def stop(self):
+        self._is_calculating = False
