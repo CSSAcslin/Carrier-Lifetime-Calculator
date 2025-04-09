@@ -18,6 +18,9 @@ from ConsoleUtils import *
 
 class MainWindow(QMainWindow):
     """主窗口"""
+    # 线程激活信号
+    start_reg_cal_signal = pyqtSignal(dict, float, tuple, str, int, str)
+    start_dis_cal_signal = pyqtSignal(dict, float, str)
 
     def __init__(self):
         super().__init__()
@@ -34,9 +37,7 @@ class MainWindow(QMainWindow):
         # 状态控制
         self._is_calculating = False
         # 线程管理
-        self.thread = QThread()
-        self.cal_thread = CalculationThread()
-        self.cal_thread.moveToThread(self.thread)
+        self.thread_open()
         # 信号连接
         self.signal_connect()
 
@@ -266,7 +267,7 @@ class MainWindow(QMainWindow):
         return group_box
 
     def setup_status_bar(self):
-        """设置状态栏"""
+        """设置状态条"""
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
 
@@ -297,11 +298,11 @@ class MainWindow(QMainWindow):
         """)
         self.status_bar.addPermanentWidget(self.progress_bar)
 
-        def update_status(self, status, is_working=False):
-            """更新状态显示"""
-            self.status_label.setText(status)
-            light = "green_light.png" if not is_working else "yellow_light.png"
-            self.status_light.setPixmap(QPixmap(f":/icons/{light}").scaled(16, 16))
+    def update_status(self, status, is_working=False):
+        """更新状态条的显示"""
+        self.status_label.setText(status)
+        light = "green_light.png" if not is_working else "yellow_light.png"
+        self.status_light.setPixmap(QPixmap(f":/icons/{light}").scaled(16, 16))
 
     def setup_console(self):
         """设置控制台停靠窗口"""
@@ -373,6 +374,21 @@ class MainWindow(QMainWindow):
         logging.info(startup_msg.strip())
         logging.info("程序已进入准备状态，等待用户操作...")
 
+    def thread_open(self):
+        """计算线程相关 以及信号槽连接都放在这里了"""
+        self.thread = QThread()
+        self.cal_thread = CalculationThread()
+        self.cal_thread.moveToThread(self.thread)
+        # 计算状态更新
+        self.start_reg_cal_signal.connect(self.cal_thread.region_analyze)
+        self.start_dis_cal_signal.connect(self.cal_thread.distribution_analyze)
+        self.cal_thread.calculating_progress_signal.connect(self.update_progress)
+        self.cal_thread.result_data_signal.connect(self.result_display.display_lifetime_curve)
+        self.cal_thread.result_map_signal.connect(self.result_display.display_distribution_map)
+        self.cal_thread.stop_thread_signal.connect(self.stop_thread)
+        self.cal_thread.cal_time.connect(lambda ms: logging.info(f"耗时: {ms}毫秒"))
+        self.cal_thread.cal_running_status.connect(self.btn_safety)
+
     def signal_connect(self):
         # 连接参数区域按钮
         self.folder_btn.clicked.connect(self.load_tiff_folder)
@@ -390,10 +406,7 @@ class MainWindow(QMainWindow):
         self.command_processor.terminate_requested.connect(self.stop_calculation)
         self.command_processor.save_config_requested.connect(self.save_config)
         self.command_processor.load_config_requested.connect(self.load_config)
-        # 计算状态更新
-        self.cal_thread.calculating_progress_signal.connect(self.update_progress)
-        self.cal_thread.result_data_signal.connect(self.result_display.display_lifetime_curve)
-        self.cal_thread.result_map_signal.connect(self.result_display.display_distribution_map)
+
 
     '''上面是初始化预设，下面是功能响应'''
     def _handle_hover(self, x, y, t, value):
@@ -459,7 +472,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(current)
         self.console_widget.update_progress(current, total)
 
-        if current == 0:
+        if current == 1:
             self.progress_bar.show()
             self.update_status("计算中...", True)
         elif current >= self.progress_bar.maximum():
@@ -467,10 +480,12 @@ class MainWindow(QMainWindow):
             self.update_status("计算完成")
 
     def region_analyze_start(self):
-        """分析选定区域"""
+        """分析选定区域载流子寿命"""
         if self.data is None or not hasattr(self, 'time_points'):
-            return logging.info('无数据载入')
-
+            return logging.warning('无数据载入')
+        # 如果线程没了，要开启
+        if not self.is_thread_active("thread"):
+            self.thread_open()
         self.thread.start()
         self.status_label.setText('计算进行中...')
         self.time_unit = float(self.time_step_input.value())
@@ -478,72 +493,43 @@ class MainWindow(QMainWindow):
         shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
-        self.cal_thread.region_analyze(self.data,self.time_unit,center,shape,size,model_type)
-
-
-        # # 获取参数
-        # self.time_unit = float(self.time_step_input.value())
-        # self.time_points = self.data['time_points']
-
-        #
-        # # 执行区域分析
-        # lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
-        #     self.data, self.time_points, center, shape, size, model_type)
-
-        # 显示结果
-        # self.result_display.display_lifetime_curve(phy_signal, lifetime, r_squared, fit_curve,self.time_points, self.data['boundary'])
-
-        self.thread.quit()
+        self.start_reg_cal_signal.emit(self.data,self.time_unit,center,shape,size,model_type)
 
     def distribution_analyze_start(self):
         """分析载流子寿命"""
         if self.data is None:
-            return logging.info('无数据载入')
+            return logging.warning('无数据载入')
+        # 如果线程没了，要创建
+        if not self.is_thread_active("thread"):
+            self.thread_open()
         self.thread.start()
+        self.status_label.setText('长时计算进行中...')
         self.time_unit = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
-        self.status_label.setText('长时计算进行中...')
-        self.cal_thread.distribution_analyze(self.data,self.time_unit,model_type)
+        self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type)
 
-        # # 计算每个像素的寿命
-        # height, width = self.data['data_origin'].shape[1], self.data['data_origin'].shape[2]
-        # lifetime_map = np.zeros((height, width))
-        # logging.info("开始计算载流子寿命...")
-        # loading_bar =0 #进度条
-        # total_l = height * width
-        # for i in range(height):
-        #     if self._is_calculating :
-        #         for j in range(width):
-        #             time_series = self.data['data_origin'][:, i, j]
-        #             # 用皮尔逊系数判断噪音(滑动窗口法)
-        #             window_size = min(10, len(self.time_points) // 2)
-        #             pr = []
-        #             for k in range(len(time_series) - window_size):
-        #                 window = time_series[k:k + window_size]
-        #                 time_window = self.time_points[k:k + window_size]
-        #                 r, _ = pearsonr(time_window, window)
-        #                 pr.append(r)
-        #                 if abs(r) >= 0.8:
-        #                     _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(self.data_type, time_series, self.time_points, model_type)
-        #                     continue
-        #                 else:
-        #                     pass
-        #             if np.all(np.abs(pr) < 0.8):
-        #                 lifetime = np.nan
-        #             else:
-        #                 pass
-        #             lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
-        #             self.update_progress(loading_bar+1, total_l)
-        #             self.console_widget.update_progress(loading_bar+1, total_l)
-        #     else:
-        #         logging.info("计算终止")
-        #         return
-        # logging.info("计算完成!")
-        # # 显示结果
-        # smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
-        # self.result_display.display_distribution_map(smoothed_map)
+    def is_thread_active(self, thread_name: str) -> bool:
+        """检查指定名称的线程是否存在且正在运行"""
+        # :param thread_name: 线程对象的变量名（str）
+        # :return: True（线程存在且运行中）/ False（线程不存在或已结束）
 
-        self.thread.quit()
+        if hasattr(self, thread_name):
+            thread = getattr(self, thread_name)  # 动态获取线程对象
+            if isinstance(thread, QThread):  # 确保是 QThread 对象
+                return thread.isRunning()
+        return False
+
+    def btn_safety(self, cal_run=False):
+        """待实现，关闭按钮的功能"""
+        return
+
+    def stop_thread(self):
+        """彻底删除线程（反正关闭也不能重启）后续线程多了加入选择关闭的能力"""
+        self.thread.quit()  # 请求退出
+        self.thread.wait()  # 等待结束
+        self.thread.deleteLater()  # 标记删除
+        logging.info("计算线程关闭")
+
 
     def export_image(self):
         """导出热图为图片"""

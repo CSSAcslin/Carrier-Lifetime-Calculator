@@ -193,7 +193,7 @@ class ConsoleWidget(QWidget):
         self.progress_bar.setFormat(
             f"计算进度: {value}/{self.progress_bar.maximum()} ({value / self.progress_bar.maximum() * 100:.1f}%)")
 
-        if value == 0:
+        if value == 1:
             self.progress_bar.show()
         elif value >= self.progress_bar.maximum():
             self.progress_bar.hide()

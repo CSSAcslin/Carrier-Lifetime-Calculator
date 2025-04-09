@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
                              )
-from PyQt5.QtCore import Qt, QObject, pyqtSignal
+from PyQt5.QtCore import Qt, QObject, pyqtSignal, pyqtSlot, QElapsedTimer
 import pandas as pd
 from scipy.stats import pearsonr
 
@@ -201,10 +201,13 @@ class LifetimeCalculator:
         return convolve(data, kernel, mode='mirror')
 
 class CalculationThread(QObject):
-
+    """仅在线程中使用，目前未加锁（仍无必要）"""
+    cal_running_status = pyqtSignal(bool)
     result_data_signal = pyqtSignal(np.ndarray, float, float, np.ndarray, np.ndarray, dict)
     result_map_signal = pyqtSignal(object)
     calculating_progress_signal = pyqtSignal(int, int)
+    stop_thread_signal = pyqtSignal()
+    cal_time = pyqtSignal(float)
 
 
     def __init__(self):
@@ -212,40 +215,47 @@ class CalculationThread(QObject):
         logging.info('计算线程已载入')
         self._is_calculating = False
 
+    @pyqtSlot(dict, float, tuple, str, int, str)
     def region_analyze(self,data,time_unit,center,shape,size,model_type):
         """分析选定区域"""
         logging.info("开始计算选区载流子寿命...")
+        self.cal_running_status.emit(True)
+        # 计时器
+        timer = QElapsedTimer()
+        timer.start()
         # 获取参数
-
         time_points = data['time_points'] * time_unit
-
 
         # 执行区域分析
         lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
             data, time_points, center, shape, size, model_type)
 
-        # 显示结果
-        # self.result_display.display_lifetime_curve(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'])
         self.result_data_signal.emit(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'])
+        self.cal_time.emit(timer.elapsed())
         logging.info("计算完成!")
+        self.cal_running_status.emit(False)
+        self.stop_thread_signal.emit()
 
+    @pyqtSlot(dict, float, str)
     def distribution_analyze(self,data,time_unit,model_type):
         """分析载流子寿命"""
-
         self._is_calculating = True
-
+        self.cal_running_status.emit(True)
         time_points = data['time_points'] * time_unit
         data_type = data['data_type']
-
 
         # 计算每个像素的寿命
         height, width = data['data_origin'].shape[1], data['data_origin'].shape[2]
         lifetime_map = np.zeros((height, width))
         logging.info("开始计算载流子寿命...")
-        loading_bar =0 #进度条
+        # 计时器
+        timer = QElapsedTimer()
+        timer.start()
+
+        loading_bar_value =0 #进度条
         total_l = height * width
         for i in range(height):
-            if self._is_calculating :# 线程关闭
+            if self._is_calculating :# 线程关闭控制（目前仅针对长时计算）
                 for j in range(width):
                     time_series = data['data_origin'][:, i, j]
                     # 用皮尔逊系数判断噪音(滑动窗口法)
@@ -266,15 +276,20 @@ class CalculationThread(QObject):
                     else:
                         pass
                     lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
-                    self.calculating_progress_signal.emit(loading_bar+1, total_l)
+                    loading_bar_value += 1
+                    self.calculating_progress_signal.emit(loading_bar_value, total_l)
             else:
                 logging.info("计算终止")
+                self.stop_thread_signal.emit() # 目前来说，计算终止也会关闭线程，后续可考虑分开命令
                 return
         logging.info("计算完成!")
         # 显示结果
         smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
         self.result_map_signal.emit(smoothed_map)
-
+        self.cal_time.emit(timer.elapsed())
         self._is_calculating = False
+        self.cal_running_status.emit(False)
+        self.stop_thread_signal.emit()
+
     def stop(self):
         self._is_calculating = False
