@@ -1,8 +1,5 @@
-import logging
-
-import numpy as np
+from PyQt5 import sip
 from PyQt5.QtGui import QPixmap
-from scipy.stats import pearsonr
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
@@ -15,6 +12,8 @@ from ImageDisplayWidget import ImageDisplayWidget
 from LifetimeCalculator import LifetimeCalculator, CalculationThread
 from ResultDisplayWidget import ResultDisplayWidget
 from ConsoleUtils import *
+
+import resources_rc
 
 class MainWindow(QMainWindow):
     """主窗口"""
@@ -40,10 +39,6 @@ class MainWindow(QMainWindow):
         self.thread_open()
         # 信号连接
         self.signal_connect()
-
-
-
-
 
     def init_ui(self):
         self.setWindowTitle("载流子寿命分析工具")
@@ -271,32 +266,36 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
 
-        # 状态指示灯 (红绿灯)
-        self.status_light = QLabel()
-        self.status_light.setPixmap(QPixmap(":/icons/red_light.png").scaled(16, 16))
-        self.status_bar.addPermanentWidget(self.status_light)
-
         # 状态文本
         self.status_label = QLabel("准备就绪")
-        self.status_bar.addWidget(self.status_label, 1)
+        self.status_label.setFixedWidth(300)
+        self.status_bar.addWidget(self.status_label)
 
         # 进度条
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedWidth(200)
+        self.progress_bar.setFixedWidth(800)
         self.progress_bar.setStyleSheet("""
             QProgressBar {
                 border: 1px solid #CCCCCC;
                 border-radius: 3px;
                 background: white;
+                text-align: center;
+                min-height: 18px;
+                max-height: 18px;
             }
             QProgressBar::chunk {
                 background-color: #4CAF50;
                 width: 10px;
             }
         """)
-        self.status_bar.addPermanentWidget(self.progress_bar)
+        self.status_bar.addWidget(self.progress_bar)
+
+        # 状态指示灯 (红绿灯)
+        self.status_light = QLabel()
+        self.status_light.setPixmap(QPixmap(":/icons/green_light.png").scaled(16, 16))
+        self.status_bar.addPermanentWidget(self.status_light)
 
     def update_status(self, status, is_working=False):
         """更新状态条的显示"""
@@ -473,11 +472,12 @@ class MainWindow(QMainWindow):
         self.console_widget.update_progress(current, total)
 
         if current == 1:
-            self.progress_bar.show()
+            # self.progress_bar.show()
             self.update_status("计算中...", True)
         elif current >= self.progress_bar.maximum():
-            self.progress_bar.hide()
+            # self.progress_bar.hide()
             self.update_status("计算完成")
+            self.progress_bar.reset()
 
     def region_analyze_start(self):
         """分析选定区域载流子寿命"""
@@ -486,14 +486,20 @@ class MainWindow(QMainWindow):
         # 如果线程没了，要开启
         if not self.is_thread_active("thread"):
             self.thread_open()
+        # 如果有线程在运算，要提示（不过目前不需要，保留语句）
+        if self.cal_thread and self.thread.isRunning():
+            logging.warning("已有计算任务正在运行")
+            return
+
         self.thread.start()
-        self.status_label.setText('计算进行中...')
+        self.update_status('计算进行中...', True)
         self.time_unit = float(self.time_step_input.value())
         center = (self.region_y_input.value(), self.region_x_input.value())
         shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         self.start_reg_cal_signal.emit(self.data,self.time_unit,center,shape,size,model_type)
+
 
     def distribution_analyze_start(self):
         """分析载流子寿命"""
@@ -502,8 +508,10 @@ class MainWindow(QMainWindow):
         # 如果线程没了，要创建
         if not self.is_thread_active("thread"):
             self.thread_open()
+
+
         self.thread.start()
-        self.status_label.setText('长时计算进行中...')
+        self.update_status('长时计算进行中...', True)
         self.time_unit = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type)
@@ -515,12 +523,18 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, thread_name):
             thread = getattr(self, thread_name)  # 动态获取线程对象
-            if isinstance(thread, QThread):  # 确保是 QThread 对象
+            if isinstance(thread, QThread) and not sip.isdeleted(thread):
                 return thread.isRunning()
         return False
 
     def btn_safety(self, cal_run=False):
         """待实现，关闭按钮的功能"""
+        if cal_run:
+            self.analyze_btn.setEnabled(False)
+            self.analyze_region_btn.setEnabled(False)
+        elif not cal_run:
+            self.analyze_btn.setEnabled(True)
+            self.analyze_region_btn.setEnabled(True)
         return
 
     def stop_thread(self):

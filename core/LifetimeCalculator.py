@@ -219,13 +219,14 @@ class CalculationThread(QObject):
     def region_analyze(self,data,time_unit,center,shape,size,model_type):
         """分析选定区域"""
         logging.info("开始计算选区载流子寿命...")
+        self.calculating_progress_signal.emit(1, 3)
         self.cal_running_status.emit(True)
         # 计时器
         timer = QElapsedTimer()
         timer.start()
         # 获取参数
         time_points = data['time_points'] * time_unit
-
+        self.calculating_progress_signal.emit(2, 3)
         # 执行区域分析
         lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
             data, time_points, center, shape, size, model_type)
@@ -233,6 +234,7 @@ class CalculationThread(QObject):
         self.result_data_signal.emit(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'])
         self.cal_time.emit(timer.elapsed())
         logging.info("计算完成!")
+        self.calculating_progress_signal.emit(3, 3)
         self.cal_running_status.emit(False)
         self.stop_thread_signal.emit()
 
@@ -241,6 +243,10 @@ class CalculationThread(QObject):
         """分析载流子寿命"""
         self._is_calculating = True
         self.cal_running_status.emit(True)
+
+        # 计时器
+        timer = QElapsedTimer()
+        timer.start()
         time_points = data['time_points'] * time_unit
         data_type = data['data_type']
 
@@ -248,9 +254,7 @@ class CalculationThread(QObject):
         height, width = data['data_origin'].shape[1], data['data_origin'].shape[2]
         lifetime_map = np.zeros((height, width))
         logging.info("开始计算载流子寿命...")
-        # 计时器
-        timer = QElapsedTimer()
-        timer.start()
+
 
         loading_bar_value =0 #进度条
         total_l = height * width
@@ -280,6 +284,8 @@ class CalculationThread(QObject):
                     self.calculating_progress_signal.emit(loading_bar_value, total_l)
             else:
                 logging.info("计算终止")
+                self.calculating_progress_signal.emit(total_l, total_l) # 进度条更新
+                self.cal_running_status.emit(False)
                 self.stop_thread_signal.emit() # 目前来说，计算终止也会关闭线程，后续可考虑分开命令
                 return
         logging.info("计算完成!")
