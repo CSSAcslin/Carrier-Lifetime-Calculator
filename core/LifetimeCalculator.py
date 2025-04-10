@@ -93,6 +93,7 @@ class LifetimeCalculator:
 
             elif model_type == 'double':
                 # 双指数拟合(没做好，不要用)
+                return logging.info("双指数没做好,不给用！！")
                 A2_guess = A_guess / 2
                 tau2_guess = tau_guess * 2
 
@@ -114,7 +115,7 @@ class LifetimeCalculator:
                     avg_lifetime = 0
                 else:
                     avg_lifetime = (A1 * tau1 + A2 * tau2) / (A1 + A2)
-                return popt, avg_lifetime
+                return popt, avg_lifetime, r_squared, phy_signal
 
         except:
             # 拟合失败时返回NaN

@@ -25,6 +25,7 @@ class CommandProcessor(QObject):
     terminate_requested = pyqtSignal()
     save_config_requested = pyqtSignal()
     load_config_requested = pyqtSignal(str)
+    clear_result_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,6 +35,7 @@ class CommandProcessor(QObject):
             'set_log_path': self.set_log_path,
             'show_log_path': self.show_log_path,
             'clear': self.clear_console,
+            'clear-r':self.clear_result,
             'save_config': self.save_config,
             'load_config': self.load_config,
             'stop': self.stop_calculation
@@ -63,6 +65,7 @@ class CommandProcessor(QObject):
         set_log_path <路径> - 更改日志文件保存路径
         show_log_path - 显示当前日志文件路径
         clear - 清除控制台输出
+        clear-r
         save_config - 保存当前配置
         load_config <预设名> - 加载预设参数
         stop - 终止当前计算(ESC键也可终止)
@@ -95,6 +98,10 @@ class CommandProcessor(QObject):
     def clear_console(self, args=None):
         """清除控制台输出"""
         self.parent.console_output.clear()
+
+    def clear_result(self, args=None):
+        self.clear_result_requested.emit()
+        logging.info('结果画布已清除')
 
     def save_config(self, args=None):
         """保存当前配置"""

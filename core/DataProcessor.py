@@ -2,7 +2,7 @@ import glob
 import re
 import numpy as np
 import tifffile as tiff
-
+from typing import List, Union
 
 class DataProcessor:
     """本类仅包含导入数据时的数据处理"""
@@ -57,12 +57,6 @@ class DataProcessor:
         vmax = np.max(vmax_array)
         vmin = np.min(vmin_array)
 
-        # 处理坏点的临时方法
-        images_original[12]= (images_original[10] + images_original[11]  + images_original[13]  + images_original[14])/4
-        images_original[25]= (images_original[23] + images_original[24]  + images_original[26]  + images_original[27])/4
-        # z_scores = (vmean_array - np.mean(vmean_array)) / np.std(vmean_array)
-        # bad_frames = np.where(np.abs(z_scores) > 3.0)[0]
-
         images_show, data_type, max_mean, phy_max, phy_min = self.process_data(images_original, vmax, vmin, vmean_array)
 
         return {
@@ -72,5 +66,79 @@ class DataProcessor:
             'time_points': np.arange(float(time_start_input.value()) + len(images_show)) * time_unit,
             'data_mean': max_mean,
             'boundary': {'max':phy_max,'min':phy_min},
-            # 'bad_frames_auto': bad_frames.tolist()
         }
+
+    def amend_data(self, data_origin):
+        """函数修改方法"""
+        vmax_array = []
+        vmin_array = []
+        vmean_array = []
+        for data in data_origin:
+            vmax_array.append(np.max(data))
+            vmin_array.append(np.min(data))
+            vmean_array.append(np.mean(data))
+        vmax = np.max(vmax_array)
+        vmin = np.min(vmin_array)
+
+        images_show, data_type, max_mean, phy_max, phy_min = self.process_data(data_origin, vmax, vmin, vmean_array)
+
+        return {
+
+            'data_type': data_type,
+            'images': np.stack(images_show, axis=0),
+
+            'data_mean': max_mean,
+            'boundary': {'max': phy_max, 'min': phy_min},
+        }
+
+
+    def detect_bad_frames_auto(self, data: np.ndarray, threshold: float = 3.0) -> List[int]:
+        """
+        自动检测坏帧
+        基于帧间差异和均值离群值检测
+        """
+        # 计算每帧的均值
+        frame_means = np.mean(data, axis=(1, 2))
+
+        # 计算帧间差异
+        frame_diff = np.abs(np.diff(frame_means))
+        median_diff = np.median(frame_diff)
+        mad_diff = 1.4826 * np.median(np.abs(frame_diff - median_diff))
+
+        # 找出异常帧
+        z_scores = np.abs((frame_diff - median_diff) / mad_diff)
+        potential_bad = np.where(z_scores > threshold)[0]
+
+        # 合并相邻坏帧
+        bad_frames = []
+        for i in potential_bad:
+            if not bad_frames or i > bad_frames[-1] + 1:
+                bad_frames.extend([i, i + 1])  # 标记差异大的前后两帧
+            elif i == bad_frames[-1] + 1:
+                bad_frames.append(i + 1)
+
+        return sorted(list(set(bad_frames)))
+
+    def fix_bad_frames(self, data: np.ndarray, bad_frames: List[int], n_frames: int = 2) -> np.ndarray:
+        """
+        修复坏帧 - 使用前后n帧的平均值替换
+        """
+        fixed_data = data.copy()
+        total_frames = len(data)
+
+        for frame_idx in bad_frames:
+            # 计算前后n帧的范围
+            start = max(0, frame_idx - n_frames)
+            end = min(total_frames, frame_idx + n_frames + 1)
+
+            # 排除坏帧本身
+            valid_frames = [i for i in range(start, end)
+                            if i != frame_idx and i not in bad_frames]
+
+            if valid_frames:
+                # 计算平均值
+                fixed_data[frame_idx] = np.mean(data[valid_frames], axis=0)
+            else:
+                print(f"警告: 无法修复帧 {frame_idx} - 无有效参考帧")
+
+        return fixed_data

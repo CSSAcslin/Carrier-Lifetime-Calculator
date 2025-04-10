@@ -35,8 +35,7 @@ class ResultDisplayWidget(QWidget):
         # 创建matplotlib图形
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
-        self.ax = self.figure.add_subplot(111)
-        self.ax.axis('off')
+
 
         self.layout.addWidget(self.canvas)
 
@@ -48,9 +47,10 @@ class ResultDisplayWidget(QWidget):
 
         # 显示热图
         im = ax.imshow(lifetime_map, cmap='jet')
-        self.figure.colorbar(im, ax=self.ax, label='lifetime')
+        self.figure.colorbar(im, ax=ax, label='lifetime')
         ax.set_title("载流子寿命分布图")
         ax.axis('off')
+        self.figure.tight_layout()
         self.canvas.draw()
 
         # 保存当前数据
@@ -109,11 +109,4 @@ class ResultDisplayWidget(QWidget):
     def clear(self):
         """清除显示"""
         self.figure.clear()
-        if self.current_mode == "heatmap":
-            ax = self.figure.add_subplot(111)
-            ax.set_title("载流子寿命热图")
-        elif self.current_mode == "curve":
-            ax = self.figure.add_subplot(111)
-            ax.set_title("区域分析结果")
-        ax.axis('off')
         self.canvas.draw()

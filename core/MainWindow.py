@@ -1,3 +1,5 @@
+import logging
+
 from PyQt5 import sip
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -12,6 +14,7 @@ from ImageDisplayWidget import ImageDisplayWidget
 from LifetimeCalculator import LifetimeCalculator, CalculationThread
 from ResultDisplayWidget import ResultDisplayWidget
 from ConsoleUtils import *
+from ExtraDialog import BadFrameDialog
 
 import resources_rc
 
@@ -25,6 +28,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.init_ui()
         self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carrier_lifetime.log")
+        self.setup_menus()
         self.setup_logging()
         self.log_startup_message()
 
@@ -43,9 +47,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         self.setWindowTitle("载流子寿命分析工具")
         self.setGeometry(100, 20, 1300, 850)
-        #   加入菜单栏
-        self.menu = self.menuBar()
-        self.menu.addMenu('主窗口')
+
         # 主部件和布局
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -226,6 +228,22 @@ class MainWindow(QMainWindow):
         left_layout.addLayout(data_save_layout)
         self.parameter_panel.setLayout(left_layout)
 
+    def setup_menus(self):
+        """加入菜单栏"""
+        self.menu = self.menuBar()
+        self.menu.addMenu('主窗口')
+
+        # 控制台
+        view_menu = self.menu.addMenu("控制台")
+        toggle_console = view_menu.addAction("显示/隐藏控制台")
+        toggle_console.triggered.connect(lambda: self.console_dock.setVisible(not self.console_dock.isVisible()))
+
+        # 编辑菜单
+        edit_menu = self.menu.addMenu("编辑")
+
+        # 坏点处理动作
+        bad_frame_action = edit_menu.addAction("坏点处理")
+        bad_frame_action.triggered.connect(self.show_bad_frame_dialog)
 
     @staticmethod
     def QGroupBoxCreator(title="",style="default"):
@@ -323,11 +341,6 @@ class MainWindow(QMainWindow):
                                       QDockWidget.DockWidgetFloatable |
                                       QDockWidget.DockWidgetClosable)
 
-        # 添加菜单项
-        view_menu = self.menu.addMenu("控制台")
-        toggle_console = view_menu.addAction("显示/隐藏控制台")
-        toggle_console.triggered.connect(lambda: self.console_dock.setVisible(not self.console_dock.isVisible()))
-
     def setup_logging(self):
         """配置日志系统"""
         # 确保日志目录存在
@@ -405,7 +418,7 @@ class MainWindow(QMainWindow):
         self.command_processor.terminate_requested.connect(self.stop_calculation)
         self.command_processor.save_config_requested.connect(self.save_config)
         self.command_processor.load_config_requested.connect(self.load_config)
-
+        self.command_processor.clear_result_requested.connect(self.clear_result)
 
     '''上面是初始化预设，下面是功能响应'''
     def _handle_hover(self, x, y, t, value):
@@ -428,21 +441,21 @@ class MainWindow(QMainWindow):
         """加载TIFF文件夹"""
         self.time_unit = float(self.time_step_input.value())
         folder_path = QFileDialog.getExistingDirectory(self, "选择TIFF图像文件夹")
-        loader = DataProcessor(folder_path)
+        self.data_processor = DataProcessor(folder_path)
         if folder_path:
             logging.info(folder_path)
             self.folder_path_label.setText("已加载文件夹")
             current_group = self.group_selector.currentText()
 
             # 读取文件夹中的所有tiff文件
-            tiff_files = loader.load_and_sort_files(current_group)
+            tiff_files = self.data_processor.load_and_sort_files(current_group)
 
             if not tiff_files:
                 self.folder_path_label.setText("文件夹中没有目标TIFF文件")
                 return
 
             # 读取所有图像
-            self.data = loader.process_files(tiff_files, self.time_start_input, self.time_unit)
+            self.data = self.data_processor.process_files(tiff_files, self.time_start_input, self.time_unit)
 
             if not self.data:
                 self.folder_path_label.setText("无法读取TIFF文件")
@@ -454,6 +467,18 @@ class MainWindow(QMainWindow):
 
             # 显示第一张图像
             self.update_time_slice(0)
+
+    def show_bad_frame_dialog(self):
+        """显示坏点处理对话框"""
+        if not hasattr(self, 'data') or self.data is None:
+            logging.warning("无数据，请先加载数据文件")
+            return
+
+        dialog = BadFrameDialog(self)
+        if dialog.exec_():
+            # 更新图像显示
+            self.update_time_slice(0)
+            logging.info(f"坏点处理完成，修复了 {len(dialog.bad_frames)} 个坏帧")
 
     def update_time_slice(self, idx):
         """更新时间切片显示"""
@@ -472,10 +497,9 @@ class MainWindow(QMainWindow):
         self.console_widget.update_progress(current, total)
 
         if current == 1:
-            # self.progress_bar.show()
-            self.update_status("计算中...", True)
+            # self.update_status("计算中...", True)
+            pass
         elif current >= self.progress_bar.maximum():
-            # self.progress_bar.hide()
             self.update_status("计算完成")
             self.progress_bar.reset()
 
@@ -499,7 +523,6 @@ class MainWindow(QMainWindow):
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         self.start_reg_cal_signal.emit(self.data,self.time_unit,center,shape,size,model_type)
-
 
     def distribution_analyze_start(self):
         """分析载流子寿命"""
@@ -528,7 +551,7 @@ class MainWindow(QMainWindow):
         return False
 
     def btn_safety(self, cal_run=False):
-        """待实现，关闭按钮的功能"""
+        """关闭按钮的功能"""
         if cal_run:
             self.analyze_btn.setEnabled(False)
             self.analyze_region_btn.setEnabled(False)
@@ -544,7 +567,6 @@ class MainWindow(QMainWindow):
         self.thread.deleteLater()  # 标记删除
         logging.info("计算线程关闭")
 
-
     def export_image(self):
         """导出热图为图片"""
         if hasattr(self.result_display, 'current_data'):
@@ -554,6 +576,7 @@ class MainWindow(QMainWindow):
             if file_path:
                 # 从matplotlib保存图像
                 self.result_display.figure.savefig(file_path, dpi=300, bbox_inches='tight')
+            logging.info("图片已保存")
 
     def export_data(self):
         """导出寿命数据"""
@@ -567,9 +590,9 @@ class MainWindow(QMainWindow):
                     self.result_display.current_data.to_csv(file_path, index=False, header=False)
                 else:
                     self.result_display.current_data.to_csv(file_path, sep='\t', index=False, header=False)
+            logging.info("数据已保存")
 
     '''以下控制台命令更新'''
-
     def stop_calculation(self):
         """终止当前计算"""
         # 这里需要实现终止计算的逻辑
@@ -578,17 +601,16 @@ class MainWindow(QMainWindow):
         self.cal_thread.stop()
         # 实际终止逻辑需要根据你的计算实现来添加
 
-
     def save_config(self):
         """保存当前配置(留空暂不实现)"""
         logging.info("正在保存当前配置...")
-
 
     def load_config(self, preset_name):
         """加载预设参数(留空暂不实现)"""
         logging.info(f"正在加载预设参数: {preset_name}")
 
-
+    def clear_result(self):
+        self.result_display.clear()
 
 if __name__ == "__main__":
     app = QApplication([])
