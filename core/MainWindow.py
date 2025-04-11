@@ -1,4 +1,5 @@
-import logging
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 from PyQt5 import sip
 from PyQt5.QtGui import QPixmap
@@ -15,7 +16,7 @@ from LifetimeCalculator import LifetimeCalculator, CalculationThread
 from ResultDisplayWidget import ResultDisplayWidget
 from ConsoleUtils import *
 from ExtraDialog import BadFrameDialog
-
+import logging
 import resources_rc
 
 class MainWindow(QMainWindow):
@@ -380,7 +381,7 @@ class MainWindow(QMainWindow):
         载流子寿命分析工具启动
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         日志文件: {self.log_file}
-        程序版本: 1.2.2
+        程序版本: 1.4.1
         ============================================
         """
         logging.info(startup_msg.strip())

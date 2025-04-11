@@ -1,14 +1,4 @@
-import glob
-import os
-import re
-
 import numpy as np
-from scipy.optimize import curve_fit
-from PIL import Image
-import tifffile as tiff
-import matplotlib as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
@@ -16,7 +6,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
                              )
 from PyQt5.QtCore import Qt, pyqtSignal
-import pandas as pd
+
 
 class ImageDisplayWidget(QWidget):
     """图像显示部件 (使用QPixmap实现)"""

@@ -1,7 +1,5 @@
 import os
 import logging
-from logging.handlers import RotatingFileHandler
-from datetime import datetime
 from PyQt5.QtCore import QObject, pyqtSignal, Qt
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                              QTextEdit, QLineEdit, QPushButton, QProgressBar)
