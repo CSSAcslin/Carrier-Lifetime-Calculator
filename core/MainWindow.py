@@ -15,7 +15,7 @@ from ImageDisplayWidget import ImageDisplayWidget
 from LifetimeCalculator import LifetimeCalculator, CalculationThread
 from ResultDisplayWidget import ResultDisplayWidget
 from ConsoleUtils import *
-from ExtraDialog import BadFrameDialog
+from ExtraDialog import *
 import logging
 import resources_rc
 
@@ -242,15 +242,17 @@ class MainWindow(QMainWindow):
         # 编辑菜单
         edit_menu = self.menu.addMenu("编辑")
 
-        # 坏点处理动作
-        bad_frame_action = edit_menu.addAction("坏点处理")
-        bad_frame_action.triggered.connect(self.show_bad_frame_dialog)
+        # 坏点处理功能
+        bad_frame_edit = edit_menu.addAction("坏点处理")
+        bad_frame_edit.triggered.connect(self.bad_frame_edit_dialog)
 
         # 数据筛选功能
-        data_select_action = edit_menu.addAction("数据筛选")
+        data_select_edit = edit_menu.addAction("数据筛选")
+        data_select_edit.triggered.connect(self.data_select_edit_dialog)
 
         # 绘图设置调整
-        
+        plt_settings_edit = edit_menu.addAction("绘图设置")
+        plt_settings_edit.triggered.connect(self.plt_settings_edit_dialog)
 
 
     @staticmethod
@@ -479,7 +481,7 @@ class MainWindow(QMainWindow):
             # 显示第一张图像
             self.update_time_slice(0)
 
-    def show_bad_frame_dialog(self):
+    def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
         if not hasattr(self, 'data') or self.data is None:
             logging.warning("无数据，请先加载数据文件")
@@ -490,6 +492,32 @@ class MainWindow(QMainWindow):
             # 更新图像显示
             self.update_time_slice(0)
             logging.info(f"坏点处理完成，修复了 {len(dialog.bad_frames)} 个坏帧")
+
+    def data_select_edit_dialog(self):
+        """数据清洗调整"""
+        if not hasattr(self, 'data') or self.data is None:
+            logging.warning("无数据，请先加载数据文件")
+            return
+        dialog = DataSelectDialog(self)
+        if dialog.exec_():
+            self.update_time_slice(0)
+            clean_params = dialog.params
+            LifetimeCalculator.set_cal_parameters(
+                r_squared_min=clean_params['r_squared_min'],
+                peak_range=(clean_params['peak_min'], clean_params['peak_max']),
+                tau_range=(clean_params['tau_min'], clean_params['tau_max'])
+            )
+            logging.info("数据已更新，请重新绘图")
+            return
+
+    def plt_settings_edit_dialog(self):
+        """绘图设置"""
+        dialog = PltSettingsDialog(self)
+        if dialog.exec_():
+            # 将参数传递给ResultDisplayWidget
+            self.result_display.update_plot_settings(dialog.params)
+            logging.info("绘图设置已更新，请重新绘图")
+
 
     def update_time_slice(self, idx):
         """更新时间切片显示"""

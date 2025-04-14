@@ -16,6 +16,23 @@ class LifetimeCalculator:
     """
     载流子寿命计算类（此类为静态方法类，不要放别的进来）
     """
+    _cal_params = {
+        'r_squared_min': 0.8,
+        'peak_range': (0.0, 10.0),
+        'tau_range': (1e-3, 1e2)
+    }
+
+    @classmethod
+    def set_cal_parameters(cls,  r_squared_min=None, peak_range=None, tau_range=None):
+        """更新参数"""
+        if r_squared_min is not None:
+            cls._cal_params['r_squared_min'] = r_squared_min
+        if peak_range is not None:
+            cls._cal_params['peak_range'] = peak_range
+        if tau_range is not None:
+            cls._cal_params['tau_range'] = tau_range
+        pass
+
     @staticmethod
     def single_exponential(t, A, tau, C):
         """单指数衰减模型"""
@@ -30,15 +47,13 @@ class LifetimeCalculator:
     def calculate_lifetime(data_type, time_series, time_points, arg_bundle = None, model_type='single'):
         """
         计算载流子寿命
-
-        参数:
-            time_series: 时间序列信号
-            time_points: 对应的时间点
-            model_type: 'single' 或 'double' 表示单/双指数衰减
-
-        返回:
-            拟合参数和寿命值
         """
+        params = LifetimeCalculator._cal_params
+        r_squared_min = params['r_squared_min']
+        peak_range = params['peak_range']
+        tau_range = params['tau_range']
+        
+
         # 获得具有实际意义的信号序列
         phy_signal = None
         if data_type == 'central negative':
@@ -59,25 +74,30 @@ class LifetimeCalculator:
         try:
             if model_type == 'single':
                 # 单指数拟合
-                popt, pcov = curve_fit(
-                    LifetimeCalculator.single_exponential,
-                    decay_time,
-                    decay_signal,
-                    p0=[A_guess, tau_guess, C_guess],
-                    bounds=([-np.inf, 0, -np.inf], [np.inf, np.inf, np.inf]))
-                if popt[1] <=0.001 or popt[1] >=100:
+                if peak_range[0] <= max_idx <= peak_range[1]: # 峰值位置筛选
+                    popt, pcov = curve_fit(
+                        LifetimeCalculator.single_exponential,
+                        decay_time,
+                        decay_signal,
+                        p0=[A_guess, tau_guess, C_guess],
+                        bounds=([-np.inf, 0, -np.inf], [np.inf, np.inf, np.inf]))
+                    if popt[1] <= tau_range[0] or popt[1] >= tau_range[1]: # 寿命大小筛选
+                        lifetime = 0
+                        r_squared = np.nan
+                    else:
+                        # 计算R方
+                        y_pred = LifetimeCalculator.single_exponential(decay_time, *popt)
+                        ss_res = np.sum((decay_signal - y_pred) ** 2)
+                        ss_tot = np.sum((decay_signal - np.mean(decay_signal)) ** 2)
+                        r_squared = 1 - (ss_res / ss_tot)
+                        if r_squared <= r_squared_min: # R方筛选
+                            lifetime = 0
+                        else:
+                            lifetime = popt[1]  # tau
+                else:
                     lifetime = 0
                     r_squared = np.nan
-                else:
-                    # 计算R方
-                    y_pred = LifetimeCalculator.single_exponential(decay_time, *popt)
-                    ss_res = np.sum((decay_signal - y_pred) ** 2)
-                    ss_tot = np.sum((decay_signal - np.mean(decay_signal)) ** 2)
-                    r_squared = 1 - (ss_res / ss_tot)
-                    if r_squared <= 0.8:
-                        lifetime = 0
-                    else:
-                        lifetime = popt[1]  # tau
+                    popt = [0,0,0]
                 return popt, lifetime, r_squared, phy_signal
 
             elif model_type == 'double':
@@ -100,7 +120,7 @@ class LifetimeCalculator:
                 ss_res = np.sum((decay_signal - y_pred) ** 2)
                 ss_tot = np.sum((decay_signal - np.mean(decay_signal)) ** 2)
                 r_squared = 1 - (ss_res / ss_tot)
-                if r_squared <= 0.8:
+                if r_squared <= r_squared_min:
                     avg_lifetime = 0
                 else:
                     avg_lifetime = (A1 * tau1 + A2 * tau2) / (A1 + A2)
@@ -189,6 +209,8 @@ class LifetimeCalculator:
 
         # 边界处理采用镜像模式
         return convolve(data, kernel, mode='mirror')
+
+
 
 class CalculationThread(QObject):
     """仅在线程中使用，目前未加锁（仍无必要）"""

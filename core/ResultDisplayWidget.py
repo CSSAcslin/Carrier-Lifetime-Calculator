@@ -17,11 +17,20 @@ class ResultDisplayWidget(QWidget):
         super().__init__(parent)
         # self.font1 = plt.font_manager.FontProperties(fname=r"C:\Windows\Fonts\msyh.ttc")
         self.init_ui()
-        self.current_mode = "heatmap"# 或 "curve"
-
         self.font_list = fm.findSystemFonts(fontpaths=r"C:\Windows\Fonts" , fontext='ttf')
         self.chinese_fonts = [f for f in self.font_list if
                          any(c in f.lower() for c in ['simhei', 'simsun', 'microsoft yahei', 'fang'])]
+        self.plot_settings = {
+            'current_mode': 'heatmap',  # 'heatmap' 或 'curve'
+            'line_style': '--',
+            'line_width': 2,
+            'marker_style': 's',
+            'marker_size': 6,
+            'color': '#1f77b4',
+            'show_grid': False,
+            'heatmap_cmap': 'jet',
+            'contour_levels': 10
+        }
 
         # 设置Matplotlib默认字体
         if self.chinese_fonts:
@@ -39,14 +48,28 @@ class ResultDisplayWidget(QWidget):
 
         self.layout.addWidget(self.canvas)
 
+    def update_plot_settings(self, new_settings):
+        """更新绘图设置"""
+        self.plot_settings.update(new_settings)
+        self.update_plot()
+
+    def update_plot(self):
+        """根据当前设置重新绘图，有问题先留着"""
+        if self.plot_settings['plot_type'] == 'heatmap':
+            self.display_distribution_map()
+        else:
+            self.display_lifetime_curve()
+
     def display_distribution_map(self, lifetime_map):
         """显示寿命热图"""
         self.current_mode = "heatmap"
         self.figure.clear()
-        ax = self.figure.add_subplot(111)
+        cmap = self.plot_settings['heatmap_cmap']
+        levels = self.plot_settings['contour_levels']
 
+        ax = self.figure.add_subplot(111)
         # 显示热图
-        im = ax.imshow(lifetime_map, cmap='jet')
+        im = ax.imshow(lifetime_map, cmap=cmap)
         self.figure.colorbar(im, ax=ax, label='lifetime')
         ax.set_title("载流子寿命分布图")
         ax.axis('off')
@@ -61,6 +84,13 @@ class ResultDisplayWidget(QWidget):
         # 使用原来的结果显示区域
         self.current_mode = "curve"
         self.figure.clear()
+        line_style = self.plot_settings['line_style']
+        line_width = self.plot_settings['line_width']
+        marker_style = self.plot_settings['marker_style']
+        marker_size = self.plot_settings['marker_size']
+        color = self.plot_settings['color']
+        show_grid = self.plot_settings['show_grid']
+
         ax = self.figure.add_subplot(111)
         max_bound = boundary['max']
         min_bound = 0
@@ -69,17 +99,17 @@ class ResultDisplayWidget(QWidget):
         # 绘制原始曲线
         # time_points = time_points - time_points[0]  # 从0开始
         ax.plot(time_points, phy_signal,
-                markeredgecolor='blue', # 点边缘色
-                markeredgewidth=2,
+                markeredgecolor=color, # 点边缘色
+                markeredgewidth=line_width,
                 label='原始数据',
-                 marker='s',       # 方形点
-                 markersize=6,    # 点大小
+                 marker=marker_style,       # 方形点
+                 markersize=marker_size,    # 点大小
                  linestyle='')
 
         # 绘制拟合曲线
         max_idx = np.argmax(phy_signal)
         fit_time = time_points[max_idx:]
-        ax.plot(fit_time, fit_curve, 'r--', label='拟合曲线')
+        ax.plot(fit_time, fit_curve, 'r',linestyle = line_style, label='拟合曲线')
 
         # 标记最大值
         ax.axvline(time_points[max_idx], color='g', linestyle=':', label='峰值位置')
@@ -95,7 +125,7 @@ class ResultDisplayWidget(QWidget):
         ax.set_ylabel('信号强度')
         ax.set_title('载流子寿命曲线')
         ax.legend()
-        ax.grid(False)
+        ax.grid(show_grid)
 
         self.canvas.draw()
         self.current_data = pd.DataFrame({
