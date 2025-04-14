@@ -246,6 +246,13 @@ class MainWindow(QMainWindow):
         bad_frame_action = edit_menu.addAction("坏点处理")
         bad_frame_action.triggered.connect(self.show_bad_frame_dialog)
 
+        # 数据筛选功能
+        data_select_action = edit_menu.addAction("数据筛选")
+
+        # 绘图设置调整
+        
+
+
     @staticmethod
     def QGroupBoxCreator(title="",style="default"):
         # 全局Box样式定义
@@ -366,6 +373,9 @@ class MainWindow(QMainWindow):
         logger.handlers.clear()  # 清除现有处理器
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
+
+        sys.stdout = StreamLogger(logging.INFO)
+        sys.stderr = StreamLogger(logging.ERROR)
 
     def log_to_console(self, message):
         """将消息输出到控制台"""
@@ -612,6 +622,21 @@ class MainWindow(QMainWindow):
 
     def clear_result(self):
         self.result_display.clear()
+
+
+class StreamLogger(object):
+    """重定向标准输出到日志系统"""
+
+    def __init__(self, log_level):
+        self.log_level = log_level
+        self.linebuf = ''
+
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            logging.log(self.log_level, line.rstrip())
+
+    def flush(self):
+        pass
 
 if __name__ == "__main__":
     app = QApplication([])

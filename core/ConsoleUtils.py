@@ -1,5 +1,8 @@
 import os
 import logging
+import sys
+import traceback
+
 from PyQt5.QtCore import QObject, pyqtSignal, Qt
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                              QTextEdit, QLineEdit, QPushButton, QProgressBar)
@@ -13,9 +16,27 @@ class ConsoleHandler(QObject, logging.Handler):
         self.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         self.append_log.connect(parent.log_to_console)
 
+        sys.excepthook = self.handle_uncaught_exception
+
     def emit(self, record):
         msg = self.format(record)
         self.append_log.emit(msg)
+
+    def handle_uncaught_exception(self, exc_type, exc_value, exc_traceback):
+        """处理所有未捕获的异常"""
+        if issubclass(exc_type, KeyboardInterrupt):
+            # 忽略键盘中断(CTRL+C)
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        # 格式化异常信息
+        error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+
+        # 发送到控制台
+        self.append_log.emit(f"CRITICAL - 未捕获异常:\n{error_msg}")
+
+        # 同时输出到标准错误流
+        sys.stderr.write(f"未捕获异常: {error_msg}\n")
 
 
 class CommandProcessor(QObject):
@@ -41,19 +62,23 @@ class CommandProcessor(QObject):
 
     def process_command(self, command):
         """处理输入的命令"""
-        logging.info(f"执行命令: {command}")
+        try:
+            logging.info(f"执行命令: {command}")
 
-        cmd_parts = command.strip().split()
-        if not cmd_parts:
-            return
+            cmd_parts = command.strip().split()
+            if not cmd_parts:
+                return
 
-        cmd = cmd_parts[0].lower()
-        args = cmd_parts[1:]
+            cmd = cmd_parts[0].lower()
+            args = cmd_parts[1:]
 
-        if cmd in self.commands:
-            self.commands[cmd](args)
-        else:
-            logging.warning(f"未知命令: {command}。输入'help'查看可用命令。")
+            if cmd in self.commands:
+                self.commands[cmd](args)
+            else:
+                logging.warning(f"未知命令: {command}。输入'help'查看可用命令。")
+        except Exception as e:
+            logging.error(f"命令执行出错: {str(e)}")
+            logging.debug(traceback.format_exc())  # 记录完整堆栈跟踪
 
     def show_help(self, args=None):
         """显示帮助信息"""

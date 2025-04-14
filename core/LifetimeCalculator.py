@@ -27,7 +27,7 @@ class LifetimeCalculator:
         return A1 * np.exp(-t / tau1) + A2 * np.exp(-t / tau2) + C
 
     @staticmethod
-    def calculate_lifetime(data_type, time_series, time_points, model_type='single'):
+    def calculate_lifetime(data_type, time_series, time_points, arg_bundle = None, model_type='single'):
         """
         计算载流子寿命
 
