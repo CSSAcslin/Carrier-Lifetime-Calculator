@@ -15,7 +15,6 @@ class ImageDisplayWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mouse_pos = None
-
         self.current_time_idx = 0
         self.init_ui()
 
@@ -30,21 +29,6 @@ class ImageDisplayWidget(QWidget):
         self.scene.addItem(self.pixmap_item)
 
         self.layout.addWidget(self.graphics_view)
-
-        # 添加缩放控制（暂不启用）
-        # self.zoom_label = QLabel("缩放倍数:")
-        # self.zoom_spinbox = QSpinBox()
-        # self.zoom_spinbox.setMinimum(1)
-        # self.zoom_spinbox.setMaximum(10)
-        # self.zoom_spinbox.setValue(1)
-        # self.zoom_spinbox.valueChanged.connect(self.update_zoom)
-
-        # zoom_layout = QHBoxLayout()
-        # zoom_layout.addWidget(self.zoom_label)
-        # zoom_layout.addWidget(self.zoom_spinbox)
-        # zoom_layout.addStretch()
-
-        # self.layout.addLayout(zoom_layout)
 
         # 启用鼠标跟踪
         self.graphics_view.setMouseTracking(True)
@@ -87,31 +71,13 @@ class ImageDisplayWidget(QWidget):
 
         super().mouseMoveEvent(event)
 
-    def display_image(self, image_data,time_idx=1, zoom=1):
+    def display_image(self, image_data,time_idx=1):
         """显示图像数据 (使用QPixmap)并记录当前时间索引"""
         # 清除现有内容
         self.scene.clear()
         self.current_time_idx = time_idx
 
-        # 原始图像尺寸
-        h, w = image_data.shape
-
-        # 应用缩放 (不插值的放大)
-        if zoom > 1:
-            # 创建放大后的数组
-            zoomed_data = np.zeros((h * zoom, w * zoom), dtype=np.uint8)
-
-            norm_data = (image_data * 255).astype(np.uint8)
-
-            # 每个原始像素复制zoom×zoom次
-            for i in range(h):
-                for j in range(w):
-                    zoomed_data[i * zoom:(i + 1) * zoom, j * zoom:(j + 1) * zoom] = norm_data[i, j]
-
-            image_to_show = zoomed_data
-        else:
-            # 归一化数据到0-255范围
-            image_to_show =  (image_data * 255).astype(np.uint8)
+        image_to_show =  (image_data * 255).astype(np.uint8)
 
         # 创建QImage并转换为QPixmap
         qimage = QImage(image_to_show.data, image_to_show.shape[1], image_to_show.shape[0],
@@ -120,12 +86,8 @@ class ImageDisplayWidget(QWidget):
 
         # 显示图像
         self.pixmap_item = self.scene.addPixmap(pixmap)
-        self.graphics_view.fitInView(self.pixmap_item, Qt.KeepAspectRatio)
+        self.graphics_view.fitInView(self.pixmap_item, Qt.KeepAspectRatio) # 实现适合尺寸的放大
 
-    # def update_zoom(self):
-    #     """更新缩放级别"""
-    #     if hasattr(self, 'current_image'):
-    #         self.display_image(self.current_image, self.zoom_spinbox.value())
 
     def clear(self):
         """清除显示"""

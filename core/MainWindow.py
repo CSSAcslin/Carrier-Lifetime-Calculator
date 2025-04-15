@@ -17,6 +17,7 @@ from ResultDisplayWidget import ResultDisplayWidget
 from ConsoleUtils import *
 from ExtraDialog import *
 import logging
+from ROIdrawDialog import ROIdrawDialog
 import resources_rc
 
 class MainWindow(QMainWindow):
@@ -527,8 +528,12 @@ class MainWindow(QMainWindow):
             logging.info("绘图设置已更新，请重新绘图")
 
     def roi_select_dialog(self):
-        roi_dialog = ROIdrawDialog(self)
-        if roi_dialog.exec_() == QDialog.Accepted:
+        """ROI选取功能"""
+        if not hasattr(self, 'data') or self.data is None:
+            logging.warning("无数据，请先加载数据文件")
+            return
+        roi_dialog = ROIdrawDialog(background_image=self.data['images'][1],parent=self)
+        if roi_dialog.exec_():
             binary_mask, grayscale_image = roi_dialog.get_roi_data()
             print("Binary mask shape:", binary_mask.shape)
             print("Grayscale image shape:", grayscale_image.shape)
@@ -537,7 +542,6 @@ class MainWindow(QMainWindow):
         """更新时间切片显示"""
         if self.data is not None and 0 <= idx < len(self.data['images']):
             self.time_label.setText(f"时间点: {idx}/{len(self.data['images']) - 1}")
-            # zoom = self.image_display.zoom_spinbox.value()
             self.image_display.current_image = self.data['images'][idx]
             self.image_display.display_image(self.data['images'][idx])
 
