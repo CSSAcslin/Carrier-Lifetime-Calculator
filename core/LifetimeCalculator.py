@@ -190,13 +190,6 @@ class LifetimeCalculator:
     def apply_custom_kernel(data, kernel_type='smooth'):
         """
         应用自定义卷积核
-        参数:
-            data: 2D numpy数组
-            kernel_type:
-                'smooth' - 中心0.2周边0.1的平滑核
-                'sharpen' - 锐化核(可选扩展)
-        返回:
-            处理后的数组
         """
         if kernel_type == 'smooth':
             kernel = np.array([

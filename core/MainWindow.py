@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         self.time_start_input = QDoubleSpinBox()
         self.time_start_input.setMinimum(0)
         self.time_start_input.setValue(0)
+        self.time_start_input.setDecimals(3)
         time_start_layout.addWidget(self.time_start_input)
         time_start_layout.addWidget(QLabel("帧"))
         time_layout.addLayout(time_start_layout)
@@ -132,6 +133,7 @@ class MainWindow(QMainWindow):
         self.time_step_input = QDoubleSpinBox()
         self.time_step_input.setMinimum(0.001)
         self.time_step_input.setValue(1.0)
+        self.time_step_input.setDecimals(3)
         time_step_layout.addWidget(self.time_step_input)
         time_step_layout.addWidget(QLabel("ps/帧"))
         time_layout.addLayout(time_step_layout)
@@ -147,6 +149,7 @@ class MainWindow(QMainWindow):
         self.space_step_input = QDoubleSpinBox()
         self.space_step_input.setMinimum(0.001)
         self.space_step_input.setValue(1.0)
+        self.space_step_input.setDecimals(3)
         space_step_layout.addWidget(self.space_step_input)
         space_step_layout.addWidget(QLabel("μm/像素"))
         space_layout.addLayout(space_step_layout)
@@ -164,7 +167,7 @@ class MainWindow(QMainWindow):
         # 寿命模型选择
         operation_layout.addWidget(QLabel("\n寿命模型:"))
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["单指数衰减", "双指数衰减"])
+        self.model_combo.addItems(["单指数衰减", "双指数衰减（未实现）"])
         operation_layout.addWidget(self.model_combo)
         # 区域分析设置
         # operation_layout.addSpacing(10)
@@ -254,6 +257,9 @@ class MainWindow(QMainWindow):
         plt_settings_edit = edit_menu.addAction("绘图设置")
         plt_settings_edit.triggered.connect(self.plt_settings_edit_dialog)
 
+        # ROI绘图
+        ROI_function = self.menu.addAction("ROI选取")
+        ROI_function.triggered.connect(self.roi_select_dialog)
 
     @staticmethod
     def QGroupBoxCreator(title="",style="default"):
@@ -393,7 +399,7 @@ class MainWindow(QMainWindow):
         载流子寿命分析工具启动
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         日志文件: {self.log_file}
-        程序版本: 1.4.1
+        程序版本: 1.5.1
         ============================================
         """
         logging.info(startup_msg.strip())
@@ -491,6 +497,7 @@ class MainWindow(QMainWindow):
         if dialog.exec_():
             # 更新图像显示
             self.update_time_slice(0)
+            self.time_slider.setValue(0)
             logging.info(f"坏点处理完成，修复了 {len(dialog.bad_frames)} 个坏帧")
 
     def data_select_edit_dialog(self):
@@ -501,6 +508,7 @@ class MainWindow(QMainWindow):
         dialog = DataSelectDialog(self)
         if dialog.exec_():
             self.update_time_slice(0)
+            self.time_slider.setValue(0)
             clean_params = dialog.params
             LifetimeCalculator.set_cal_parameters(
                 r_squared_min=clean_params['r_squared_min'],
@@ -518,6 +526,12 @@ class MainWindow(QMainWindow):
             self.result_display.update_plot_settings(dialog.params)
             logging.info("绘图设置已更新，请重新绘图")
 
+    def roi_select_dialog(self):
+        roi_dialog = ROIdrawDialog(self)
+        if roi_dialog.exec_() == QDialog.Accepted:
+            binary_mask, grayscale_image = roi_dialog.get_roi_data()
+            print("Binary mask shape:", binary_mask.shape)
+            print("Grayscale image shape:", grayscale_image.shape)
 
     def update_time_slice(self, idx):
         """更新时间切片显示"""
