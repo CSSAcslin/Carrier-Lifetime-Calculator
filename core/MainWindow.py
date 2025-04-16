@@ -466,6 +466,7 @@ class MainWindow(QMainWindow):
             logging.info(folder_path)
             self.folder_path_label.setText("已加载文件夹")
             current_group = self.group_selector.currentText()
+            logging.info('成功加载数据')
 
             # 读取文件夹中的所有tiff文件
             tiff_files = self.data_processor.load_and_sort_files(current_group)
@@ -532,14 +533,15 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'data') or self.data is None:
             logging.warning("无数据，请先加载数据文件")
             return
-        roi_dialog = ROIdrawDialog(background_image=self.data['images'][1],parent=self)
-        if roi_dialog.exec_():
-            binary_mask, grayscale_image = roi_dialog.get_roi_data()
-            print("Binary mask shape:", binary_mask.shape)
-            print("Grayscale image shape:", grayscale_image.shape)
+        roi_dialog = ROIdrawDialog(base_layer_array=self.data['images'][self.idx],parent=self)
+        if roi_dialog.exec_() == QDialog.Accepted:
+            self.mask = roi_dialog.get_top_layer_array()
+            logging.info(f'成功绘制ROI，大小{self.mask.shape}')
+            self.data = self.data_processor.amend_data(self.data['origin'], self.mask)
 
     def update_time_slice(self, idx):
         """更新时间切片显示"""
+        self.idx = idx
         if self.data is not None and 0 <= idx < len(self.data['images']):
             self.time_label.setText(f"时间点: {idx}/{len(self.data['images']) - 1}")
             self.image_display.current_image = self.data['images'][idx]

@@ -43,6 +43,7 @@ class DataProcessor:
         return process_show, data_type, max_mean, phy_max, phy_min
 
     def process_files(self, files, time_start_input, time_unit):
+        '''初步数据处理'''
         images_original = []
         vmax_array = []
         vmin_array = []
@@ -68,8 +69,11 @@ class DataProcessor:
             'boundary': {'max':phy_max,'min':phy_min},
         }
 
-    def amend_data(self, data_origin):
-        """函数修改方法"""
+    def amend_data(self, data_origin, mask = None):
+        """函数修改方法
+        输入修改的源数据，导出修改的数据包"""
+        if mask and mask.shape == data_origin.shape:
+            data_origin = np.multiply(data_origin, mask)
         vmax_array = []
         vmin_array = []
         vmean_array = []

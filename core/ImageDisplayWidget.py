@@ -55,11 +55,7 @@ class ImageDisplayWidget(QWidget):
 
         # 获取鼠标在图像上的坐标
         pos = self.graphics_view.mapToScene(event.pos())
-        x, y = int(pos.x()), int(pos.y())
-
-        # 考虑缩放因子
-        zoom = 1 #self.zoom_spinbox.value()
-        x_img, y_img = x // zoom, y // zoom
+        x_img, y_img = int(pos.x()), int(pos.y())
 
         # 检查坐标是否在图像范围内
         h, w = self.current_image.shape
