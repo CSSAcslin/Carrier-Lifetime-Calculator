@@ -447,13 +447,11 @@ class ROIdrawDialog(QDialog):
             for x in range(width):
                 if x < image.width() and y < image.height():
                     color = image.pixelColor(x, y)
-                    # 将颜色转换为灰度值
+                    # 按照透明度设置蒙版
                     if color.alpha() == 0:  # 完全透明
                         self.top_layer_array[y, x] = 0
                     else:
-                        # 简单灰度计算
-                        gray = int(0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue())
-                        self.top_layer_array[y, x] = gray
+                        self.top_layer_array[y, x] = color.alpha() / 255
 
     def resizeEvent(self, event):
         """窗口大小改变时自适应视图"""

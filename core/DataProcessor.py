@@ -42,7 +42,7 @@ class DataProcessor:
             phy_min = min_all
         return process_show, data_type, max_mean, phy_max, phy_min
 
-    def process_files(self, files, time_start_input, time_unit):
+    def process_files(self, files):
         '''初步数据处理'''
         images_original = []
         vmax_array = []
@@ -64,7 +64,7 @@ class DataProcessor:
             'data_origin': np.stack(images_original, axis=0),
             'data_type': data_type,
             'images': np.stack(images_show, axis=0),
-            'time_points': np.arange(float(time_start_input.value()) + len(images_show)) * time_unit,
+            'time_points': np.arange(len(images_show)),
             'data_mean': max_mean,
             'boundary': {'max':phy_max,'min':phy_min},
         }
@@ -72,8 +72,11 @@ class DataProcessor:
     def amend_data(self, data_origin, mask = None):
         """函数修改方法
         输入修改的源数据，导出修改的数据包"""
-        if mask and mask.shape == data_origin.shape:
-            data_origin = np.multiply(data_origin, mask)
+        if mask is not None and mask.shape == data_origin[0].shape:
+            data_mask = [ ]
+            for every_data in data_origin:
+                data_mask.append(np.multiply(every_data, mask))
+            data_origin = data_mask
         vmax_array = []
         vmin_array = []
         vmean_array = []
@@ -87,8 +90,8 @@ class DataProcessor:
         images_show, data_type, max_mean, phy_max, phy_min = self.process_data(data_origin, vmax, vmin, vmean_array)
 
         return {
+            'data_origin' : data_origin,
 
-            'data_type': data_type,
             'images': np.stack(images_show, axis=0),
 
             'data_mean': max_mean,

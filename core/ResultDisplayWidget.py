@@ -79,7 +79,7 @@ class ResultDisplayWidget(QWidget):
         # 保存当前数据
         self.current_data = pd.DataFrame(lifetime_map)
 
-    def display_lifetime_curve(self, phy_signal, lifetime, r_squared, fit_curve,time_points,boundary):
+    def display_lifetime_curve(self, phy_signal, lifetime, r_squared, fit_curve,time_points,boundary, model_type):
         """显示区域分析结果"""
         # 使用原来的结果显示区域
         self.current_mode = "curve"

@@ -130,9 +130,6 @@ class BadFrameDialog(QDialog):
             n_frames
         )
 
-        # 更新原始数据
-        self.parent().data['data_origin'] = fixed_data
-
         # 重新处理显示数据
         data_amend = self.parent().data_processor.amend_data(fixed_data)
 
@@ -156,7 +153,7 @@ class DataSelectDialog(QDialog):
             'peak_min': 0.0,
             'peak_max': 10.0,
             'tau_min': 1e-3,
-            'tau_max': 1e2
+            'tau_max': 1e3
         }
 
         self.init_ui()
@@ -196,11 +193,11 @@ class DataSelectDialog(QDialog):
         peak_group.setLayout(peak_layout)
 
         # 寿命范围组
-        tau_group = QGroupBox("寿命τ值范围 (秒)")
+        tau_group = QGroupBox("寿命τ值范围 (ps)")
         tau_layout = QFormLayout()
 
         self.tau_min_spin = QDoubleSpinBox()
-        self.tau_min_spin.setRange(1e-6, 1e6)
+        self.tau_min_spin.setRange(0e-6, 1e6)
         self.tau_min_spin.setValue(self.params['tau_min'])
         self.tau_min_spin.setSingleStep(1e-3)
         self.tau_min_spin.setDecimals(6)

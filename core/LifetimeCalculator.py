@@ -102,36 +102,44 @@ class LifetimeCalculator:
 
             elif model_type == 'double':
                 # 双指数拟合(没做好，不要用)
-                return logging.info("双指数没做好,不给用！！")
-                A2_guess = A_guess / 2
-                tau2_guess = tau_guess * 2
+                if peak_range[0] <= max_idx <= peak_range[1]:  # 峰值位置筛选
+                    A2_guess = A_guess / 2
+                    tau2_guess = tau_guess * 2
 
-                popt, pcov = curve_fit(
-                    LifetimeCalculator.double_exponential,
-                    decay_time,
-                    decay_signal,
-                    p0=[A_guess, tau_guess, A2_guess, tau2_guess, C_guess],
-                    bounds=([0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf]))
+                    popt, pcov = curve_fit(
+                        LifetimeCalculator.double_exponential,
+                        decay_time,
+                        decay_signal,
+                        p0=[A_guess, tau_guess, A2_guess, tau2_guess, C_guess],
+                        bounds=([0, 0, 0, 0, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf]))
 
-                # 计算平均寿命
-                A1, tau1, A2, tau2, C = popt
-                # 计算R方
-                y_pred = LifetimeCalculator.single_exponential(decay_time, *popt)
-                ss_res = np.sum((decay_signal - y_pred) ** 2)
-                ss_tot = np.sum((decay_signal - np.mean(decay_signal)) ** 2)
-                r_squared = 1 - (ss_res / ss_tot)
-                if r_squared <= r_squared_min:
-                    avg_lifetime = 0
+                    # 计算平均寿命
+                    A1, tau1, A2, tau2, C = popt
+                    # 计算R方
+                    if (tau1 <= tau_range[0] or tau1 >= tau_range[1]) and (tau2 <= tau_range[0] or tau2 >= tau_range[1]):  # 寿命大小筛选
+                        tau1,tau2 = (0,0)
+                        r_squared = np.nan
+                    else:
+                        y_pred = LifetimeCalculator.single_exponential(decay_time, *popt)
+                        ss_res = np.sum((decay_signal - y_pred) ** 2)
+                        ss_tot = np.sum((decay_signal - np.mean(decay_signal)) ** 2)
+                        r_squared = 1 - (ss_res / ss_tot)
+                        if r_squared <= r_squared_min: # R方筛选
+                            tau1,tau2 = (0,0)
+                        else:
+                            tau1,tau2 = (popt[1], popt[3]) # tau1 and 2
                 else:
-                    avg_lifetime = (A1 * tau1 + A2 * tau2) / (A1 + A2)
-                return popt, avg_lifetime, r_squared, phy_signal
+                    tau1,tau2 = (0,0)
+                    r_squared = np.nan
+                    popt = [0, 0, 0,0,0]
+                return popt, tau1, tau2, r_squared, phy_signal
 
         except:
             # 拟合失败时返回NaN
             if model_type == 'single':
-                return [np.nan, np.nan, np.nan], np.nan
+                return [np.nan, np.nan, np.nan], np.nan, np.nan ,np.nan
             else:
-                return [np.nan, np.nan, np.nan, np.nan, np.nan], np.nan
+                return [np.nan, np.nan, np.nan, np.nan, np.nan], np.nan, np.nan, np.nan ,np.nan
 
     @staticmethod
     def analyze_region(data, time_points, center, shape='square', size=5, model_type='single'):
@@ -179,11 +187,11 @@ class LifetimeCalculator:
                 time_points[np.argmax(phy_signal):] - time_points[np.argmax(phy_signal)],
                 popt[0], popt[1], popt[2])
         elif model_type == 'double':
-            popt, lifetime, r_squared, phy_signal = LifetimeCalculator.calculate_lifetime(data_type, avg_curve, time_points, 'double')
+            popt, lifetime_1, lifetime_2, r_squared, phy_signal = LifetimeCalculator.calculate_lifetime(data_type, avg_curve, time_points, 'double')
             fit_curve = LifetimeCalculator.double_exponential(
                 time_points[np.argmax(avg_curve):] - time_points[np.argmax(avg_curve)],
                 popt[0], popt[1], popt[2], popt[3], popt[4])
-
+            lifetime = (lifetime_1, lifetime_2)
         return lifetime, fit_curve, mask, phy_signal, r_squared
 
     @staticmethod
@@ -208,7 +216,7 @@ class LifetimeCalculator:
 class CalculationThread(QObject):
     """仅在线程中使用，目前未加锁（仍无必要）"""
     cal_running_status = pyqtSignal(bool)
-    result_data_signal = pyqtSignal(np.ndarray, float, float, np.ndarray, np.ndarray, dict)
+    result_data_signal = pyqtSignal(np.ndarray, float, float, np.ndarray, np.ndarray, dict, str )
     result_map_signal = pyqtSignal(object)
     calculating_progress_signal = pyqtSignal(int, int)
     stop_thread_signal = pyqtSignal()
@@ -236,7 +244,7 @@ class CalculationThread(QObject):
         lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
             data, time_points, center, shape, size, model_type)
 
-        self.result_data_signal.emit(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'])
+        self.result_data_signal.emit(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'], model_type)
         self.cal_time.emit(timer.elapsed())
         logging.info("计算完成!")
         self.calculating_progress_signal.emit(3, 3)
@@ -259,7 +267,6 @@ class CalculationThread(QObject):
         height, width = data['data_origin'].shape[1], data['data_origin'].shape[2]
         lifetime_map = np.zeros((height, width))
         logging.info("开始计算载流子寿命...")
-
 
         loading_bar_value =0 #进度条
         total_l = height * width

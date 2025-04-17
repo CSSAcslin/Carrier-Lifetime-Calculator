@@ -119,15 +119,16 @@ class MainWindow(QMainWindow):
         time_set = self.QGroupBoxCreator("时间参数:")
 
         time_layout = QVBoxLayout()
-        time_start_layout = QHBoxLayout()
-        time_start_layout.addWidget(QLabel("起始时间:"))
-        self.time_start_input = QDoubleSpinBox()
-        self.time_start_input.setMinimum(0)
-        self.time_start_input.setValue(0)
-        self.time_start_input.setDecimals(3)
-        time_start_layout.addWidget(self.time_start_input)
-        time_start_layout.addWidget(QLabel("帧"))
-        time_layout.addLayout(time_start_layout)
+        # 起始时间设置暂不使用
+        # time_start_layout = QHBoxLayout()
+        # time_start_layout.addWidget(QLabel("起始时间:"))
+        # self.time_start_input = QDoubleSpinBox()
+        # self.time_start_input.setMinimum(0)
+        # self.time_start_input.setValue(0)
+        # self.time_start_input.setDecimals(3)
+        # time_start_layout.addWidget(self.time_start_input)
+        # time_start_layout.addWidget(QLabel("帧"))
+        # time_layout.addLayout(time_start_layout)
 
         time_step_layout = QHBoxLayout()
         time_step_layout.addWidget(QLabel("时间单位:"))
@@ -189,7 +190,7 @@ class MainWindow(QMainWindow):
         self.region_x_input = QSpinBox()
         self.region_y_input = QSpinBox()
         self.region_x_input.setMaximum(131)
-        self.region_y_input.setMaximum(131) #这里后面要改成根据图像大小调节
+        self.region_y_input.setMaximum(131)
         # 载流子寿命分布图参数板
         self.function_stack = QStackedWidget()
         heatmap_group = self.QGroupBoxCreator(style = "inner")
@@ -476,7 +477,7 @@ class MainWindow(QMainWindow):
                 return
 
             # 读取所有图像
-            self.data = self.data_processor.process_files(tiff_files, self.time_start_input, self.time_unit)
+            self.data = self.data_processor.process_files(tiff_files)
 
             if not self.data:
                 self.folder_path_label.setText("无法读取TIFF文件")
@@ -488,6 +489,10 @@ class MainWindow(QMainWindow):
 
             # 显示第一张图像
             self.update_time_slice(0)
+
+            # 根据图像大小调节region范围
+            self.region_x_input.setMaximum(self.data['images'].shape[0])
+            self.region_y_input.setMaximum(self.data['images'].shape[1])
 
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
@@ -536,8 +541,10 @@ class MainWindow(QMainWindow):
         roi_dialog = ROIdrawDialog(base_layer_array=self.data['images'][self.idx],parent=self)
         if roi_dialog.exec_() == QDialog.Accepted:
             self.mask = roi_dialog.get_top_layer_array()
-            logging.info(f'成功绘制ROI，大小{self.mask.shape}')
-            self.data = self.data_processor.amend_data(self.data['origin'], self.mask)
+            logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
+            data_amend = self.data_processor.amend_data(self.data['data_origin'], self.mask)
+            self.data.update(data_amend)
+            self.update_time_slice(self.idx)
 
     def update_time_slice(self, idx):
         """更新时间切片显示"""
