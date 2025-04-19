@@ -54,7 +54,7 @@ class ResultDisplayWidget(QWidget):
         self.update_plot()
 
     def update_plot(self):
-        """根据当前设置重新绘图，有问题先留着"""
+        """根据当前设置重新绘图，有问题 先留着"""
         if self.plot_settings['plot_type'] == 'heatmap':
             self.display_distribution_map()
         else:
@@ -114,12 +114,21 @@ class ResultDisplayWidget(QWidget):
         # 标记最大值
         ax.axvline(time_points[max_idx], color='g', linestyle=':', label='峰值位置')
         # 标记r^2和τ
-        ax.text(0.05, 0.95, f' τ={lifetime:.2f}\n'
-                            +r'$R^2$='
-                            +f'{r_squared:.3f}',
-                 transform=ax.transAxes,
-                 ha='left', va='top',
-                 bbox=dict(facecolor='white', alpha=0.8))
+        if model_type == 'single':
+            ax.text(0.05, 0.95, f' τ={lifetime:.2f}\n'
+                                +r'$R^2$='
+                                +f'{r_squared:.3f}',
+                     transform=ax.transAxes,
+                     ha='left', va='top',
+                     bbox=dict(facecolor='white', alpha=0.8))
+        elif model_type == 'double':
+            ax.text(0.05, 0.95, f' τ1={lifetime[0]:.2f}\n'
+                    + f' τ2={lifetime[1]:.2f}\n'
+                    + r'$R^2$='
+                    + f'{r_squared:.3f}',
+                    transform=ax.transAxes,
+                    ha='left', va='top',
+                    bbox=dict(facecolor='white', alpha=0.8))
 
         ax.set_xlabel('时间/ps')
         ax.set_ylabel('信号强度')

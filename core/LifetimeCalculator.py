@@ -101,7 +101,7 @@ class LifetimeCalculator:
                 return popt, lifetime, r_squared, phy_signal
 
             elif model_type == 'double':
-                # 双指数拟合(没做好，不要用)
+                # 双指数拟合
                 if peak_range[0] <= max_idx <= peak_range[1]:  # 峰值位置筛选
                     A2_guess = A_guess / 2
                     tau2_guess = tau_guess * 2
@@ -120,7 +120,7 @@ class LifetimeCalculator:
                         tau1,tau2 = (0,0)
                         r_squared = np.nan
                     else:
-                        y_pred = LifetimeCalculator.single_exponential(decay_time, *popt)
+                        y_pred = LifetimeCalculator.double_exponential(decay_time, *popt)
                         ss_res = np.sum((decay_signal - y_pred) ** 2)
                         ss_tot = np.sum((decay_signal - np.mean(decay_signal)) ** 2)
                         r_squared = 1 - (ss_res / ss_tot)
@@ -132,14 +132,14 @@ class LifetimeCalculator:
                     tau1,tau2 = (0,0)
                     r_squared = np.nan
                     popt = [0, 0, 0,0,0]
-                return popt, tau1, tau2, r_squared, phy_signal
+                return popt, (tau1, tau2), r_squared, phy_signal
 
         except:
             # 拟合失败时返回NaN
             if model_type == 'single':
-                return [np.nan, np.nan, np.nan], np.nan, np.nan ,np.nan
+                return [np.nan, np.nan, np.nan], np.nan, np.nan ,phy_signal
             else:
-                return [np.nan, np.nan, np.nan, np.nan, np.nan], np.nan, np.nan, np.nan ,np.nan
+                return [np.nan, np.nan, np.nan, np.nan, np.nan], (np.nan, np.nan), np.nan ,phy_signal
 
     @staticmethod
     def analyze_region(data, time_points, center, shape='square', size=5, model_type='single'):
@@ -182,16 +182,15 @@ class LifetimeCalculator:
 
         # 计算寿命
         if model_type == 'single':
-            popt, lifetime, r_squared, phy_signal = LifetimeCalculator.calculate_lifetime(data_type, avg_curve, time_points, 'single')
+            popt, lifetime, r_squared, phy_signal = LifetimeCalculator.calculate_lifetime(data_type, avg_curve, time_points, model_type='single')
             fit_curve = LifetimeCalculator.single_exponential(
                 time_points[np.argmax(phy_signal):] - time_points[np.argmax(phy_signal)],
                 popt[0], popt[1], popt[2])
         elif model_type == 'double':
-            popt, lifetime_1, lifetime_2, r_squared, phy_signal = LifetimeCalculator.calculate_lifetime(data_type, avg_curve, time_points, 'double')
+            popt, lifetime, r_squared, phy_signal = LifetimeCalculator.calculate_lifetime(data_type, avg_curve, time_points, model_type='double')
             fit_curve = LifetimeCalculator.double_exponential(
-                time_points[np.argmax(avg_curve):] - time_points[np.argmax(avg_curve)],
+                time_points[np.argmax(phy_signal):] - time_points[np.argmax(phy_signal)],
                 popt[0], popt[1], popt[2], popt[3], popt[4])
-            lifetime = (lifetime_1, lifetime_2)
         return lifetime, fit_curve, mask, phy_signal, r_squared
 
     @staticmethod
@@ -216,7 +215,7 @@ class LifetimeCalculator:
 class CalculationThread(QObject):
     """仅在线程中使用，目前未加锁（仍无必要）"""
     cal_running_status = pyqtSignal(bool)
-    result_data_signal = pyqtSignal(np.ndarray, float, float, np.ndarray, np.ndarray, dict, str )
+    result_data_signal = pyqtSignal(np.ndarray, object, float, np.ndarray, np.ndarray, dict, str )
     result_map_signal = pyqtSignal(object)
     calculating_progress_signal = pyqtSignal(int, int)
     stop_thread_signal = pyqtSignal()

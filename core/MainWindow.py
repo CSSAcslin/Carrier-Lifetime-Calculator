@@ -100,20 +100,19 @@ class MainWindow(QMainWindow):
 
         # 文件夹选择
         folder_choose = QHBoxLayout()
+        self.group_selector = QComboBox()
+        self.group_selector.addItems(['n', 'p'])
         self.folder_btn = QPushButton("选择TIFF文件夹")
         self.folder_path_label = QLabel("未选择文件夹")
         self.folder_path_label.setMaximumWidth(300)
         self.folder_path_label.setWordWrap(True)
         self.folder_path_label.setStyleSheet("font-size: 14px;") #后续还要改
-        self.group_selector = QComboBox()
-        self.group_selector.addItems(['n', 'p'])
 
         folder_choose.addWidget(QLabel("数据源:"))
-        folder_choose.addWidget(self.folder_btn)
         folder_choose.addWidget(self.group_selector)
+        folder_choose.addWidget(self.folder_btn)
         left_layout.addLayout(folder_choose)
         left_layout.addWidget(self.folder_path_label)
-
 
         # 时间参数
         time_set = self.QGroupBoxCreator("时间参数:")
@@ -169,7 +168,7 @@ class MainWindow(QMainWindow):
         # 寿命模型选择
         operation_layout.addWidget(QLabel("\n寿命模型:"))
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["单指数衰减", "双指数衰减（未实现）"])
+        self.model_combo.addItems(["单指数衰减", "双指数衰减（仅区域曲线）"])
         operation_layout.addWidget(self.model_combo)
         # 区域分析设置
         # operation_layout.addSpacing(10)
@@ -401,7 +400,7 @@ class MainWindow(QMainWindow):
         载流子寿命分析工具启动
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         日志文件: {self.log_file}
-        程序版本: 1.5.1
+        程序版本: 1.5.5
         ============================================
         """
         logging.info(startup_msg.strip())
@@ -491,8 +490,8 @@ class MainWindow(QMainWindow):
             self.update_time_slice(0)
 
             # 根据图像大小调节region范围
-            self.region_x_input.setMaximum(self.data['images'].shape[0])
-            self.region_y_input.setMaximum(self.data['images'].shape[1])
+            self.region_x_input.setMaximum(self.data['images'].shape[1])
+            self.region_y_input.setMaximum(self.data['images'].shape[2])
 
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
