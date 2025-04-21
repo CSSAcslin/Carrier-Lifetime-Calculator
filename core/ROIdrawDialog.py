@@ -3,8 +3,9 @@ import numpy as np
 from math import atan2, pi, cos, sin
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QToolBar, QToolButton,
                              QLabel, QSlider, QColorDialog, QGraphicsView, QGraphicsScene,
-                             QGraphicsPixmapItem, QButtonGroup, QSizePolicy, QDialogButtonBox, QWidget, QApplication)
-from PyQt5.QtCore import Qt, QPoint, QRectF, QSize, QPointF
+                             QGraphicsPixmapItem, QButtonGroup, QSizePolicy, QDialogButtonBox, QWidget, QApplication,
+                             QGraphicsLineItem, QGraphicsItem, QGraphicsPathItem)
+from PyQt5.QtCore import Qt, QPoint, QRectF, QSize, QPointF, QLineF
 from PyQt5.QtGui import (QPixmap, QPainter, QPen, QBrush, QImage, QColor,
                          qRgb, qRed, qGreen, qBlue, QPainterPath)
 
@@ -12,7 +13,7 @@ from PyQt5.QtGui import (QPixmap, QPainter, QPen, QBrush, QImage, QColor,
 class ROIdrawDialog(QDialog):
     def __init__(self, base_layer_array=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("双图层绘图工具")
+        self.setWindowTitle("ROI绘制窗口")
 
         # 初始化变量
         self.drawing = False
@@ -24,6 +25,8 @@ class ROIdrawDialog(QDialog):
         self.top_layer_opacity = 0.8
         self.bottom_layer_opacity = 1.0
         self.angle_step = pi / 4
+        self.current_line = None
+        self.vector_line = None
 
         # 如果没有提供基础图层，创建一个默认的
         if base_layer_array is None:
@@ -212,6 +215,12 @@ class ROIdrawDialog(QDialog):
         self.left_toolbar.addSeparator()
         self.left_toolbar.setContentsMargins(0,2,0,2)
 
+        vector_line_btn = QToolButton()
+        vector_line_btn.setText("矢量直线")
+        vector_line_btn.clicked.connect(lambda: self.set_tool("VectorLine"))
+        self.left_toolbar.addWidget(vector_line_btn)
+        self.tool_button_group.addButton(vector_line_btn)
+
     def update_canvas_size(self):
         # 根据基础图层数组大小创建画布
         height, width = self.base_layer_array.shape
@@ -305,7 +314,10 @@ class ROIdrawDialog(QDialog):
         if self.current_tool == "fill":
             self.fill_at_point(scene_pos.toPoint())
             self.drawing = False
-
+        elif self.current_tool == "VectorLine":
+            self.current_line = QLineF(scene_pos, scene_pos)
+            self.vector_line = VectorLineROI(self.current_line)
+            self.scene.addItem(self.vector_line)
 
     def handle_mouse_move(self, event):
         """处理鼠标移动事件"""
@@ -315,6 +327,7 @@ class ROIdrawDialog(QDialog):
         scene_pos = self.graphics_view.mapToScene(event.pos())
         current_point = scene_pos.toPoint()
         # 创建临时绘图表面
+
         temp_pixmap = QPixmap(self.top_pixmap)
         self._draw_on_pixmap(temp_pixmap, self.last_point, current_point, is_preview=True)
         self.top_layer_item.setPixmap(temp_pixmap)
@@ -322,6 +335,11 @@ class ROIdrawDialog(QDialog):
         if self.current_tool in ["pen", "eraser"]:
             self.top_pixmap = temp_pixmap
             self.last_point = current_point
+        elif self.current_tool == "VectorLine":
+            if self.vector_line:
+                self.current_line.setP2(scene_pos)
+                self.vector_line.setLine(self.current_line)
+            return
 
     def handle_mouse_release(self, event):
         """处理鼠标释放事件"""
@@ -331,6 +349,12 @@ class ROIdrawDialog(QDialog):
         scene_pos = self.graphics_view.mapToScene(event.pos())
         current_point = scene_pos.toPoint()
 
+        if self.current_tool == "VectorLine":
+            if self.vector_line:
+                # 获取像素值
+                intensities = self.vector_line.getPixelValues(self.bottom_layer_item)
+            self.drawing = False
+            return
         # 最终绘制
         self.top_pixmap = self._draw_on_pixmap(
             QPixmap(self.top_pixmap),
@@ -476,3 +500,138 @@ class ROIdrawDialog(QDialog):
 
         return self.top_layer_array.copy(), bool_mask
 
+
+class VectorLineROI(QGraphicsLineItem):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.width = 5  # 默认线宽
+        self.pen = QPen(Qt.blue, 1, Qt.SolidLine)
+        self.setPen(self.pen)
+
+        # 用于显示宽度的路径
+        self.width_path = QGraphicsPathItem()
+        self.width_path.setParentItem(self)
+        self.width_path.setPen(QPen(Qt.blue, 1, Qt.DashLine))
+        self.width_path.setBrush(QBrush(QColor(0, 0, 255, 50)))
+        self.updateWidthPath()
+
+    def setWidth(self, width):
+        self.width = max(1, width)
+        self.updateWidthPath()
+
+    def updateWidthPath(self):
+        """更新显示线宽的路径"""
+        line = self.line()
+        if line.isNull():
+            return
+
+        # 计算垂直于线的向量
+        dx = line.x2() - line.x1()
+        dy = line.y2() - line.y1()
+        length = np.sqrt(dx * dx + dy * dy)
+        if length == 0:
+            return
+
+        # 单位法向量
+        nx = -dy / length
+        ny = dx / length
+
+        # 计算宽度路径的四个角点
+        half_width = self.width / 2
+        p1 = QPointF(line.x1() + nx * half_width, line.y1() + ny * half_width)
+        p2 = QPointF(line.x1() - nx * half_width, line.y1() - ny * half_width)
+        p3 = QPointF(line.x2() - nx * half_width, line.y2() - ny * half_width)
+        p4 = QPointF(line.x2() + nx * half_width, line.y2() + ny * half_width)
+
+        # 创建路径
+        path = QPainterPath()
+        path.moveTo(p1)
+        path.lineTo(p2)
+        path.lineTo(p3)
+        path.lineTo(p4)
+        path.closeSubpath()
+
+        self.width_path.setPath(path)
+
+    def getPixelValues(self, image_item):
+        """
+        获取直线ROI覆盖的像素值
+        返回: 沿着直线方向的平均强度数组
+        """
+        if not isinstance(image_item, QGraphicsPixmapItem):
+            return None
+
+        line = self.line()
+        if line.isNull():
+            return None
+
+        # 获取图像数据
+        pixmap = image_item.pixmap()
+        img = pixmap.toImage()
+        width = img.width()
+        height = img.height()
+
+        # 转换为numpy数组
+        ptr = img.bits()
+        ptr.setsize(img.byteCount())
+        arr = np.array(ptr).reshape(height, width, 4)  # RGBA
+
+        # 只取RGB通道，忽略alpha
+        img_data = arr[:, :, :3].mean(axis=2)  # 转换为灰度
+
+        # 计算直线参数
+        x0, y0 = line.x1(), line.y1()
+        x1, y1 = line.x2(), line.y2()
+        dx = x1 - x0
+        dy = y1 - y0
+        length = np.sqrt(dx * dx + dy * dy)
+
+        if length == 0:
+            return None
+
+        # 单位方向向量和法向量
+        ux = dx / length
+        uy = dy / length
+        nx = -uy
+        ny = ux
+
+        # 采样步长 (每个像素采样一次)
+        step = 1.0
+        num_samples = int(length / step) + 1
+        half_width = self.width / 2
+
+        intensities = []
+
+        for i in range(num_samples):
+            t = i * step
+            if t > length:
+                t = length
+
+            # 直线上的中心点
+            cx = x0 + ux * t
+            cy = y0 + uy * t
+
+            # 收集宽度方向上的像素
+            width_pixels = []
+
+            # 在宽度方向上采样
+            for w in np.linspace(-half_width, half_width, int(self.width) + 1):
+                px = int(round(cx + nx * w))
+                py = int(round(cy + ny * w))
+
+                # 检查是否在图像范围内
+                if 0 <= px < width and 0 <= py < height:
+                    width_pixels.append(img_data[py, px])
+
+            if width_pixels:
+                # 计算宽度方向上的平均值
+                intensities.append(np.mean(width_pixels))
+
+        return intensities
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        self.updateWidthPath()

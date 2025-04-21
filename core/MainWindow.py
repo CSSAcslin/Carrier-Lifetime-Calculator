@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
         self.time_points = None
         self.time_unit = 1.0
         self.space_unit = 1.0
+        self.bool_mask = None
+        self.idx = None
         # 状态控制
         self._is_calculating = False
         # 线程管理
