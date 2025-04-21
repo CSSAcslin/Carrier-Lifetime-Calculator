@@ -69,13 +69,15 @@ class DataProcessor:
             'boundary': {'max':phy_max,'min':phy_min},
         }
 
-    def amend_data(self, data_origin, mask = None):
+    def amend_data(self, data, mask = None):
         """函数修改方法
         输入修改的源数据，导出修改的数据包"""
+        data_origin = data['data_origin']
         if mask is not None and mask.shape == data_origin[0].shape:
             data_mask = [ ]
             for every_data in data_origin:
-                data_mask.append(np.multiply(every_data, mask))
+                # data_mask.append(np.multiply(every_data, mask))
+                every_data[~mask] = data['boundary']['min']
             data_origin = data_mask
         vmax_array = []
         vmin_array = []

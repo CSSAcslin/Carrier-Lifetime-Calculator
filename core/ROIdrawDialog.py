@@ -1,9 +1,10 @@
 import sys
 import numpy as np
+from math import atan2, pi, cos, sin
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QToolBar, QToolButton,
                              QLabel, QSlider, QColorDialog, QGraphicsView, QGraphicsScene,
-                             QGraphicsPixmapItem, QButtonGroup, QSizePolicy, QDialogButtonBox, QWidget)
-from PyQt5.QtCore import Qt, QPoint, QRectF, QSize
+                             QGraphicsPixmapItem, QButtonGroup, QSizePolicy, QDialogButtonBox, QWidget, QApplication)
+from PyQt5.QtCore import Qt, QPoint, QRectF, QSize, QPointF
 from PyQt5.QtGui import (QPixmap, QPainter, QPen, QBrush, QImage, QColor,
                          qRgb, qRed, qGreen, qBlue, QPainterPath)
 
@@ -22,6 +23,7 @@ class ROIdrawDialog(QDialog):
         self.fill_color = Qt.black
         self.top_layer_opacity = 0.8
         self.bottom_layer_opacity = 1.0
+        self.angle_step = pi / 4
 
         # 如果没有提供基础图层，创建一个默认的
         if base_layer_array is None:
@@ -314,42 +316,12 @@ class ROIdrawDialog(QDialog):
         current_point = scene_pos.toPoint()
         # 创建临时绘图表面
         temp_pixmap = QPixmap(self.top_pixmap)
-        painter = QPainter(temp_pixmap)
-        painter.setPen(QPen(self.pen_color, self.pen_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        self._draw_on_pixmap(temp_pixmap, self.last_point, current_point, is_preview=True)
+        self.top_layer_item.setPixmap(temp_pixmap)
 
-        # if self.fill_color != Qt.transparent:
-        #     painter.setBrush(QBrush(self.fill_color))
-
-        if self.current_tool == "pen":
-            painter.drawLine(self.last_point, current_point)
-            self.last_point = current_point
-            painter.end()
+        if self.current_tool in ["pen", "eraser"]:
             self.top_pixmap = temp_pixmap
-            self.top_layer_item.setPixmap(self.top_pixmap)
-
-        elif self.current_tool == "eraser":
-            eraser_pen = QPen(Qt.transparent, self.pen_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            painter.setCompositionMode(QPainter.CompositionMode_Clear)
-            painter.setPen(eraser_pen)
-            painter.drawLine(self.last_point, current_point)
             self.last_point = current_point
-            painter.end()
-            self.top_pixmap = temp_pixmap
-            self.top_layer_item.setPixmap(self.top_pixmap)
-
-        elif self.current_tool in ["line", "rect", "ellipse"]:
-            # 绘制预览形状
-            if self.current_tool == "line":
-                painter.drawLine(self.last_point, current_point)
-            elif self.current_tool == "rect":
-                rect = QRectF(self.last_point, current_point).normalized()
-                painter.drawRect(rect)
-            elif self.current_tool == "ellipse":
-                rect = QRectF(self.last_point, current_point).normalized()
-                painter.drawEllipse(rect)
-            painter.end()
-            self.top_layer_item.setPixmap(temp_pixmap)
-
 
     def handle_mouse_release(self, event):
         """处理鼠标释放事件"""
@@ -358,34 +330,74 @@ class ROIdrawDialog(QDialog):
 
         scene_pos = self.graphics_view.mapToScene(event.pos())
         current_point = scene_pos.toPoint()
-        # 创建临时绘图表面
-        temp_pixmap = QPixmap(self.top_pixmap)
-        painter = QPainter(temp_pixmap)
-        painter.setPen(QPen(self.pen_color, self.pen_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
 
-        # if self.fill_color != Qt.transparent:
-        #     painter.setBrush(QBrush(self.fill_color))
-
-        if self.current_tool == "line":
-            painter.drawLine(self.last_point, current_point)
-
-        elif self.current_tool == "rect":
-            rect = QRectF(self.last_point, current_point).normalized()
-            painter.drawRect(rect)
-
-        elif self.current_tool == "ellipse":
-            rect = QRectF(self.last_point, current_point).normalized()
-            painter.drawEllipse(rect)
-
-        painter.end()
-
-        # 更新显示
-        self.top_pixmap = temp_pixmap
+        # 最终绘制
+        self.top_pixmap = self._draw_on_pixmap(
+            QPixmap(self.top_pixmap),
+            self.last_point,
+            current_point
+        )
         self.top_layer_item.setPixmap(self.top_pixmap)
         self.drawing = False
 
         # 更新顶部图层数组
         self.update_top_layer_array()
+
+    def _draw_on_pixmap(self, pixmap, from_point, to_point, is_preview=False):
+        """通用绘图方法，支持预览和最终绘制"""
+        painter = QPainter(pixmap)
+        painter.setPen(QPen(self.pen_color, self.pen_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        # 检测 Shift 按键
+        shift_pressed = QApplication.keyboardModifiers() == Qt.ShiftModifier
+
+        if self.current_tool == "pen":
+            painter.drawLine(from_point, to_point)
+
+        elif self.current_tool == "eraser":
+            painter.setCompositionMode(QPainter.CompositionMode_Clear)
+            painter.setPen(QPen(Qt.transparent, self.pen_size))
+            painter.drawLine(from_point, to_point)
+
+        elif self.current_tool == "line":
+            if shift_pressed:
+                # --- 角度约束逻辑（45°倍数）---
+                dx = to_point.x() - from_point.x()
+                dy = to_point.y() - from_point.y()
+                length = (dx ** 2 + dy ** 2) ** 0.5  # 直线长度
+
+                if length > 0:
+                    angle = atan2(dy, dx)  # 原始角度（弧度）
+                    constrained_angle = round(angle / self.angle_step) * self.angle_step  # 锁定到最近的45°倍数
+
+                    # 修正终点坐标
+                    to_point = QPointF(
+                        from_point.x() + length * cos(constrained_angle),
+                        from_point.y() + length * sin(constrained_angle)
+                    ).toPoint()
+            painter.drawLine(from_point, to_point)
+
+        elif self.current_tool == "rect":
+            rect = QRectF(from_point, to_point).normalized()
+            if shift_pressed:  # 强制正方形
+                size = min(rect.width(), rect.height())
+                if to_point.x() >= from_point.x() and to_point.y() >= from_point.y():
+                    rect = QRectF(from_point, from_point + QPointF(size, size))
+                else:
+                    rect = QRectF(from_point, from_point - QPointF(size, size))
+            painter.drawRect(rect)
+
+        elif self.current_tool == "ellipse":
+            rect = QRectF(from_point, to_point).normalized()
+            if shift_pressed:  # 强制圆形
+                size = min(rect.width(), rect.height())
+                if to_point.x() >= from_point.x() and to_point.y() >= from_point.y():
+                    rect = QRectF(from_point, from_point + QPointF(size, size))
+                else:
+                    rect = QRectF(from_point, from_point - QPointF(size, size))
+            painter.drawEllipse(rect)
+
+        painter.end()
+        return pixmap
 
     def fill_at_point(self, point):
         """在指定点进行填充"""
@@ -460,27 +472,7 @@ class ROIdrawDialog(QDialog):
 
     def get_top_layer_array(self):
         """获取顶部图层数组"""
-        return self.top_layer_array.copy()
+        bool_mask = self.top_layer_array >128
 
-
-"""if __name__ == "__main__":
-    from PyQt5.QtWidgets import QApplication
-
-    app = QApplication(sys.argv)
-
-    # 创建一个示例基础图层 (中间有一个圆形)
-    base_array = np.zeros((400, 600), dtype=np.uint8)
-    for y in range(400):
-        for x in range(600):
-            # 在中心创建一个圆形
-            if (x - 300) ** 2 + (y - 200) ** 2 <= 100 ** 2:
-                base_array[y, x] = 150
-
-    dialog = ROIdrawDialog(base_array)
-    if dialog.exec_() == QDialog.Accepted:
-        result_array = dialog.get_top_layer_array()
-        print("顶部图层数组形状:", result_array.shape)
-        print("顶部图层非零像素数:", np.count_nonzero(result_array))
-
-    sys.exit(app.exec_())"""
+        return self.top_layer_array.copy(), bool_mask
 

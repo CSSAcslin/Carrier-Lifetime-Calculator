@@ -500,17 +500,20 @@ class MainWindow(QMainWindow):
             return
 
         dialog = BadFrameDialog(self)
+        self.update_status("坏点修复ing", True)
         if dialog.exec_():
             # 更新图像显示
             self.update_time_slice(0)
             self.time_slider.setValue(0)
             logging.info(f"坏点处理完成，修复了 {len(dialog.bad_frames)} 个坏帧")
+        self.update_status("准备就绪", False)
 
     def data_select_edit_dialog(self):
         """数据清洗调整"""
         if not hasattr(self, 'data') or self.data is None:
             logging.warning("无数据，请先加载数据文件")
             return
+        self.update_status("数据清洗ing", True)
         dialog = DataSelectDialog(self)
         if dialog.exec_():
             self.update_time_slice(0)
@@ -522,15 +525,17 @@ class MainWindow(QMainWindow):
                 tau_range=(clean_params['tau_min'], clean_params['tau_max'])
             )
             logging.info("数据已更新，请重新绘图")
-            return
+        self.update_status("准备就绪", False)
 
     def plt_settings_edit_dialog(self):
         """绘图设置"""
         dialog = PltSettingsDialog(self)
+        self.update_status("绘图设置ing", True)
         if dialog.exec_():
             # 将参数传递给ResultDisplayWidget
             self.result_display.update_plot_settings(dialog.params)
             logging.info("绘图设置已更新，请重新绘图")
+        self.update_status("准备就绪", False)
 
     def roi_select_dialog(self):
         """ROI选取功能"""
@@ -538,12 +543,14 @@ class MainWindow(QMainWindow):
             logging.warning("无数据，请先加载数据文件")
             return
         roi_dialog = ROIdrawDialog(base_layer_array=self.data['images'][self.idx],parent=self)
+        self.update_status("ROI绘制ing", True)
         if roi_dialog.exec_() == QDialog.Accepted:
-            self.mask = roi_dialog.get_top_layer_array()
+            self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
             logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
-            data_amend = self.data_processor.amend_data(self.data['data_origin'], self.mask)
+            data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
             self.data.update(data_amend)
             self.update_time_slice(self.idx)
+        self.update_status("准备就绪", False)
 
     def update_time_slice(self, idx):
         """更新时间切片显示"""
