@@ -1,3 +1,4 @@
+import logging
 import sys
 import numpy as np
 from math import atan2, pi, cos, sin
@@ -27,6 +28,7 @@ class ROIdrawDialog(QDialog):
         self.angle_step = pi / 4
         self.current_line = None
         self.vector_line = None
+        self.action_type = None
 
         # 如果没有提供基础图层，创建一个默认的
         if base_layer_array is None:
@@ -67,14 +69,16 @@ class ROIdrawDialog(QDialog):
         main_widget.layout().addWidget(self.graphics_view)
 
         # 底部确认取消按钮区域
-        self.bottom_button_box = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
-            Qt.Horizontal, self
-        )
-        self.bottom_button_box.accepted.connect(self.accept)
-        self.bottom_button_box.rejected.connect(self.reject)
+        bottom_button_box = QDialogButtonBox()
+        mask_accept_btn = bottom_button_box.addButton("确认ROI",QDialogButtonBox.ActionRole)
+        mask_accept_btn.setProperty("action_type", "mask")
+        self.vector_accept_btn = bottom_button_box.addButton("确认线选", QDialogButtonBox.ActionRole)
+        self.vector_accept_btn.setEnabled(False)
+        self.vector_accept_btn.setProperty("action_type", "vector")
+        cancel_btn = bottom_button_box.addButton("取消", QDialogButtonBox.RejectRole)
+        bottom_button_box.clicked.connect(self.on_btn_clicked)
 
-        main_widget.layout().addWidget(self.bottom_button_box)
+        main_widget.layout().addWidget(bottom_button_box)
 
         # 设置主布局
         self.setLayout(QHBoxLayout())
@@ -217,9 +221,19 @@ class ROIdrawDialog(QDialog):
 
         vector_line_btn = QToolButton()
         vector_line_btn.setText("矢量直线")
+        vector_line_btn.setCheckable(True)
         vector_line_btn.clicked.connect(lambda: self.set_tool("VectorLine"))
         self.left_toolbar.addWidget(vector_line_btn)
         self.tool_button_group.addButton(vector_line_btn)
+
+    def on_btn_clicked(self,button):
+        self.action_type = button.property("action_type")
+        if self.action_type == "mask":
+            self.accept()
+        elif self.action_type == "vector":
+            self.accept()
+        else:
+            self.reject()
 
     def update_canvas_size(self):
         # 根据基础图层数组大小创建画布
@@ -257,6 +271,7 @@ class ROIdrawDialog(QDialog):
 
     def set_pen_size(self, size):
         self.pen_size = size
+        self.vector_line.setWidth(size) # 目前是向量直线的线宽也一起设置了
         self.pen_size_value_label.setText(str(size))
 
     def set_top_layer_opacity(self, value):
@@ -288,6 +303,13 @@ class ROIdrawDialog(QDialog):
         self.top_pixmap.fill(Qt.transparent)
         self.top_layer_item.setPixmap(self.top_pixmap)
         self.top_layer_array.fill(0)
+        self.clear_vector_line()
+
+    def clear_vector_line(self):
+        """清除当前矢量直线"""
+        if hasattr(self, 'vector_line') and self.vector_line:
+            self.scene.removeItem(self.vector_line)
+            self.vector_line = None
 
     def eventFilter(self, source, event):
         """处理鼠标事件"""
@@ -315,8 +337,10 @@ class ROIdrawDialog(QDialog):
             self.fill_at_point(scene_pos.toPoint())
             self.drawing = False
         elif self.current_tool == "VectorLine":
+            self.clear_vector_line() # 一次只能保留一条直线
             self.current_line = QLineF(scene_pos, scene_pos)
             self.vector_line = VectorLineROI(self.current_line)
+            self.vector_line.setWidth(self.pen_size_slider.value()) # 与画笔宽度整合
             self.scene.addItem(self.vector_line)
 
     def handle_mouse_move(self, event):
@@ -339,6 +363,7 @@ class ROIdrawDialog(QDialog):
             if self.vector_line:
                 self.current_line.setP2(scene_pos)
                 self.vector_line.setLine(self.current_line)
+                self.vector_line.updateWidthPath()
             return
 
     def handle_mouse_release(self, event):
@@ -352,20 +377,21 @@ class ROIdrawDialog(QDialog):
         if self.current_tool == "VectorLine":
             if self.vector_line:
                 # 获取像素值
-                intensities = self.vector_line.getPixelValues(self.bottom_layer_item)
+                self.vector_accept_btn.setEnabled(True)
             self.drawing = False
             return
-        # 最终绘制
-        self.top_pixmap = self._draw_on_pixmap(
-            QPixmap(self.top_pixmap),
-            self.last_point,
-            current_point
-        )
-        self.top_layer_item.setPixmap(self.top_pixmap)
-        self.drawing = False
+        else:
+            # 最终绘制
+            self.top_pixmap = self._draw_on_pixmap(
+                QPixmap(self.top_pixmap),
+                self.last_point,
+                current_point
+            )
+            self.top_layer_item.setPixmap(self.top_pixmap)
+            self.drawing = False
 
-        # 更新顶部图层数组
-        self.update_top_layer_array()
+            # 更新顶部图层数组
+            self.update_top_layer_array()
 
     def _draw_on_pixmap(self, pixmap, from_point, to_point, is_preview=False):
         """通用绘图方法，支持预览和最终绘制"""
@@ -514,7 +540,7 @@ class VectorLineROI(QGraphicsLineItem):
         # 用于显示宽度的路径
         self.width_path = QGraphicsPathItem()
         self.width_path.setParentItem(self)
-        self.width_path.setPen(QPen(Qt.blue, 1, Qt.DashLine))
+        self.width_path.setPen(QPen(Qt.transparent))
         self.width_path.setBrush(QBrush(QColor(0, 0, 255, 50)))
         self.updateWidthPath()
 
@@ -556,32 +582,20 @@ class VectorLineROI(QGraphicsLineItem):
 
         self.width_path.setPath(path)
 
-    def getPixelValues(self, image_item):
+    # def mouseMoveEvent(self, event):
+    #     super().mouseMoveEvent(event)
+    #     self.updateWidthPath()
+
+    def getPixelValues(self, data, spatial_scale=1.0, temporal_scale=1.0):
         """
         获取直线ROI覆盖的像素值
-        返回: 沿着直线方向的平均强度数组
+        返回: [t, x, 2] 数组，其中最后一维是[位置, 平均值]
         """
-        if not isinstance(image_item, QGraphicsPixmapItem):
-            return None
-
         line = self.line()
-        if line.isNull():
+        if line.isNull() or data['data_origin'] is None:
             return None
 
-        # 获取图像数据
-        pixmap = image_item.pixmap()
-        img = pixmap.toImage()
-        width = img.width()
-        height = img.height()
-
-        # 转换为numpy数组
-        ptr = img.bits()
-        ptr.setsize(img.byteCount())
-        arr = np.array(ptr).reshape(height, width, 4)  # RGBA
-
-        # 只取RGB通道，忽略alpha
-        img_data = arr[:, :, :3].mean(axis=2)  # 转换为灰度
-
+        data_origin = data['data_origin']
         # 计算直线参数
         x0, y0 = line.x1(), line.y1()
         x1, y1 = line.x2(), line.y2()
@@ -598,40 +612,41 @@ class VectorLineROI(QGraphicsLineItem):
         nx = -uy
         ny = ux
 
-        # 采样步长 (每个像素采样一次)
-        step = 1.0
+        # 采样参数
+        step = spatial_scale
         num_samples = int(length / step) + 1
         half_width = self.width / 2
 
-        intensities = []
+        # 准备输出数组
+        t_dim = data_origin.shape[0]
+        result = np.zeros((t_dim, num_samples, 2))
 
         for i in range(num_samples):
             t = i * step
             if t > length:
                 t = length
 
+            # 记录位置信息
+            result[:, i, 0] = t
+
             # 直线上的中心点
             cx = x0 + ux * t
             cy = y0 + uy * t
 
             # 收集宽度方向上的像素
-            width_pixels = []
-
-            # 在宽度方向上采样
             for w in np.linspace(-half_width, half_width, int(self.width) + 1):
                 px = int(round(cx + nx * w))
                 py = int(round(cy + ny * w))
 
                 # 检查是否在图像范围内
-                if 0 <= px < width and 0 <= py < height:
-                    width_pixels.append(img_data[py, px])
+                if 0 <= px < data_origin.shape[2] and 0 <= py < data_origin.shape[1]:
+                    # 计算时间序列上的平均值
+                    result[:, i, 1] += data_origin[:, py, px]
 
-            if width_pixels:
-                # 计算宽度方向上的平均值
-                intensities.append(np.mean(width_pixels))
+            # 计算宽度方向上的平均值
+            if self.width > 0:
+                result[:, i, 1] /= (int(self.width) + 1)
 
-        return intensities
+        return result
 
-    def mouseMoveEvent(self, event):
-        super().mouseMoveEvent(event)
-        self.updateWidthPath()
+

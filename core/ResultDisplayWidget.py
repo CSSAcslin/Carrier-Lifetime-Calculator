@@ -55,10 +55,11 @@ class ResultDisplayWidget(QWidget):
 
     def update_plot(self):
         """根据当前设置重新绘图，有问题 先留着"""
-        if self.plot_settings['plot_type'] == 'heatmap':
-            self.display_distribution_map()
-        else:
-            self.display_lifetime_curve()
+        pass
+        # if self.plot_settings['plot_type'] == 'heatmap':
+        #     self.display_distribution_map()
+        # else:
+        #     self.display_lifetime_curve()
 
     def display_distribution_map(self, lifetime_map):
         """显示寿命热图"""
@@ -144,8 +145,42 @@ class ResultDisplayWidget(QWidget):
                                 'fit_curve':pd.Series(fit_curve)
                             })
 
+    def plot_roi_signal(self, positions, intensities, title=""):
+        """绘制向量ROI信号强度曲线"""
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        # line_style = self.plot_settings['line_style']
+        # line_width = self.plot_settings['line_width']
+        marker_style = self.plot_settings['marker_style']
+        marker_size = self.plot_settings['marker_size']
+        color = self.plot_settings['color']
 
+        # 绘制曲线
+        # ax.plot(positions, intensities,
+        #         markeredgecolor=color,
+        #         marker=marker_style,       # 方形点
+        #         markersize=marker_size,    # 点大小
+        #         linewidth=line_width,
+        #         label='信号强度')
+        ax.scatter(positions, intensities,
+                c=color,
+                marker=marker_style,       # 方形点
+                label='采样点')
+
+        # 设置图表属性
+        ax.set_title(title)
+        ax.set_xlabel("位置 (μm)")
+        ax.set_ylabel("对比度")
+        # ax.grid(True)
+        ax.legend()
+
+        self.canvas.draw()
+
+        self.current_data = pd.DataFrame({
+                                        'time': pd.Series(positions),
+                                        'signal': pd.Series(intensities),
+                                    })
     def clear(self):
         """清除显示"""
         self.figure.clear()
-        self.canvas.draw()
+        # self.canvas.draw()

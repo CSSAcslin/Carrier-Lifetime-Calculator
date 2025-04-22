@@ -6,7 +6,8 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
-                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget, QStatusBar
+                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget,
+                             QStatusBar, QScrollBar
                              )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject
 
@@ -41,6 +42,7 @@ class MainWindow(QMainWindow):
         self.space_unit = 1.0
         self.bool_mask = None
         self.idx = None
+        self.vector_array = None
         # 状态控制
         self._is_calculating = False
         # 线程管理
@@ -50,7 +52,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("载流子寿命分析工具")
-        self.setGeometry(100, 20, 1300, 850)
+        self.setGeometry(100, 20, 1500, 850)
 
         # 主部件和布局
         main_widget = QWidget()
@@ -84,8 +86,14 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(slider_layout)
 
         # 结果显示区域
+        right_layout_horizontal = QHBoxLayout()
+        self.time_slider_vertical = QSlider(Qt.Vertical)
+        self.time_slider_vertical.setRange(0, 0)
+        self.time_slider_vertical.setVisible(False)
         self.result_display = ResultDisplayWidget()
-        right_layout.addWidget(self.result_display, stretch=2)
+        right_layout_horizontal.addWidget(self.time_slider_vertical)
+        right_layout_horizontal.addWidget(self.result_display)
+        right_layout.addLayout(right_layout_horizontal, stretch=2)
         main_layout.addWidget(right_panel, stretch=3)
 
         self.setup_status_bar()
@@ -176,8 +184,18 @@ class MainWindow(QMainWindow):
         # operation_layout.addSpacing(10)
         operation_layout.addWidget(QLabel("\n分析模式:"))
         self.function_combo = QComboBox()
-        self.function_combo.addItems(["载流子热图分析", "特定区域寿命分析"])
+        self.function_combo.addItems(["载流子热图分析", "特定区域寿命分析","载流子扩散系数计算"])
         operation_layout.addWidget(self.function_combo)
+
+        self.function_stack = QStackedWidget()
+        # 载流子寿命分布图参数板
+        heatmap_group = self.QGroupBoxCreator(style = "inner")
+        heatmap_layout = QVBoxLayout()
+        self.analyze_btn = QPushButton("开始分析")
+        heatmap_layout.addWidget(self.analyze_btn)
+        heatmap_group.setLayout(heatmap_layout)
+        self.function_stack.addWidget(heatmap_group)
+        # 特定区域寿命分析功能参数板
         # 区域分析参数
         self.region_shape_combo = QComboBox()
         self.region_shape_combo.addItems(["正方形", "圆形"])
@@ -186,21 +204,12 @@ class MainWindow(QMainWindow):
         self.region_size_input.setMaximum(50)
         self.region_size_input.setValue(5)
         self.analyze_region_btn = QPushButton("分析选定区域")
-
         # 区域坐标输入
         self.region_x_input = QSpinBox()
         self.region_y_input = QSpinBox()
         self.region_x_input.setMaximum(131)
         self.region_y_input.setMaximum(131)
-        # 载流子寿命分布图参数板
-        self.function_stack = QStackedWidget()
-        heatmap_group = self.QGroupBoxCreator(style = "inner")
-        heatmap_layout = QVBoxLayout()
-        self.analyze_btn = QPushButton("开始分析")
-        heatmap_layout.addWidget(self.analyze_btn)
-        heatmap_group.setLayout(heatmap_layout)
-        self.function_stack.addWidget(heatmap_group)
-        # 特定区域寿命分析功能参数板
+        # 区域分析面板生成
         region_group = self.QGroupBoxCreator(style = "inner")
         region_layout = QVBoxLayout()
         coord_layout = QHBoxLayout()
@@ -220,6 +229,21 @@ class MainWindow(QMainWindow):
         region_layout.addWidget(self.analyze_region_btn)
         region_group.setLayout(region_layout)
         self.function_stack.addWidget(region_group)
+        # 载流子扩散系数计算参数板
+        diffusion_group = self.QGroupBoxCreator(style = "inner")
+        diffusion_layout = QVBoxLayout()
+        self.vector_signal_btn = QPushButton("1.展示ROI上全时信号强度")
+        self.frame_input = QTextEdit()
+        self.frame_input.setPlaceholderText("2.请输入帧的位数（起始帧位为0），以逗号或分号分隔\n例如：0, 5, 10, 15")
+        self.frame_input.setFixedHeight(70)
+        self.select_frames_btn = QPushButton("3.展示选定时刻信号强度")
+        self.diffusion_coefficient_btn = QPushButton("4.展示方差演化图及扩散系数")
+        diffusion_layout.addWidget(self.vector_signal_btn)
+        diffusion_layout.addWidget(self.frame_input)
+        diffusion_layout.addWidget(self.select_frames_btn)
+        diffusion_layout.addWidget(self.diffusion_coefficient_btn)
+        diffusion_group.setLayout(diffusion_layout)
+        self.function_stack.addWidget(diffusion_group)
         operation_layout.addWidget(self.function_stack)
 
 
@@ -355,6 +379,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.console_dock)
 
         # 设置控制台特性
+        self.console_dock.setMinimumWidth(400)
         self.console_dock.setMinimumHeight(200)
         self.console_dock.setFeatures(QDockWidget.DockWidgetMovable |
                                       QDockWidget.DockWidgetFloatable |
@@ -429,6 +454,9 @@ class MainWindow(QMainWindow):
         self.analyze_region_btn.clicked.connect(self.region_analyze_start)
         self.analyze_btn.clicked.connect(self.distribution_analyze_start)
         self.function_combo.currentIndexChanged.connect(self.function_stack.setCurrentIndex)
+        self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
+        self.select_frames_btn.clicked.connect(self.vectorROI_selection)
+        self.diffusion_coefficient_btn.clicked.connect(self.diffusion_coefficient_calshow)
         self.export_image_btn.clicked.connect(self.export_image)
         self.export_data_btn.clicked.connect(self.export_data)
         # 鼠标移动
@@ -436,6 +464,7 @@ class MainWindow(QMainWindow):
         self.image_display.mouse_clicked_signal.connect(self._handle_click)
         # 时间滑块
         self.time_slider.valueChanged.connect(self.update_time_slice)
+        self.time_slider_vertical.valueChanged.connect(self.update_result_display)
         # 连接控制台信号
         self.command_processor.terminate_requested.connect(self.stop_calculation)
         self.command_processor.save_config_requested.connect(self.save_config)
@@ -547,11 +576,17 @@ class MainWindow(QMainWindow):
         roi_dialog = ROIdrawDialog(base_layer_array=self.data['images'][self.idx],parent=self)
         self.update_status("ROI绘制ing", True)
         if roi_dialog.exec_() == QDialog.Accepted:
-            self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
-            logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
-            data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
-            self.data.update(data_amend)
-            self.update_time_slice(self.idx)
+            if roi_dialog.action_type == "mask":
+                self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
+                logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
+                data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
+                self.data.update(data_amend)
+                self.update_time_slice(self.idx)
+            elif roi_dialog.action_type == "vector":
+                self.vector_array = roi_dialog.vector_line.getPixelValues(self.data,self.space_unit,self.time_unit)
+                logging.info(f'成功绘制ROI，大小{self.vector_array.shape}')
+
+
         self.update_status("准备就绪", False)
 
     def update_time_slice(self, idx):
@@ -577,10 +612,75 @@ class MainWindow(QMainWindow):
             self.update_status("计算完成")
             self.progress_bar.reset()
 
+    def vectorROI_signal_show(self):
+        """向量选取信号全部展示"""
+        if not hasattr(self, 'data') or self.data is None:
+            logging.warning("无数据，请先加载数据文件")
+            return
+        if self.vector_array is None :
+            logging.warning("未选取向量直线ROI")
+            return
+        elif self.data['data_origin'].shape[0] == self.vector_array.shape[0]:
+            self.time_slider_vertical.setVisible(True)
+            self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
+            self.update_result_display(0)
+        else:
+            logging.error("数据长度不匹配")
+            return
+
+    def update_result_display(self,idx):
+        if self.vector_array is not None and 0 <= idx < self.vector_array.shape[0]:
+            frame_data = self.vector_array[idx]
+            self.result_display.plot_roi_signal(
+                positions=frame_data[:, 0],
+                intensities=frame_data[:, 1],
+                title=f"ROI信号强度 (帧:{idx})"
+            )
+
+    def vectorROI_selection(self):
+        """向量选取信号选择展示"""
+        frames = self.parse_frame_input()
+        if not frames or not hasattr(self, 'roi_signal_data'):
+            return
+
+        # 检查帧数是否有效
+        max_frame = self.roi_signal_data.shape[0] - 1
+        invalid_frames = [f for f in frames if f < 0 or f > max_frame]
+        if invalid_frames:
+            QMessageBox.warning(
+                self, "帧数超出范围",
+                f"有效帧数范围: 0-{max_frame}\n无效帧: {invalid_frames}"
+            )
+            frames = [f for f in frames if 0 <= f <= max_frame]
+            if not frames:
+                return
+
+        # 收集选定帧的数据
+        frame_data = {f: self.roi_signal_data[f] for f in frames}
+
+        # 信号拟合和绘制
+        self.result_display.plot_multi_frame_signal(frame_data)
+
+        # 自动显示方差演化图
+        self.show_variance_evolution()
+
+    def parse_frame_input(self):
+        """解析用户输入的帧数"""
+        text = self.frame_input.toPlainText()
+        # 替换所有分隔符为逗号
+        text = text.replace(';', ',').replace('，', ',')
+        try:
+            frames = [int(f.strip()) for f in text.split(',') if f.strip()]
+            return sorted(list(set(frames)))  # 去重并排序
+        except ValueError:
+            QMessageBox.warning(self, "输入错误", "请输入有效的帧数，用逗号或分号分隔")
+            return None
+
     def region_analyze_start(self):
         """分析选定区域载流子寿命"""
         if self.data is None or not hasattr(self, 'time_points'):
             return logging.warning('无数据载入')
+        self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要开启
         if not self.is_thread_active("thread"):
             self.thread_open()
@@ -602,6 +702,7 @@ class MainWindow(QMainWindow):
         """分析载流子寿命"""
         if self.data is None:
             return logging.warning('无数据载入')
+        self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
         if not self.is_thread_active("thread"):
             self.thread_open()
@@ -612,6 +713,10 @@ class MainWindow(QMainWindow):
         self.time_unit = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type)
+
+    def diffusion_coefficient_calshow(self):
+        """载流子计算和显示"""
+        pass
 
     def is_thread_active(self, thread_name: str) -> bool:
         """检查指定名称的线程是否存在且正在运行"""
