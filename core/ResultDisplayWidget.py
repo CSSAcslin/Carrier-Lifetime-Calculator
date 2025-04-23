@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import matplotlib as plt
 import matplotlib.font_manager as fm
@@ -145,7 +147,7 @@ class ResultDisplayWidget(QWidget):
                                 'fit_curve':pd.Series(fit_curve)
                             })
 
-    def plot_roi_signal(self, positions, intensities, title=""):
+    def display_roi_series(self, positions, intensities, title=""):
         """绘制向量ROI信号强度曲线"""
         self.figure.clear()
         ax = self.figure.add_subplot(111)
@@ -180,7 +182,71 @@ class ResultDisplayWidget(QWidget):
                                         'time': pd.Series(positions),
                                         'signal': pd.Series(intensities),
                                     })
-    def clear(self):
+
+    def display_diffusion_coefficient(self, frame_data_dict):
+        """绘制多帧信号及高斯拟合,方差随时间变化图并计算扩散系数"""
+        if self.fit_results is None or self.fit_results.shape[1] < 2:
+            logging.warning('缺数据或数据有问题无法绘图')
+            return
+
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+
+        for i, (frame_idx, data) in enumerate(frame_data_dict['signal'].items()):
+            positions = data[:, 0]
+            intensities = data[:, 1]
+
+            # 绘制原始数据
+            ax.scatter(positions, intensities, label=f'帧 {frame_idx} 数据点')
+
+        for series in frame_data_dict['fitting']:
+            positions = series[0]
+            fitting_curve = series[1]
+            ax.plot(positions, fitting_curve, '--',
+                    label=f'帧拟合')
+
+        # 设置图表属性
+        ax.set_title("多帧ROI信号强度及高斯拟合")
+        ax.set_xlabel("位置 (μm)")
+        ax.set_ylabel("信号强度 (a.u.)")
+        ax.grid(True)
+        ax.legend()
+
+        self.canvas.draw()
+
+    def plot_variance_evolution(self):
+        """绘制方差随时间变化图并计算扩散系数"""
+        if self.fit_results is None or self.fit_results.shape[1] < 2:
+            logging.warning('缺数据或数据有问题无法绘图')
+            return
+
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+
+        times = self.fit_results[0]
+        variances = self.fit_results[1]
+
+        # 绘制数据点
+        ax.scatter(times, variances, c='r', s=50, label='方差数据')
+
+        # 线性拟合
+        slope, intercept = np.polyfit(times, variances, 1)
+        fit_line = slope * times + intercept
+        ax.plot(times, fit_line, 'b--',
+                label=f'线性拟合 (D={slope / 2:.2e})')
+
+        # 设置图表属性
+        ax.set_title("高斯方差随时间演化")
+        ax.set_xlabel("时间 (s)")
+        ax.set_ylabel("方差 (μm²)")
+        ax.grid(True)
+        ax.legend()
+
+        self.canvas.draw()
+        return slope / 2  # 返回扩散系数 D = slope / 2
+
+
+def clear(self):
         """清除显示"""
         self.figure.clear()
         # self.canvas.draw()

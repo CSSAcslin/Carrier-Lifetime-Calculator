@@ -210,13 +210,32 @@ class LifetimeCalculator:
         # 边界处理采用镜像模式
         return convolve(data, kernel, mode='mirror')
 
+    @staticmethod
+    def gaussian_func(x, a, mu, sigma):
+        """高斯函数"""
+        return a * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
 
+    @staticmethod
+    def gaussian_fit(x, y):
+        """高斯拟合"""
+        # 初始猜测参数 [幅值, 均值, 标准差]
+        a_guess = max(y)
+        mu_guess = x[np.argmax(y)]
+        sigma_guess = (max(x) - min(x)) / 4
+
+        popt, pcov = curve_fit(
+            LifetimeCalculator.gaussian_func,
+            x, y,
+            p0=[a_guess, mu_guess, sigma_guess]
+        )
+        return popt, pcov
 
 class CalculationThread(QObject):
     """仅在线程中使用，目前未加锁（仍无必要）"""
     cal_running_status = pyqtSignal(bool)
     result_data_signal = pyqtSignal(np.ndarray, object, float, np.ndarray, np.ndarray, dict, str )
     result_map_signal = pyqtSignal(object)
+    diffusion_coefficient_signal = pyqtSignal(dict)
     calculating_progress_signal = pyqtSignal(int, int)
     stop_thread_signal = pyqtSignal()
     cal_time = pyqtSignal(float)
@@ -303,6 +322,56 @@ class CalculationThread(QObject):
         # 显示结果
         smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
         self.result_map_signal.emit(smoothed_map)
+        self.cal_time.emit(timer.elapsed())
+        self._is_calculating = False
+        self.cal_running_status.emit(False)
+        self.stop_thread_signal.emit()
+
+    def diffusion_calculation(self,frame_data,time_unit):
+        # 存储拟合方差结果 [时间, 方差]
+        self._is_calculating = True
+        self.cal_running_status.emit(True)
+        timer = QElapsedTimer()
+        timer.start()
+
+        sigma_results = np.zeros((2, len(frame_data)))
+        sigma = np.zeros((2, len(frame_data)))
+        loading_bar_value =0 #进度条
+        total_l = len(frame_data)
+        fitting_result = []
+        if self._is_calculating:  # 线程关闭控制（目前仅针对长时计算）
+            for i, (frame_idx, data) in enumerate(frame_data.items()):
+                positions = data[:, 0]
+                intensities = data[:, 1]
+
+                # 高斯拟合
+                try:
+                    popt, pcov = LifetimeCalculator.gaussian_fit(positions, intensities)
+                    fit_curve = LifetimeCalculator.gaussian_func(positions, *popt)
+                    # ax.plot(positions, fit_curve, '--',
+                    #         label=f'帧 {frame_idx} 拟合 (σ={popt[2]:.2f})')
+
+                    # 保存拟合结果
+                    sigma_results[0, i] = frame_idx * time_unit
+                    sigma_results[1, i] = popt[2] ** 2  # 保存方差
+                    fitting_result.append(np.stack((positions,fit_curve),axis=0))
+                except Exception as e:
+                    logging.error(f"拟合失败,报错{e}")
+                loading_bar_value += 1
+                self.calculating_progress_signal.emit(loading_bar_value, total_l)
+        else:
+            logging.info("计算终止")
+            self.calculating_progress_signal.emit(total_l, total_l)  # 进度条更新
+            self.cal_running_status.emit(False)
+            self.stop_thread_signal.emit()  # 目前来说，计算终止也会关闭线程，后续可考虑分开命令
+            return
+
+        dif_data_dict = {
+            'sigma': np.stack(sigma_results, axis=0),
+            'signal': frame_data,
+            'fitting': np.stack(fitting_result, axis=0),
+        }
+        self.diffusion_coefficient_signal.emit(dif_data_dict)
         self.cal_time.emit(timer.elapsed())
         self._is_calculating = False
         self.cal_running_status.emit(False)

@@ -26,6 +26,7 @@ class MainWindow(QMainWindow):
     # 线程激活信号
     start_reg_cal_signal = pyqtSignal(dict, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(dict, float, str)
+    start_dif_cal_signal = pyqtSignal(dict, float)
 
     def __init__(self):
         super().__init__()
@@ -441,9 +442,11 @@ class MainWindow(QMainWindow):
         # 计算状态更新
         self.start_reg_cal_signal.connect(self.cal_thread.region_analyze)
         self.start_dis_cal_signal.connect(self.cal_thread.distribution_analyze)
+        self.start_dif_cal_signal.connect(self.cal_thread.diffusion_calculation)
         self.cal_thread.calculating_progress_signal.connect(self.update_progress)
         self.cal_thread.result_data_signal.connect(self.result_display.display_lifetime_curve)
         self.cal_thread.result_map_signal.connect(self.result_display.display_distribution_map)
+        self.cal_thread.diffusion_coefficient_signal.connect(self.result_display.display_diffusion_coefficient)
         self.cal_thread.stop_thread_signal.connect(self.stop_thread)
         self.cal_thread.cal_time.connect(lambda ms: logging.info(f"耗时: {ms}毫秒"))
         self.cal_thread.cal_running_status.connect(self.btn_safety)
@@ -456,7 +459,7 @@ class MainWindow(QMainWindow):
         self.function_combo.currentIndexChanged.connect(self.function_stack.setCurrentIndex)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
-        self.diffusion_coefficient_btn.clicked.connect(self.diffusion_coefficient_calshow)
+        self.diffusion_coefficient_btn.clicked.connect(self.result_display.plot_variance_evolution)
         self.export_image_btn.clicked.connect(self.export_image)
         self.export_data_btn.clicked.connect(self.export_data)
         # 鼠标移动
@@ -631,7 +634,7 @@ class MainWindow(QMainWindow):
     def update_result_display(self,idx):
         if self.vector_array is not None and 0 <= idx < self.vector_array.shape[0]:
             frame_data = self.vector_array[idx]
-            self.result_display.plot_roi_signal(
+            self.result_display.display_roi_series(
                 positions=frame_data[:, 0],
                 intensities=frame_data[:, 1],
                 title=f"ROI信号强度 (帧:{idx})"
@@ -640,29 +643,33 @@ class MainWindow(QMainWindow):
     def vectorROI_selection(self):
         """向量选取信号选择展示"""
         frames = self.parse_frame_input()
-        if not frames or not hasattr(self, 'roi_signal_data'):
+        if not frames :
+            logging.warning("请输入选取的帧数")
+        elif not hasattr(self, 'vector_array'):
+            logging.warning("请选择矢量直线绘制ROI选区")
             return
 
         # 检查帧数是否有效
-        max_frame = self.roi_signal_data.shape[0] - 1
+        max_frame = self.vector_array.shape[0] - 1
         invalid_frames = [f for f in frames if f < 0 or f > max_frame]
         if invalid_frames:
             QMessageBox.warning(
                 self, "帧数超出范围",
                 f"有效帧数范围: 0-{max_frame}\n无效帧: {invalid_frames}"
             )
+            logging.warning("请输入有效帧数")
             frames = [f for f in frames if 0 <= f <= max_frame]
             if not frames:
                 return
 
         # 收集选定帧的数据
-        frame_data = {f: self.roi_signal_data[f] for f in frames}
+        self.vectorROI_data = {f: self.vector_array[f] for f in frames}
 
         # 信号拟合和绘制
-        self.result_display.plot_multi_frame_signal(frame_data)
+        self.diffusion_calculation_start()
 
-        # 自动显示方差演化图
-        self.show_variance_evolution()
+        # # 自动显示方差演化图
+        # self.display_diffusion_coefficient()
 
     def parse_frame_input(self):
         """解析用户输入的帧数"""
@@ -674,6 +681,7 @@ class MainWindow(QMainWindow):
             return sorted(list(set(frames)))  # 去重并排序
         except ValueError:
             QMessageBox.warning(self, "输入错误", "请输入有效的帧数，用逗号或分号分隔")
+            logging.warning("输入错误,请输入有效的帧数，用逗号或分号分隔")
             return None
 
     def region_analyze_start(self):
@@ -714,9 +722,21 @@ class MainWindow(QMainWindow):
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type)
 
-    def diffusion_coefficient_calshow(self):
-        """载流子计算和显示"""
-        pass
+    def diffusion_calculation_start(self):
+        """扩散系数计算"""
+        if self.data is None:
+            return logging.warning('无数据载入')
+        elif self.vectorROI_data is None:
+            return  logging.warning("无有效ROI数据")
+        self.time_slider_vertical.setVisible(False)
+        # 如果线程没了，要创建
+        if not self.is_thread_active("thread"):
+            self.thread_open()
+
+        self.thread.start()
+        self.update_status('计算进行中...', True)
+        self.time_unit = float(self.time_step_input.value())
+        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_unit)
 
     def is_thread_active(self, thread_name: str) -> bool:
         """检查指定名称的线程是否存在且正在运行"""
