@@ -327,7 +327,7 @@ class CalculationThread(QObject):
         self.cal_running_status.emit(False)
         self.stop_thread_signal.emit()
 
-    def diffusion_calculation(self,frame_data,time_unit):
+    def diffusion_calculation(self,frame_data,time_unit,space_unit):
         # 存储拟合方差结果 [时间, 方差]
         self._is_calculating = True
         self.cal_running_status.emit(True)
@@ -335,26 +335,27 @@ class CalculationThread(QObject):
         timer.start()
 
         sigma_results = np.zeros((2, len(frame_data)))
-        sigma = np.zeros((2, len(frame_data)))
+        time_series = []
         loading_bar_value =0 #进度条
         total_l = len(frame_data)
         fitting_result = []
-        if self._is_calculating:  # 线程关闭控制（目前仅针对长时计算）
+        signal_series = []
+        if self._is_calculating:  # 线程关闭控制（目前仅针对循环计算）
             for i, (frame_idx, data) in enumerate(frame_data.items()):
-                positions = data[:, 0]
+                positions = data[:, 0] * space_unit # 此处合并单位长度
                 intensities = data[:, 1]
 
                 # 高斯拟合
                 try:
                     popt, pcov = LifetimeCalculator.gaussian_fit(positions, intensities)
                     fit_curve = LifetimeCalculator.gaussian_func(positions, *popt)
-                    # ax.plot(positions, fit_curve, '--',
-                    #         label=f'帧 {frame_idx} 拟合 (σ={popt[2]:.2f})')
 
                     # 保存拟合结果
-                    sigma_results[0, i] = frame_idx * time_unit
+                    sigma_results[0, i] = frame_idx * time_unit # 此处合并单位时间
                     sigma_results[1, i] = popt[2] ** 2  # 保存方差
+                    time_series.append(frame_idx * time_unit)  # 时间点单独算
                     fitting_result.append(np.stack((positions,fit_curve),axis=0))
+                    signal_series.append(np.stack((positions,intensities),axis=0))
                 except Exception as e:
                     logging.error(f"拟合失败,报错{e}")
                 loading_bar_value += 1
@@ -368,8 +369,9 @@ class CalculationThread(QObject):
 
         dif_data_dict = {
             'sigma': np.stack(sigma_results, axis=0),
-            'signal': frame_data,
+            'signal': np.stack(signal_series, axis=0),
             'fitting': np.stack(fitting_result, axis=0),
+            'time_series': np.stack(time_series, axis=0)
         }
         self.diffusion_coefficient_signal.emit(dif_data_dict)
         self.cal_time.emit(timer.elapsed())

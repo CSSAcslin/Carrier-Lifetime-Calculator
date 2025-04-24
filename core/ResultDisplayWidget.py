@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
                              )
+from pandas.core.interchange.dataframe_protocol import DataFrame
+
 
 class ResultDisplayWidget(QWidget):
     """结果热图显示部件"""
@@ -18,6 +20,7 @@ class ResultDisplayWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         # self.font1 = plt.font_manager.FontProperties(fname=r"C:\Windows\Fonts\msyh.ttc")
+        self.current_data = None
         self.init_ui()
         self.font_list = fm.findSystemFonts(fontpaths=r"C:\Windows\Fonts" , fontext='ttf')
         self.chinese_fonts = [f for f in self.font_list if
@@ -171,7 +174,7 @@ class ResultDisplayWidget(QWidget):
 
         # 设置图表属性
         ax.set_title(title)
-        ax.set_xlabel("位置 (μm)")
+        ax.set_xlabel("位置 (像素)")
         ax.set_ylabel("对比度")
         # ax.grid(True)
         ax.legend()
@@ -184,47 +187,75 @@ class ResultDisplayWidget(QWidget):
                                     })
 
     def display_diffusion_coefficient(self, frame_data_dict):
-        """绘制多帧信号及高斯拟合,方差随时间变化图并计算扩散系数"""
-        if self.fit_results is None or self.fit_results.shape[1] < 2:
+        """绘制多帧信号及高斯拟合"""
+        if frame_data_dict is None:
             logging.warning('缺数据或数据有问题无法绘图')
             return
 
         self.figure.clear()
         ax = self.figure.add_subplot(111)
+        self.dif_result = frame_data_dict
+        marker_style = self.plot_settings['marker_style']
+        marker_size = self.plot_settings['marker_size']
+        color = self.plot_settings['color']
 
-        for i, (frame_idx, data) in enumerate(frame_data_dict['signal'].items()):
+        for i, data in enumerate(self.dif_result['signal']):
             positions = data[:, 0]
             intensities = data[:, 1]
 
             # 绘制原始数据
-            ax.scatter(positions, intensities, label=f'帧 {frame_idx} 数据点')
+            ax.scatter(positions, intensities,c=color,marker=marker_style)
 
-        for series in frame_data_dict['fitting']:
+        for i, series in enumerate(self.dif_result['fitting']):
             positions = series[0]
             fitting_curve = series[1]
             ax.plot(positions, fitting_curve, '--',
-                    label=f'帧拟合')
+                    label=f'{self.dif_result['time_series'][i]}ps')
 
         # 设置图表属性
         ax.set_title("多帧ROI信号强度及高斯拟合")
         ax.set_xlabel("位置 (μm)")
-        ax.set_ylabel("信号强度 (a.u.)")
+        ax.set_ylabel("对比度")
         ax.grid(True)
         ax.legend()
 
         self.canvas.draw()
 
+        # 以下是整合数据
+        layer1,layer2 = [],[]
+        times = self.dif_result['time_series']
+        times0 = np.full(len(times),'时间点：')
+        times2 = np.full(len(times),'μs')
+        layer1.extend([times0,times,times2])
+        layer2.extend(['位置(μm)','原始数值','拟合曲线'])
+        max_len = max(data.shape[1] for data in self.dif_result['signal'])
+        outcome = []
+        for data in self.dif_result['signal']:
+            for tada in self.dif_result['fitting']:
+                position = np.pad(data[0],(1,max_len - len(data[0])),
+                                  mode = 'constant', constant_values=np.nan)
+                signal = np.pad(data[1], (1, max_len - len(data[1])),
+                                  mode='constant', constant_values=np.nan)
+                fitting = np.pad(tada[1], (1, max_len - len(tada[1])),
+                                  mode='constant', constant_values=np.nan)
+                outcome.extend([position,signal,fitting])
+        columns = pd.MultiIndex.from_arrays([layer1,layer2])
+        self.current_data = pd.DataFrame(np.array(data).T,columns = columns)
+
     def plot_variance_evolution(self):
         """绘制方差随时间变化图并计算扩散系数"""
-        if self.fit_results is None or self.fit_results.shape[1] < 2:
+        if self.frame_data_dict is None:
             logging.warning('缺数据或数据有问题无法绘图')
+            return
+        elif not hasattr(self,"dif_result"):
+            logging.warning("请按照顺序点击按钮")
             return
 
         self.figure.clear()
         ax = self.figure.add_subplot(111)
 
-        times = self.fit_results[0]
-        variances = self.fit_results[1]
+        times = self.dif_result["sigma"][0]
+        variances = self.dif_result["sigma"][1]
 
         # 绘制数据点
         ax.scatter(times, variances, c='r', s=50, label='方差数据')
@@ -243,7 +274,11 @@ class ResultDisplayWidget(QWidget):
         ax.legend()
 
         self.canvas.draw()
-        return slope / 2  # 返回扩散系数 D = slope / 2
+
+        self.current_data = pd.DataFrame({
+                                        'time': self.dif_result['time_series'],
+                                        'sigma': self.dif_result['sigma'][1],
+        })
 
 
 def clear(self):

@@ -26,7 +26,7 @@ class MainWindow(QMainWindow):
     # 线程激活信号
     start_reg_cal_signal = pyqtSignal(dict, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(dict, float, str)
-    start_dif_cal_signal = pyqtSignal(dict, float)
+    start_dif_cal_signal = pyqtSignal(dict, float, float)
 
     def __init__(self):
         super().__init__()
@@ -736,7 +736,8 @@ class MainWindow(QMainWindow):
         self.thread.start()
         self.update_status('计算进行中...', True)
         self.time_unit = float(self.time_step_input.value())
-        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_unit)
+        self.space_unit = float(self.space_step_input.value())
+        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_unit, self.space_unit)
 
     def is_thread_active(self, thread_name: str) -> bool:
         """检查指定名称的线程是否存在且正在运行"""
