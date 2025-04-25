@@ -428,7 +428,7 @@ class MainWindow(QMainWindow):
         载流子寿命分析工具启动
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         日志文件: {self.log_file}
-        程序版本: 1.5.5
+        程序版本: 1.6.0
         ============================================
         """
         logging.info(startup_msg.strip())
@@ -500,7 +500,6 @@ class MainWindow(QMainWindow):
             logging.info(folder_path)
             self.folder_path_label.setText("已加载文件夹")
             current_group = self.group_selector.currentText()
-            logging.info('成功加载数据')
 
             # 读取文件夹中的所有tiff文件
             tiff_files = self.data_processor.load_and_sort_files(current_group)
@@ -516,6 +515,7 @@ class MainWindow(QMainWindow):
                 self.folder_path_label.setText("无法读取TIFF文件")
                 return
 
+            logging.info('成功加载数据')
             # 设置时间滑块
             self.time_slider.setMaximum(len(self.data['images']) - 1)
             self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
