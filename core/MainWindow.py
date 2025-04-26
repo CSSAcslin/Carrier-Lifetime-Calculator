@@ -62,8 +62,8 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout(main_widget)
 
         # 左侧参数设置区域
-        self.setup_parameter_panel()
-        main_layout.addWidget(self.parameter_panel, stretch=1)
+        self.setup_left_panel()
+        main_layout.addWidget(self.left_panel, stretch=1)
 
         # 右侧区域 (图像和结果)
         right_panel = QWidget()
@@ -102,32 +102,60 @@ class MainWindow(QMainWindow):
         # 设置控制台
         self.setup_console()
 
-    def setup_parameter_panel(self):
-        """设置参数面板"""
-        self.parameter_panel = self.QGroupBoxCreator("参数设置")
-        left_layout = QVBoxLayout()
-        left_layout.setSpacing(20)
-        left_layout.setContentsMargins(1,20,1,20)
+    def setup_left_panel(self):
+        """设置左侧面板"""
+        self.left_panel = QWidget()
+        self.left_panel_layout = QVBoxLayout()
 
+        # 数据导入面板
+        self.data_import = self.QGroupBoxCreator('数据导入')
+        left_layout0 = QVBoxLayout()
+        left_layout0.setSpacing(2)
+        left_layout0.setContentsMargins(1,7,1,7)
         # 文件夹选择
+        self.file_type_selector = QComboBox()
+        self.file_type_selector.addItems(['tiff格式', 'sif格式'])
+        # 文件类型为tiff
         folder_choose = QHBoxLayout()
+        file_types = QVBoxLayout()
+        file_types.addWidget(self.file_type_selector)
+        self.file_type_stack = QStackedWidget()
+        tiff_group = self.QGroupBoxCreator(style = "noborder")
+        tiff_layout = QVBoxLayout()
         self.group_selector = QComboBox()
         self.group_selector.addItems(['n', 'p'])
-        self.folder_btn = QPushButton("选择TIFF文件夹")
+        self.tiff_folder_btn = QPushButton("选择TIFF文件夹")
+        tiff_layout.addWidget(self.group_selector)
+        tiff_layout.addWidget(self.tiff_folder_btn)
+        tiff_group.setLayout(tiff_layout)
+        self.file_type_stack.addWidget(tiff_group)
+        # 文件类型为sif 试用
+        sif_group = self.QGroupBoxCreator(style = "noborder")
+        sif_layout = QVBoxLayout()
+        self.sif_folder_btn = QPushButton('选择SIF文件夹')
+        sif_layout.addWidget(self.sif_folder_btn)
+        sif_group.setLayout(sif_layout)
+        self.file_type_stack.addWidget(sif_group)
+        # 总提示
         self.folder_path_label = QLabel("未选择文件夹")
         self.folder_path_label.setMaximumWidth(300)
         self.folder_path_label.setWordWrap(True)
-        self.folder_path_label.setStyleSheet("font-size: 14px;") #后续还要改
+        self.folder_path_label.setStyleSheet("font-size: 14px;")  # 后续还要改
 
-        folder_choose.addWidget(QLabel("数据源:"))
-        folder_choose.addWidget(self.group_selector)
-        folder_choose.addWidget(self.folder_btn)
-        left_layout.addLayout(folder_choose)
-        left_layout.addWidget(self.folder_path_label)
+        folder_choose.addLayout(file_types)
+        folder_choose.addWidget(self.file_type_stack)
+
+        left_layout0.addLayout(folder_choose)
+        left_layout0.addWidget(self.folder_path_label)
+        self.data_import.setLayout(left_layout0)
+
+        self.parameter_panel = self.QGroupBoxCreator("参数设置")
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(14)
+        left_layout.setContentsMargins(1,7,1,7)
 
         # 时间参数
         time_set = self.QGroupBoxCreator("时间参数:")
-
         time_layout = QVBoxLayout()
         # 起始时间设置暂不使用
         # time_start_layout = QHBoxLayout()
@@ -177,27 +205,31 @@ class MainWindow(QMainWindow):
         operation_set = self.QGroupBoxCreator("分析设置:")
         operation_layout = QVBoxLayout()
         # 寿命模型选择
-        operation_layout.addWidget(QLabel("\n寿命模型:"))
+        lifetime_layout = QHBoxLayout()
+        lifetime_layout.addWidget(QLabel("寿命模型:"))
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["单指数衰减", "双指数衰减（仅区域曲线）"])
-        operation_layout.addWidget(self.model_combo)
+        self.model_combo.addItems(["单指数衰减", "双指数-仅区域"])
+        lifetime_layout.addWidget(self.model_combo)
         # 区域分析设置
         # operation_layout.addSpacing(10)
-        operation_layout.addWidget(QLabel("\n分析模式:"))
+        operation_mode_layout = QHBoxLayout()
+        operation_mode_layout.addWidget(QLabel("模式:"))
         self.function_combo = QComboBox()
         self.function_combo.addItems(["载流子热图分析", "特定区域寿命分析","载流子扩散系数计算"])
-        operation_layout.addWidget(self.function_combo)
+        operation_mode_layout.addWidget(self.function_combo)
+        operation_layout.addLayout(operation_mode_layout)
 
         self.function_stack = QStackedWidget()
         # 载流子寿命分布图参数板
         heatmap_group = self.QGroupBoxCreator(style = "inner")
         heatmap_layout = QVBoxLayout()
+        heatmap_layout.addLayout(lifetime_layout)
         self.analyze_btn = QPushButton("开始分析")
         heatmap_layout.addWidget(self.analyze_btn)
         heatmap_group.setLayout(heatmap_layout)
         self.function_stack.addWidget(heatmap_group)
         # 特定区域寿命分析功能参数板
-        # 区域分析参数
+            # 区域分析参数
         self.region_shape_combo = QComboBox()
         self.region_shape_combo.addItems(["正方形", "圆形"])
         self.region_size_input = QSpinBox()
@@ -205,12 +237,12 @@ class MainWindow(QMainWindow):
         self.region_size_input.setMaximum(50)
         self.region_size_input.setValue(5)
         self.analyze_region_btn = QPushButton("分析选定区域")
-        # 区域坐标输入
+            # 区域坐标输入
         self.region_x_input = QSpinBox()
         self.region_y_input = QSpinBox()
         self.region_x_input.setMaximum(131)
         self.region_y_input.setMaximum(131)
-        # 区域分析面板生成
+            # 区域分析面板生成
         region_group = self.QGroupBoxCreator(style = "inner")
         region_layout = QVBoxLayout()
         coord_layout = QHBoxLayout()
@@ -224,6 +256,7 @@ class MainWindow(QMainWindow):
         size_layout = QHBoxLayout()
         size_layout.addWidget(QLabel("区域大小:"))
         size_layout.addWidget(self.region_size_input)
+        region_layout.addLayout(lifetime_layout)
         region_layout.addLayout(coord_layout)
         region_layout.addLayout(shape_layout)
         region_layout.addLayout(size_layout)
@@ -246,8 +279,6 @@ class MainWindow(QMainWindow):
         diffusion_group.setLayout(diffusion_layout)
         self.function_stack.addWidget(diffusion_group)
         operation_layout.addWidget(self.function_stack)
-
-
         operation_set.setLayout(operation_layout)
         left_layout.addWidget(operation_set)
         # 添加分析按钮和导出按钮
@@ -259,6 +290,11 @@ class MainWindow(QMainWindow):
         data_save_layout.addWidget(self.export_data_btn)
         left_layout.addLayout(data_save_layout)
         self.parameter_panel.setLayout(left_layout)
+
+        self.left_panel_layout.addWidget(self.data_import)
+        self.left_panel_layout.addWidget(self.parameter_panel)
+        self.left_panel.setLayout(self.left_panel_layout)
+
 
     def setup_menus(self):
         """加入菜单栏"""
@@ -318,6 +354,12 @@ class MainWindow(QMainWindow):
                 padding: 5px;
                 padding-left: 0px;
                 padding-right: 0px;
+            }""",
+            "noborder":"""
+            QGroupBox{
+                border: 0;
+                border-radius: 0px;
+                margin-top: 0px;
             }"""
         }
         group_box.setStyleSheet(styles.get(style, styles["default"]))
@@ -453,7 +495,9 @@ class MainWindow(QMainWindow):
 
     def signal_connect(self):
         # 连接参数区域按钮
-        self.folder_btn.clicked.connect(self.load_tiff_folder)
+        self.file_type_selector.currentIndexChanged.connect(self.file_type_stack.setCurrentIndex)
+        self.tiff_folder_btn.clicked.connect(self.load_tiff_folder)
+        self.sif_folder_btn.clicked.connect(self.load_sif_folder)
         self.analyze_region_btn.clicked.connect(self.region_analyze_start)
         self.analyze_btn.clicked.connect(self.distribution_analyze_start)
         self.function_combo.currentIndexChanged.connect(self.function_stack.setCurrentIndex)
@@ -475,6 +519,77 @@ class MainWindow(QMainWindow):
         self.command_processor.clear_result_requested.connect(self.clear_result)
 
     '''上面是初始化预设，下面是功能响应'''
+    def load_tiff_folder(self):
+        """加载TIFF文件夹"""
+        self.time_unit = float(self.time_step_input.value())
+        folder_path = QFileDialog.getExistingDirectory(self, "选择TIFF图像文件夹")
+        self.data_processor = DataProcessor(folder_path)
+        if folder_path:
+            logging.info(folder_path)
+            self.folder_path_label.setText("已加载TIFF文件夹")
+            current_group = self.group_selector.currentText()
+
+            # 读取文件夹中的所有tiff文件
+            tiff_files = self.data_processor.load_and_sort_tiff(current_group)
+
+            if not tiff_files:
+                self.folder_path_label.setText("文件夹中没有目标TIFF文件")
+                return
+
+            # 读取所有图像
+            self.data = self.data_processor.process_tiff(tiff_files)
+
+            if not self.data:
+                self.folder_path_label.setText("无法读取TIFF文件")
+                return
+
+            logging.info('成功加载TIFF数据')
+            # 设置时间滑块
+            self.time_slider.setMaximum(len(self.data['images']) - 1)
+            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
+
+            # 显示第一张图像
+            self.update_time_slice(0)
+
+            # 根据图像大小调节region范围
+            self.region_x_input.setMaximum(self.data['images'].shape[1])
+            self.region_y_input.setMaximum(self.data['images'].shape[2])
+
+    def load_sif_folder(self):
+        '''加载SIF文件夹'''
+        folder_path = QFileDialog.getExistingDirectory(self, "选择SIF图像文件夹")
+        self.data_processor = DataProcessor(folder_path)
+        if folder_path:
+            logging.info(folder_path)
+            self.folder_path_label.setText("已加载SIF文件夹")
+
+            # 读取文件夹中的所有sif文件
+            sif_files = self.data_processor.load_and_sort_sif()
+
+            if not sif_files:
+                self.folder_path_label.setText("文件夹中没有目标TIFF文件")
+                return
+
+            # 读取所有图像
+            self.data = self.data_processor.process_tiff(sif_files)
+
+            if not self.data:
+                self.folder_path_label.setText("无法读取TIFF文件")
+                return
+
+            logging.info('成功加载SIF数据')
+            # 设置时间滑块
+            self.time_slider.setMaximum(len(self.data['images']) - 1)
+            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
+
+            # 显示第一张图像
+            self.update_time_slice(0)
+
+            # 根据图像大小调节region范围
+            self.region_x_input.setMaximum(self.data['images'].shape[1])
+            self.region_y_input.setMaximum(self.data['images'].shape[2])
+        pass
+
     def _handle_hover(self, x, y, t, value):
         """更新鼠标位置显示"""
         if hasattr(self, 'time_points') and self.time_points is not None:
@@ -490,42 +605,6 @@ class MainWindow(QMainWindow):
         if self.function_combo.currentIndex() == 1:  # 区域分析模式
             self.region_x_input.setValue(x)
             self.region_y_input.setValue(y)
-
-    def load_tiff_folder(self):
-        """加载TIFF文件夹"""
-        self.time_unit = float(self.time_step_input.value())
-        folder_path = QFileDialog.getExistingDirectory(self, "选择TIFF图像文件夹")
-        self.data_processor = DataProcessor(folder_path)
-        if folder_path:
-            logging.info(folder_path)
-            self.folder_path_label.setText("已加载文件夹")
-            current_group = self.group_selector.currentText()
-
-            # 读取文件夹中的所有tiff文件
-            tiff_files = self.data_processor.load_and_sort_files(current_group)
-
-            if not tiff_files:
-                self.folder_path_label.setText("文件夹中没有目标TIFF文件")
-                return
-
-            # 读取所有图像
-            self.data = self.data_processor.process_files(tiff_files)
-
-            if not self.data:
-                self.folder_path_label.setText("无法读取TIFF文件")
-                return
-
-            logging.info('成功加载数据')
-            # 设置时间滑块
-            self.time_slider.setMaximum(len(self.data['images']) - 1)
-            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
-
-            # 显示第一张图像
-            self.update_time_slice(0)
-
-            # 根据图像大小调节region范围
-            self.region_x_input.setMaximum(self.data['images'].shape[1])
-            self.region_y_input.setMaximum(self.data['images'].shape[2])
 
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""

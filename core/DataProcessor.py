@@ -1,7 +1,9 @@
 import glob
+import os
 import re
 import numpy as np
 import tifffile as tiff
+import sif_parser as sr
 from typing import List, Union
 
 class DataProcessor:
@@ -9,7 +11,8 @@ class DataProcessor:
     def __init__(self,path):
         self.path = path
 
-    def load_and_sort_files(self,current_group):
+    """tiff"""
+    def load_and_sort_tiff(self, current_group):
         # 因为tiff存在两种格式，n,p
         files = []
         find = self.path + '/*.tiff'
@@ -42,7 +45,7 @@ class DataProcessor:
             phy_min = min_all
         return process_show, data_type, max_mean, phy_max, phy_min
 
-    def process_files(self, files):
+    def process_tiff(self, files):
         '''初步数据处理'''
         images_original = []
         vmax_array = []
@@ -100,7 +103,6 @@ class DataProcessor:
             'boundary': {'max': phy_max, 'min': phy_min},
         }
 
-
     def detect_bad_frames_auto(self, data: np.ndarray, threshold: float = 3.0) -> List[int]:
         """
         自动检测坏帧
@@ -151,3 +153,41 @@ class DataProcessor:
                 print(f"警告: 无法修复帧 {frame_idx} - 无有效参考帧")
 
         return fixed_data
+
+    """sif"""
+    def load_and_sort_sif(self):
+        time_data = {}  # 存储时间点数据
+        background = None  # 存储背景数据
+
+        for filename in os.listdir(self.path):
+            if filename.endswith('.sif'):
+                filepath = os.path.join(self.path, filename)
+                name = os.path.splitext(filename)[0]  # 去除扩展名
+
+                # 检查是否是背景文件（文件名包含 "no"）
+                if name.lower() == 'no':
+                    background = sr.np_open(filepath)[0][0]
+                    continue
+
+                # 否则尝试提取时间点（文件名中的数字）
+                match = re.search(r'(\d+)', name)
+                if match:
+                    time = int(match.group(1))
+                    data = sr.np_open(filepath)[0][0]
+                    time_data[time] = data
+
+        # 检查是否找到背景
+        if background is None:
+            raise ValueError("未找到背景文件（文件名应包含 'no'）")
+
+        # 按时间排序
+        sorted_times = sorted(time_data.keys())
+
+        # 创建三维数组（时间, 高度, 宽度）并减去背景
+        sample_data = next(iter(time_data.values()))
+        data_3d = np.zeros((len(sorted_times), *sample_data.shape), dtype=np.float32)
+
+        for i, time in enumerate(sorted_times):
+            data_3d[i] = time_data[time] - background
+
+        return data_3d, sorted_times
