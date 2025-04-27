@@ -36,7 +36,10 @@ class ImageDisplayWidget(QWidget):
         self.graphics_view.viewport().setMouseTracking(True)
         self.graphics_view.setRenderHint(QPainter.Antialiasing)  # 抗锯齿
         self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
+        self.graphics_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
+        self.graphics_view.setTransform(QTransform())
         # 鼠标功能响应
         self.graphics_view.wheelEvent = self.wheel_event  # 滚轮缩放
         self.graphics_view.mouseMoveEvent = self.mouse_move_event
