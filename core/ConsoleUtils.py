@@ -57,7 +57,8 @@ class CommandProcessor(QObject):
             'clear-r':self.clear_result,
             'save_config': self.save_config,
             'load_config': self.load_config,
-            'stop': self.stop_calculation
+            'stop': self.stop_calculation,
+            'stop_force': self.stop_calculation_force,
         }
 
     def process_command(self, command):
@@ -92,6 +93,7 @@ class CommandProcessor(QObject):
         save_config - 保存当前配置
         load_config <预设名> - 加载预设参数
         stop - 终止当前计算(ESC键也可终止)
+        force_stop - 强制终止
         """
         logging.info(help_text.strip())
 
@@ -140,10 +142,14 @@ class CommandProcessor(QObject):
         self.load_config_requested.emit(preset_name)
         logging.info(f"加载预设参数请求已发送: {preset_name}")
 
-    def stop_calculation(self, args=None):
+    def stop_calculation(self,type = None ,args=None):
         """终止当前计算"""
         self.terminate_requested.emit()
         logging.info("计算终止请求已发送")
+
+    def stop_calculation_force(self, args = None):
+        # 未实装
+        pass
 
 
 class ConsoleWidget(QWidget):

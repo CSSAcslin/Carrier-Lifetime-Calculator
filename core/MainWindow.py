@@ -44,6 +44,18 @@ class MainWindow(QMainWindow):
         self.bool_mask = None
         self.idx = None
         self.vector_array = None
+        self.plot_params = {
+            'current_mode': 'heatmap',  # 'heatmap' 或 'curve'
+            'line_style': '--',
+            'line_width': 2,
+            'marker_style': 's',
+            'marker_size': 6,
+            'color': '#1f77b4',
+            'show_grid': False,
+            'heatmap_cmap': 'jet',
+            'contour_levels': 10,
+            'set_axis':True
+        }
         # 状态控制
         self._is_calculating = False
         # 线程管理
@@ -115,6 +127,7 @@ class MainWindow(QMainWindow):
         # 文件夹选择
         self.file_type_selector = QComboBox()
         self.file_type_selector.addItems(['tiff格式', 'sif格式'])
+
         # 文件类型为tiff
         folder_choose = QHBoxLayout()
         file_types = QVBoxLayout()
@@ -132,7 +145,13 @@ class MainWindow(QMainWindow):
         # 文件类型为sif 试用
         sif_group = self.QGroupBoxCreator(style = "noborder")
         sif_layout = QVBoxLayout()
+        # 归一化方法选择
+        method_label = QLabel("归一化方法:")
+        self.method_combo = QComboBox()
+        self.method_combo.addItems(["linear", "percentile", "sigmoid", "log", "clahe"])
         self.sif_folder_btn = QPushButton('选择SIF文件夹')
+        sif_layout.addWidget(method_label)
+        sif_layout.addWidget(self.method_combo)
         sif_layout.addWidget(self.sif_folder_btn)
         sif_group.setLayout(sif_layout)
         self.file_type_stack.addWidget(sif_group)
@@ -151,7 +170,7 @@ class MainWindow(QMainWindow):
 
         self.parameter_panel = self.QGroupBoxCreator("参数设置")
         left_layout = QVBoxLayout()
-        left_layout.setSpacing(14)
+        left_layout.setSpacing(2)
         left_layout.setContentsMargins(1,7,1,7)
 
         # 时间参数
@@ -172,6 +191,7 @@ class MainWindow(QMainWindow):
         time_step_layout.addWidget(QLabel("时间单位:"))
         self.time_step_input = QDoubleSpinBox()
         self.time_step_input.setMinimum(0.001)
+        self.time_step_input.setMaximum(10000)
         self.time_step_input.setValue(1.0)
         self.time_step_input.setDecimals(3)
         time_step_layout.addWidget(self.time_step_input)
@@ -245,6 +265,11 @@ class MainWindow(QMainWindow):
             # 区域分析面板生成
         region_group = self.QGroupBoxCreator(style = "inner")
         region_layout = QVBoxLayout()
+        lifetime_layout = QHBoxLayout()
+        lifetime_layout.addWidget(QLabel("寿命模型:"))
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["单指数衰减", "双指数-仅区域"])
+        lifetime_layout.addWidget(self.model_combo)
         coord_layout = QHBoxLayout()
         coord_layout.addWidget(QLabel("中心X:"))
         coord_layout.addWidget(self.region_x_input)
@@ -294,7 +319,6 @@ class MainWindow(QMainWindow):
         self.left_panel_layout.addWidget(self.data_import)
         self.left_panel_layout.addWidget(self.parameter_panel)
         self.left_panel.setLayout(self.left_panel_layout)
-
 
     def setup_menus(self):
         """加入菜单栏"""
@@ -549,7 +573,7 @@ class MainWindow(QMainWindow):
             self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
 
             # 显示第一张图像
-            self.update_time_slice(0)
+            self.update_time_slice(0,True)
 
             # 根据图像大小调节region范围
             self.region_x_input.setMaximum(self.data['images'].shape[1])
@@ -558,23 +582,23 @@ class MainWindow(QMainWindow):
     def load_sif_folder(self):
         '''加载SIF文件夹'''
         folder_path = QFileDialog.getExistingDirectory(self, "选择SIF图像文件夹")
-        self.data_processor = DataProcessor(folder_path)
+        self.data_processor = DataProcessor(folder_path,self.method_combo.currentText())
         if folder_path:
             logging.info(folder_path)
             self.folder_path_label.setText("已加载SIF文件夹")
 
             # 读取文件夹中的所有sif文件
-            sif_files = self.data_processor.load_and_sort_sif()
+            check_sif = self.data_processor.load_and_sort_sif()
 
-            if not sif_files:
-                self.folder_path_label.setText("文件夹中没有目标TIFF文件")
+            if not check_sif:
+                self.folder_path_label.setText("文件夹中没有目标SIF文件")
                 return
 
             # 读取所有图像
-            self.data = self.data_processor.process_tiff(sif_files)
+            self.data = self.data_processor.process_sif()
 
             if not self.data:
-                self.folder_path_label.setText("无法读取TIFF文件")
+                self.folder_path_label.setText("无法读取sif文件")
                 return
 
             logging.info('成功加载SIF数据')
@@ -583,7 +607,7 @@ class MainWindow(QMainWindow):
             self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
 
             # 显示第一张图像
-            self.update_time_slice(0)
+            self.update_time_slice(0,True)
 
             # 根据图像大小调节region范围
             self.region_x_input.setMaximum(self.data['images'].shape[1])
@@ -642,11 +666,12 @@ class MainWindow(QMainWindow):
 
     def plt_settings_edit_dialog(self):
         """绘图设置"""
-        dialog = PltSettingsDialog(self)
+        dialog = PltSettingsDialog(params=self.plot_params)
         self.update_status("绘图设置ing", True)
         if dialog.exec_():
             # 将参数传递给ResultDisplayWidget
             self.result_display.update_plot_settings(dialog.params)
+            self.plot_params = dialog.params
             logging.info("绘图设置已更新，请重新绘图")
         self.update_status("准备就绪", False)
 
@@ -671,13 +696,16 @@ class MainWindow(QMainWindow):
 
         self.update_status("准备就绪", False)
 
-    def update_time_slice(self, idx):
+    def update_time_slice(self, idx, first_create = False):
         """更新时间切片显示"""
         self.idx = idx
         if self.data is not None and 0 <= idx < len(self.data['images']):
             self.time_label.setText(f"时间点: {idx}/{len(self.data['images']) - 1}")
             self.image_display.current_image = self.data['images'][idx]
-            self.image_display.display_image(self.data['images'][idx])
+            if first_create:
+                self.image_display.display_image(self.data['images'][idx])
+            else:
+                self.image_display.update_display_idx(self.data['images'][idx])
 
     def update_progress(self, current, total=None):
         """更新进度条"""

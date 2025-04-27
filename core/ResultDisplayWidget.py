@@ -34,7 +34,8 @@ class ResultDisplayWidget(QWidget):
             'color': '#1f77b4',
             'show_grid': False,
             'heatmap_cmap': 'jet',
-            'contour_levels': 10
+            'contour_levels': 10,
+            'set_axis':True
         }
 
         # 设置Matplotlib默认字体
@@ -96,11 +97,13 @@ class ResultDisplayWidget(QWidget):
         marker_size = self.plot_settings['marker_size']
         color = self.plot_settings['color']
         show_grid = self.plot_settings['show_grid']
+        set_axis = self.plot_settings['set_axis']
 
         ax = self.figure.add_subplot(111)
-        max_bound = boundary['max']
-        min_bound = 0
-        ax.set_ylim(min_bound, max_bound)
+        if set_axis:
+            max_bound = boundary['max']
+            min_bound = 0
+            ax.set_ylim(min_bound, max_bound)
 
         # 绘制原始曲线
         # time_points = time_points - time_points[0]  # 从0开始

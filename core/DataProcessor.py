@@ -1,15 +1,19 @@
 import glob
+import logging
 import os
 import re
 import numpy as np
 import tifffile as tiff
 import sif_parser as sr
-from typing import List, Union
+from skimage.exposure import equalize_adapthist
+from typing import List, Union, Optional
+
 
 class DataProcessor:
     """本类仅包含导入数据时的数据处理"""
-    def __init__(self,path):
+    def __init__(self,path,normalize_type='linear'):
         self.path = path
+        self.normalize_type = normalize_type
 
     """tiff"""
     def load_and_sort_tiff(self, current_group):
@@ -175,19 +179,89 @@ class DataProcessor:
                     time = int(match.group(1))
                     data = sr.np_open(filepath)[0][0]
                     time_data[time] = data
+            else: return False
 
         # 检查是否找到背景
         if background is None:
-            raise ValueError("未找到背景文件（文件名应包含 'no'）")
+            raise logging.error("未找到背景文件（文件名应包含 'no'）")
 
         # 按时间排序
-        sorted_times = sorted(time_data.keys())
+        self.sif_sorted_times = sorted(time_data.keys())
 
         # 创建三维数组（时间, 高度, 宽度）并减去背景
         sample_data = next(iter(time_data.values()))
-        data_3d = np.zeros((len(sorted_times), *sample_data.shape), dtype=np.float32)
+        self.sif_data_original = np.zeros((len(self.sif_sorted_times), *sample_data.shape), dtype=np.float32)
 
-        for i, time in enumerate(sorted_times):
-            data_3d[i] = time_data[time] - background
+        for i, time in enumerate(self.sif_sorted_times):
+            self.sif_data_original[i] = (time_data[time] - background)/background
 
-        return data_3d, sorted_times
+        return True
+
+    def process_sif(self):
+        if not hasattr(self,'sif_data_original'):
+            return logging.error('无有效数据')
+        if not hasattr(self,'sif_sorted_times'):
+            return logging.error('时间无效')
+        min_val = np.min(self.sif_data_original)
+        max_val = np.max(self.sif_data_original)
+
+        normalized = self.normalize_data(self.sif_data_original,self.normalize_type)
+        return {
+            'data_origin': np.stack(self.sif_data_original , axis=0),
+            'data_type': 'sif',
+            'images': np.stack(normalized, axis=0),
+            'time_points': np.stack(self.sif_sorted_times,axis=0),
+            'boundary': {'max': max_val, 'min': min_val},
+        }
+
+
+    def normalize_data(self,
+            data: np.ndarray,
+            method: str = 'linear',
+            low: float = 10,
+            high: float = 100,
+            k: Optional[float] = None,
+            clip_limit: float = 0.03,
+            eps: float = 1e-6
+    ) -> np.ndarray:
+        """
+        多种归一化方法可选
+        Parameters:
+            method:
+                'linear'    - 线性归一化 (min-max)
+                'sigmoid'  - Sigmoid归一化
+                'percentile'- 百分位裁剪归一化 (默认)
+                'log'      - 对数归一化
+                'clahe'    - 自适应直方图均衡化
+            low/high: 百分位裁剪的上下界（method='percentile'时生效）
+            k: Sigmoid的斜率系数（method='sigmoid'时生效，None则自动计算）
+            clip_limit: CLAHE的裁剪限制（method='clahe'时生效）
+            eps: 对数归一化的微小增量（method='log'时生效）
+        """
+        if method == 'linear':
+            # 线性归一化
+            return (data - np.min(data)) / (np.max(data) - np.min(data))
+
+        elif method == 'sigmoid':
+            # Sigmoid归一化
+            mu = np.median(data)
+            std = np.std(data)
+            k = 10 / std if k is None else k
+            centered = data - mu
+            return 1 / (1 + np.exp(-k * centered))
+
+        elif method == 'percentile':
+            # 百分位裁剪归一化
+            plow = np.percentile(data, low)
+            phigh = np.percentile(data, high)
+            clipped = np.clip(data, plow, phigh)
+            return (clipped - plow) / (phigh - plow)
+
+        elif method == 'log':
+            # 对数归一化
+            logged = np.log(data + eps)
+            return (logged - np.min(logged)) / (np.max(logged) - np.min(logged))
+
+        elif method == 'clahe':
+            # CLAHE自适应直方图均衡化
+            return equalize_adapthist(data, clip_limit=clip_limit)

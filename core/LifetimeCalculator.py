@@ -58,12 +58,16 @@ class LifetimeCalculator:
         phy_signal = None
         if data_type == 'central negative':
             phy_signal = -time_series
+            max_idx = np.argmax(phy_signal)
+            decay_signal = abs(phy_signal[max_idx:])  # 全部正置
         elif data_type == 'central positive':
             phy_signal = time_series
-
-        # 找到最大值位置
-        max_idx = np.argmax(phy_signal)
-        decay_signal = abs(phy_signal[max_idx:]) #全部正置
+            max_idx = np.argmax(phy_signal)
+            decay_signal = abs(phy_signal[max_idx:])  # 全部正置
+        elif data_type == 'sif':
+            phy_signal = time_series
+            max_idx = np.argmax(phy_signal)
+            decay_signal = phy_signal
         decay_time = time_points[max_idx:] - time_points[max_idx]
 
         # 初始猜测
@@ -381,3 +385,8 @@ class CalculationThread(QObject):
 
     def stop(self):
         self._is_calculating = False
+
+    def force_stop(self):
+        self._is_calculating = False
+        self.cal_running_status.emit(False)
+        self.stop_thread_signal.emit()

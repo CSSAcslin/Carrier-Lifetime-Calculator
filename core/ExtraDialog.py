@@ -151,7 +151,7 @@ class DataSelectDialog(QDialog):
         self.params = {
             'r_squared_min': 0.8,
             'peak_min': 0.0,
-            'peak_max': 10.0,
+            'peak_max': 100.0,
             'tau_min': 1e-3,
             'tau_max': 1e3
         }
@@ -184,7 +184,7 @@ class DataSelectDialog(QDialog):
         self.peak_min_spin.setSingleStep(0.1)
 
         self.peak_max_spin = QDoubleSpinBox()
-        self.peak_max_spin.setRange(0, 1e2)
+        self.peak_max_spin.setRange(0, 1e8)
         self.peak_max_spin.setValue(self.params['peak_max'])
         self.peak_max_spin.setSingleStep(0.1)
 
@@ -203,7 +203,7 @@ class DataSelectDialog(QDialog):
         self.tau_min_spin.setDecimals(6)
 
         self.tau_max_spin = QDoubleSpinBox()
-        self.tau_max_spin.setRange(1e-6, 1e6)
+        self.tau_max_spin.setRange(1e-6, 1e10)
         self.tau_max_spin.setValue(self.params['tau_max'])
         self.tau_max_spin.setSingleStep(1e2)
         self.tau_max_spin.setDecimals(6)
@@ -243,25 +243,14 @@ class DataSelectDialog(QDialog):
 
 # 绘图设置对话框
 class PltSettingsDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, params,parent=None):
         super().__init__(parent)
         self.setWindowTitle("绘图设置")
         self.setMinimumWidth(400)
         self.setMinimumHeight(500)
 
         # 默认参数
-        self.params = {
-            'current_mode': 'heatmap',  # 'heatmap' 或 'curve'
-            'line_style': '--',
-            'line_width': 2,
-            'marker_style': 's',
-            'marker_size': 6,
-            'color': '#1f77b4',
-            'show_grid': False,
-            'heatmap_cmap': 'jet',
-            'contour_levels': 10
-        }
-
+        self.params = params
         self.init_ui()
 
     def init_ui(self):
@@ -291,8 +280,12 @@ class PltSettingsDialog(QDialog):
         self.grid_check = QCheckBox()
         self.grid_check.setChecked(self.params['show_grid'])
 
+        self.axis_set = QCheckBox()
+        self.axis_set.setChecked(self.params['set_axis'])
+
         common_layout.addRow(QLabel("线条颜色:"), self.color_btn)
         common_layout.addRow(QLabel("显示网格:"), self.grid_check)
+        common_layout.addRow(QLabel('设置轴范围'), self.axis_set)
         common_group.setLayout(common_layout)
 
         # 曲线图特有设置
@@ -301,6 +294,7 @@ class PltSettingsDialog(QDialog):
 
         self.line_style_combo = QComboBox()
         self.line_style_combo.addItems(["实线 -", "虚线 --", "点线 :", "点划线 -."])
+        self.line_style_combo.setCurrentIndex(1)
 
         self.line_width_spin = QSpinBox()
         self.line_width_spin.setRange(1, 10)
@@ -308,6 +302,7 @@ class PltSettingsDialog(QDialog):
 
         self.marker_combo = QComboBox()
         self.marker_combo.addItems(["无", "圆形 o", "方形 s", "三角形 ^", "星号 *"])
+        self.marker_combo.setCurrentIndex(2)
 
         self.marker_size_spin = QSpinBox()
         self.marker_size_spin.setRange(1, 20)
@@ -379,6 +374,7 @@ class PltSettingsDialog(QDialog):
             'color': self.params['color'],
             'show_grid': self.grid_check.isChecked(),
             'heatmap_cmap': ['jet', 'plasma', 'inferno', 'magma', 'viridis'][self.cmap_combo.currentIndex()],
-            'contour_levels': self.contour_spin.value()
+            'contour_levels': self.contour_spin.value(),
+            'set_axis':self.axis_set.isChecked()
         }
         self.accept()
