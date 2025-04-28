@@ -17,6 +17,10 @@ class ImageDisplayWidget(QWidget):
         self.mouse_pos = None
         self.current_time_idx = 0
         self.drag_start_pos = None  # 拖动起始位置
+        self.last_scale = None
+        self.initial_scale = None
+        self.min_scale = 0.1
+        self.max_scale = 15.0
         self.init_ui()
 
     def init_ui(self):
@@ -37,7 +41,6 @@ class ImageDisplayWidget(QWidget):
         self.graphics_view.setRenderHint(QPainter.Antialiasing)  # 抗锯齿
         self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.graphics_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
-        self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
         self.graphics_view.setTransform(QTransform())
         # 鼠标功能响应
@@ -51,36 +54,35 @@ class ImageDisplayWidget(QWidget):
         if not hasattr(self, 'current_image'):
             return
 
-        zoom_in_factor = 1.25
-        zoom_out_factor = 1 / zoom_in_factor
+        zoom_step  = 1.25
+        if event.angleDelta().y() > 0:  # 放大
+            new_scale = min(self.last_scale * zoom_step, self.max_scale)
+        else:  # 缩小
+            new_scale = max(self.last_scale / zoom_step, self.min_scale)
 
-        # 获取鼠标在视图和场景中的当前位置
+        if new_scale == self.last_scale:
+            return
+
+        # 获取鼠标在视图和场景中的位置
         mouse_view_pos = event.pos()
-        mouse_scene_pos = self.graphics_view.mapToScene(mouse_view_pos)
+        old_scene_pos = self.graphics_view.mapToScene(mouse_view_pos)
 
-        # 计算缩放
-        if event.angleDelta().y() > 0:
-            zoom_factor = zoom_in_factor
-        else:
-            zoom_factor = zoom_out_factor
+        # 应用新缩放因子
+        self.graphics_view.setTransform(QTransform.fromScale(new_scale, new_scale))
+        self.last_scale = new_scale  # 必须更新缩放因子记录
 
-         # 获取当前变换矩阵
-        current_transform = self.graphics_view.transform()
-        # 应用缩放
-        new_scale = current_transform.m11() * zoom_factor
-        new_scale = max(0.1, min(new_scale, 10.0))  # 限制缩放范围
-        self.graphics_view.setTransform(QTransform())
-        self.graphics_view.scale(new_scale, new_scale)
-
-        # 计算缩放后鼠标应处的新场景位置
-        new_view_pos = self.graphics_view.transform().map(mouse_scene_pos)
-
-        # 移动视图补偿偏移
-        delta = mouse_view_pos - new_view_pos
-        self.graphics_view.translate(delta.x(), delta.y())
-
-        # 阻止事件继续传播
-        event.accept()
+        # 仅在放大时调整视口位置
+        if new_scale > self.initial_scale:
+            # 计算缩放后的鼠标位置差
+            new_view_pos = self.graphics_view.mapFromScene(old_scene_pos)
+            delta = new_view_pos - mouse_view_pos
+            # 通过滚动条补偿位置变化
+            self.graphics_view.horizontalScrollBar().setValue(
+                self.graphics_view.horizontalScrollBar().value() + delta.x()
+            )
+            self.graphics_view.verticalScrollBar().setValue(
+                self.graphics_view.verticalScrollBar().value() + delta.y()
+            )
 
     def mouse_press_event(self, event):
         """鼠标点击事件处理"""
@@ -148,10 +150,12 @@ class ImageDisplayWidget(QWidget):
         pixmap = QPixmap.fromImage(qimage)
 
         # 显示图像
-        self.scale_factor = 1.0        # 重置视图缩放
         self.pixmap_item = self.scene.addPixmap(pixmap)
         self.graphics_view.resetTransform()
         self.graphics_view.fitInView(self.pixmap_item, Qt.KeepAspectRatio) # 实现适合尺寸的放大
+        # 获取缩放因子
+        self.last_scale = self.graphics_view.transform().m11()  # 实时更新
+        self.initial_scale = self.graphics_view.transform().m11()  # 只获取一次
 
     def update_display_idx(self, image_data, time_idx=1):
         """仅更新图像数据，不改变视图状态"""
@@ -169,10 +173,9 @@ class ImageDisplayWidget(QWidget):
 
     def reset_view(self):
         """手动重置视图（缩放和平移）"""
-        self.scale_factor = 1.0
         self.graphics_view.resetTransform()
         self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-
+        self.last_scale = self.graphics_view.transform().m11()
     def clear(self):
         """清除显示"""
         self.scene.clear()

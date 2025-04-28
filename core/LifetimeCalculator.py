@@ -17,20 +17,23 @@ class LifetimeCalculator:
     载流子寿命计算类（此类为静态方法类，不要放别的进来）
     """
     _cal_params = {
+        'from_start_cal':False,
         'r_squared_min': 0.8,
         'peak_range': (0.0, 10.0),
         'tau_range': (1e-3, 1e2)
     }
 
     @classmethod
-    def set_cal_parameters(cls,  r_squared_min=None, peak_range=None, tau_range=None):
+    def set_cal_parameters(cls,cal_set_params):
         """更新参数"""
-        if r_squared_min is not None:
-            cls._cal_params['r_squared_min'] = r_squared_min
-        if peak_range is not None:
-            cls._cal_params['peak_range'] = peak_range
-        if tau_range is not None:
-            cls._cal_params['tau_range'] = tau_range
+        from_start_cal = cal_set_params['from_start_cal']
+        r_squared_min = cal_set_params['r_squared_min']
+        peak_range = (cal_set_params['peak_min'], cal_set_params['peak_max'])
+        tau_range = (cal_set_params['tau_min'], cal_set_params['tau_max'])
+        cls._cal_params['from_start_cal'] = from_start_cal
+        cls._cal_params['r_squared_min'] = r_squared_min
+        cls._cal_params['peak_range'] = peak_range
+        cls._cal_params['tau_range'] = tau_range
         pass
 
     @staticmethod
@@ -49,6 +52,7 @@ class LifetimeCalculator:
         计算载流子寿命
         """
         params = LifetimeCalculator._cal_params
+        from_start_cal = params['from_start_cal']
         r_squared_min = params['r_squared_min']
         peak_range = params['peak_range']
         tau_range = params['tau_range']
@@ -59,16 +63,34 @@ class LifetimeCalculator:
         if data_type == 'central negative':
             phy_signal = -time_series
             max_idx = np.argmax(phy_signal)
-            decay_signal = abs(phy_signal[max_idx:])  # 全部正置
+            if not from_start_cal:
+                decay_signal = abs(phy_signal[max_idx:]) # 全部正置 且从最大值之后开始拟合
+                decay_time = time_points[max_idx:] - time_points[max_idx]
+            else:
+                decay_signal= abs(phy_signal)
+                decay_time = time_points
         elif data_type == 'central positive':
             phy_signal = time_series
             max_idx = np.argmax(phy_signal)
-            decay_signal = abs(phy_signal[max_idx:])  # 全部正置
+            if not from_start_cal:
+                decay_signal = abs(phy_signal[max_idx:]) # 全部正置 且从最大值之后开始拟合
+                decay_time = time_points[max_idx:] - time_points[max_idx]
+            else:
+                decay_signal = abs(phy_signal)
+                decay_time = time_points
         elif data_type == 'sif':
             phy_signal = time_series
             max_idx = np.argmax(phy_signal)
-            decay_signal = phy_signal
-        decay_time = time_points[max_idx:] - time_points[max_idx]
+            if not from_start_cal:
+                decay_signal = phy_signal[max_idx:] # 全部正置 且从最大值之后开始拟合
+                decay_time = time_points[max_idx:] - time_points[max_idx]
+            else:
+                decay_signal = phy_signal
+                decay_time = time_points
+        else:
+            decay_signal =None
+            decay_time = None
+            return
 
         # 初始猜测
         A_guess = np.max(decay_signal) - np.min(decay_signal)
@@ -138,7 +160,7 @@ class LifetimeCalculator:
                     popt = [0, 0, 0,0,0]
                 return popt, (tau1, tau2), r_squared, phy_signal
 
-        except:
+        except Exception as e:
             # 拟合失败时返回NaN
             if model_type == 'single':
                 return [np.nan, np.nan, np.nan], np.nan, np.nan ,phy_signal

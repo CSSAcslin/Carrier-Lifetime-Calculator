@@ -139,27 +139,29 @@ class BadFrameDialog(QDialog):
         QMessageBox.information(self, "修复完成", f"已修复 {len(self.bad_frames)} 个坏帧")
         logging.info(f"已修复 {len(self.bad_frames)} 个坏帧")
 
-# 数据清洗对话框
-class DataSelectDialog(QDialog):
-    def __init__(self, parent=None):
+# 计算设置对话框
+class CalculationSetDialog(QDialog):
+    def __init__(self,params, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("数据清洗")
+        self.setWindowTitle("计算设置")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setMinimumWidth(350)
 
         # 默认参数
-        self.params = {
-            'r_squared_min': 0.8,
-            'peak_min': 0.0,
-            'peak_max': 100.0,
-            'tau_min': 1e-3,
-            'tau_max': 1e3
-        }
+        self.params = params
 
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
+
+        # 计算设置组
+        cal_set_group = QGroupBox('计算方法修改')
+        cal_set_layout = QFormLayout()
+        self.from_start_cal = QCheckBox()
+        self.from_start_cal.setChecked(self.params['from_start_cal'])
+        cal_set_layout.addRow(QLabel('从头拟合(默认为从最大值拟合)'),self.from_start_cal)
+        cal_set_group.setLayout(cal_set_layout)
 
         # R方设置组
         r2_group = QGroupBox("拟合质量筛选")
@@ -223,6 +225,7 @@ class DataSelectDialog(QDialog):
         button_layout.addWidget(self.cancel_btn)
 
         # 组装布局
+        layout.addWidget(cal_set_group)
         layout.addWidget(r2_group)
         layout.addWidget(peak_group)
         layout.addWidget(tau_group)
@@ -233,6 +236,7 @@ class DataSelectDialog(QDialog):
     def apply_settings(self):
         """收集参数并关闭对话框"""
         self.params = {
+            'from_start_cal': self.from_start_cal.isChecked(),
             'r_squared_min': self.r2_spin.value(),
             'peak_min': self.peak_min_spin.value(),
             'peak_max': self.peak_max_spin.value(),

@@ -56,6 +56,14 @@ class MainWindow(QMainWindow):
             'contour_levels': 10,
             'set_axis':True
         }
+        self.cal_set_params = {
+            'from_start_cal': False,
+            'r_squared_min': 0.8,
+            'peak_min': 0.0,
+            'peak_max': 100.0,
+            'tau_min': 1e-3,
+            'tau_max': 1e3
+        }
         # 状态控制
         self._is_calculating = False
         # 线程管理
@@ -337,9 +345,9 @@ class MainWindow(QMainWindow):
         bad_frame_edit = edit_menu.addAction("坏点处理")
         bad_frame_edit.triggered.connect(self.bad_frame_edit_dialog)
 
-        # 数据筛选功能
-        data_select_edit = edit_menu.addAction("数据筛选")
-        data_select_edit.triggered.connect(self.data_select_edit_dialog)
+        # 计算设置功能
+        data_select_edit = edit_menu.addAction("计算设置")
+        data_select_edit.triggered.connect(self.calculation_set_edit_dialog)
 
         # 绘图设置调整
         plt_settings_edit = edit_menu.addAction("绘图设置")
@@ -592,6 +600,7 @@ class MainWindow(QMainWindow):
 
             if not check_sif:
                 self.folder_path_label.setText("文件夹中没有目标SIF文件")
+                logging.warning("请确认选择的文件格式是否匹配")
                 return
 
             # 读取所有图像
@@ -645,23 +654,19 @@ class MainWindow(QMainWindow):
             logging.info(f"坏点处理完成，修复了 {len(dialog.bad_frames)} 个坏帧")
         self.update_status("准备就绪", False)
 
-    def data_select_edit_dialog(self):
-        """数据清洗调整"""
+    def calculation_set_edit_dialog(self):
+        """计算设置调整"""
         if not hasattr(self, 'data') or self.data is None:
             logging.warning("无数据，请先加载数据文件")
             return
-        self.update_status("数据清洗ing", True)
-        dialog = DataSelectDialog(self)
+        self.update_status("计算设置ing", True)
+        dialog = CalculationSetDialog(self.cal_set_params)
         if dialog.exec_():
             self.update_time_slice(0)
             self.time_slider.setValue(0)
-            clean_params = dialog.params
-            LifetimeCalculator.set_cal_parameters(
-                r_squared_min=clean_params['r_squared_min'],
-                peak_range=(clean_params['peak_min'], clean_params['peak_max']),
-                tau_range=(clean_params['tau_min'], clean_params['tau_max'])
-            )
-            logging.info("数据已更新，请重新绘图")
+            self.cal_set_params = dialog.params
+            LifetimeCalculator.set_cal_parameters(self.cal_set_params)
+            logging.info("设置已更新，请重新绘图")
         self.update_status("准备就绪", False)
 
     def plt_settings_edit_dialog(self):
