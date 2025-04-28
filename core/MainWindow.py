@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
         }
         self.cal_set_params = {
             'from_start_cal': False,
-            'r_squared_min': 0.8,
+            'r_squared_min': 0.6,
             'peak_min': 0.0,
             'peak_max': 100.0,
             'tau_min': 1e-3,
