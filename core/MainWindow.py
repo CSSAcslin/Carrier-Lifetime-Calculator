@@ -1,6 +1,5 @@
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-
 from PyQt5 import sip
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -502,7 +501,7 @@ class MainWindow(QMainWindow):
         载流子寿命分析工具启动
         启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         日志文件: {self.log_file}
-        程序版本: 1.6.0
+        程序版本: 1.7.1
         ============================================
         """
         logging.info(startup_msg.strip())
@@ -738,6 +737,7 @@ class MainWindow(QMainWindow):
         elif self.data['data_origin'].shape[0] == self.vector_array.shape[0]:
             self.time_slider_vertical.setVisible(True)
             self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
+            self.time_slider_vertical.setValue(0)
             self.update_result_display(0)
         else:
             logging.error("数据长度不匹配")
@@ -899,10 +899,20 @@ class MainWindow(QMainWindow):
             if file_path:
                 # 保存为CSV或TXT
                 if file_path.lower().endswith('.csv'):
-                    self.result_display.current_data.to_csv(file_path, index=False, header=False)
+                    try:
+                        self.result_display.current_data.to_csv(file_path, index=False, header=False)
+                        logging.info("数据已保存")
+                    except:
+                        logging.info("数据未保存")
                 else:
-                    self.result_display.current_data.to_csv(file_path, sep='\t', index=False, header=False)
-            logging.info("数据已保存")
+                    try:
+                        self.result_display.current_data.to_csv(file_path, sep='\t', index=False, header=False)
+                        logging.info("数据已保存")
+                    except:
+                        logging.info("数据未保存")
+            else:
+                logging.info("数据未保存")
+                return
 
     '''以下控制台命令更新'''
     def stop_calculation(self):
@@ -941,6 +951,7 @@ class StreamLogger(object):
 
 if __name__ == "__main__":
     app = QApplication([])
+    app.setStyle("Fusion")
     window = MainWindow()
     window.show()
     app.exec_()
