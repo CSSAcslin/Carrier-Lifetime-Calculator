@@ -4,7 +4,7 @@ import os
 import re
 import numpy as np
 import tifffile as tiff
-import sif_parser as sr
+import sif_parser 
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
 
@@ -170,14 +170,14 @@ class DataProcessor:
 
                 # 检查是否是背景文件（文件名包含 "no"）
                 if name.lower() == 'no':
-                    background = sr.np_open(filepath)[0][0]
+                    background = sif_parser.np_open(filepath)[0][0]
                     continue
 
                 # 否则尝试提取时间点（文件名中的数字）
                 match = re.search(r'(\d+)', name)
                 if match:
                     time = int(match.group(1))
-                    data = sr.np_open(filepath)[0][0]
+                    data = sif_parser.np_open(filepath)[0][0]
                     time_data[time] = data
             else: return False
 

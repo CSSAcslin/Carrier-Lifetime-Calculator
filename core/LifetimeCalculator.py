@@ -198,9 +198,11 @@ class LifetimeCalculator:
             x_max = min(w, x + size // 2 + 1)
             mask = np.zeros((h, w), dtype=bool)
             mask[y_min:y_max, x_min:x_max] = True
-        else:  # circle
+        elif shape == 'circle':  # circle
             yy, xx = np.ogrid[:h, :w]
-            mask = (yy - y) ** 2 + (xx - x) ** 2 <= size ** 2
+            mask = (yy - y) ** 2 + (xx - x) ** 2 <= (size-1) ** 2
+        elif shape == 'custom':  # 留给绘制roi
+            pass
 
         # 计算区域平均时间曲线
         region_data = data['data_origin'][:, mask]
