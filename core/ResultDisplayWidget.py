@@ -35,7 +35,8 @@ class ResultDisplayWidget(QWidget):
             'show_grid': False,
             'heatmap_cmap': 'jet',
             'contour_levels': 10,
-            'set_axis':True
+            'set_axis':True,
+            '_from_start_cal': False
         }
 
         # 设置Matplotlib默认字体
@@ -115,13 +116,17 @@ class ResultDisplayWidget(QWidget):
                  markersize=marker_size,    # 点大小
                  linestyle='')
 
-        # 绘制拟合曲线
-        max_idx = np.argmax(phy_signal)
-        fit_time = time_points[max_idx:]
-        ax.plot(fit_time, fit_curve, 'r',linestyle = line_style, label='拟合曲线')
-
-        # 标记最大值
-        ax.axvline(time_points[max_idx], color='g', linestyle=':', label='峰值位置')
+        if not self.plot_settings['_from_start_cal']:
+            # 这是从最大值算的绘制拟合曲线
+            max_idx = np.argmax(phy_signal)
+            fit_time = time_points[max_idx:]
+            ax.plot(fit_time, fit_curve, 'r', linestyle=line_style, label='拟合曲线')
+            # 标记最大值
+            ax.axvline(time_points[max_idx], color='g', linestyle=':', label='峰值位置')
+        else:
+            # 这是从头算的拟合曲线绘制
+            fit_time = time_points
+            ax.plot(fit_time, fit_curve, 'r', linestyle=line_style, label='拟合曲线')
         # 标记r^2和τ
         if model_type == 'single':
             ax.text(0.05, 0.95, f' τ={lifetime:.2f}\n'

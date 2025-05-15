@@ -1,7 +1,7 @@
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from PyQt5 import sip
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
@@ -53,7 +53,8 @@ class MainWindow(QMainWindow):
             'show_grid': False,
             'heatmap_cmap': 'jet',
             'contour_levels': 10,
-            'set_axis':True
+            'set_axis':True,
+            '_from_start_cal': False
         }
         self.cal_set_params = {
             'from_start_cal': False,
@@ -665,6 +666,9 @@ class MainWindow(QMainWindow):
             self.time_slider.setValue(0)
             self.cal_set_params = dialog.params
             LifetimeCalculator.set_cal_parameters(self.cal_set_params)
+            # 同步修改绘图设置并传参
+            self.plot_params['_from_start_cal'] = self.cal_set_params['from_start_cal']
+            self.result_display.update_plot_settings(self.plot_params)
             logging.info("设置已更新，请重新绘图")
         self.update_status("准备就绪", False)
 
@@ -952,6 +956,8 @@ class StreamLogger(object):
 if __name__ == "__main__":
     app = QApplication([])
     app.setStyle("Fusion")
+    app.setWindowIcon(QIcon('LifeCalor.ico'))
     window = MainWindow()
+    window.setWindowIcon(QIcon('LifeCalor.ico'))
     window.show()
     app.exec_()

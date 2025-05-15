@@ -87,7 +87,7 @@ class LifetimeCalculator:
             else:
                 decay_signal = phy_signal
                 decay_time = time_points
-        else:
+        else: # 不可能走到这里，我只是觉得代码高亮不舒服 所以加的
             decay_signal =None
             decay_time = None
             return
@@ -211,12 +211,20 @@ class LifetimeCalculator:
         # 计算寿命
         if model_type == 'single':
             popt, lifetime, r_squared, phy_signal = LifetimeCalculator.calculate_lifetime(data_type, avg_curve, time_points, model_type='single')
-            fit_curve = LifetimeCalculator.single_exponential(
+            if LifetimeCalculator._cal_params['from_start_cal']: # 从头算
+                fit_curve = LifetimeCalculator.single_exponential(
+                time_points, popt[0], popt[1], popt[2])
+            else: # 从最大值算
+                fit_curve = LifetimeCalculator.single_exponential(
                 time_points[np.argmax(phy_signal):] - time_points[np.argmax(phy_signal)],
                 popt[0], popt[1], popt[2])
         elif model_type == 'double':
             popt, lifetime, r_squared, phy_signal = LifetimeCalculator.calculate_lifetime(data_type, avg_curve, time_points, model_type='double')
-            fit_curve = LifetimeCalculator.double_exponential(
+            if LifetimeCalculator._cal_params['from_start_cal']: # 从头算
+                fit_curve = LifetimeCalculator.double_exponential(
+                time_points, popt[0], popt[1], popt[2], popt[3], popt[4])
+            else: # 从最大值算
+                fit_curve = LifetimeCalculator.double_exponential(
                 time_points[np.argmax(phy_signal):] - time_points[np.argmax(phy_signal)],
                 popt[0], popt[1], popt[2], popt[3], popt[4])
         return lifetime, fit_curve, mask, phy_signal, r_squared
@@ -299,7 +307,7 @@ class CalculationThread(QObject):
 
     @pyqtSlot(dict, float, str)
     def distribution_analyze(self,data,time_unit,model_type):
-        """分析载流子寿命"""
+        """分析全图载流子寿命"""
         self._is_calculating = True
         self.cal_running_status.emit(True)
 
