@@ -73,40 +73,46 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("载流子寿命分析工具")
-        self.setGeometry(100, 20, 1500, 850)
+        self.setGeometry(100, 50, 1500, 850)
 
         # 主部件和布局
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
 
-        main_layout = QHBoxLayout(main_widget)
-
         # 左侧参数设置区域
         self.setup_left_panel()
-        main_layout.addWidget(self.left_panel, stretch=1)
+        self.param_dock = QDockWidget("参数设置", self)
+        self.param_dock.setWidget(self.left_panel)
+        self.param_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.param_dock.setMinimumSize(300, 700)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.param_dock) # 加到左侧
 
-        # 右侧区域 (图像和结果)
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-
-        # 图像显示区域
+        # 右侧图像区域
         self.image_display = ImageDisplayWidget(self)
-        right_layout.addWidget(self.image_display, stretch=2)
-
+        image_widget = QWidget()
+        image_layout = QVBoxLayout(image_widget)
+        image_layout.addWidget(self.image_display)
         # 时间滑块
         self.time_slider = QSlider(Qt.Horizontal)
         self.time_slider.setMinimum(0)
         self.time_slider.setMaximum(0)
         self.time_label = QLabel("时间点: 0/0")
-
         slider_layout = QHBoxLayout()
         slider_layout.addWidget(QLabel("时间序列:"))
         slider_layout.addWidget(self.time_slider)
         slider_layout.addWidget(self.time_label)
-
-        right_layout.addLayout(slider_layout)
+        image_layout.addLayout(slider_layout)
+        self.image_dock = QDockWidget("图像显示", self)
+        self.image_dock.setWidget(image_widget)
+        self.image_dock.setMinimumSize(350, 350)
+        self.image_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.image_dock)
 
         # 结果显示区域
+        self.result_dock = QDockWidget("绘图结果", self)
+        result_widget = QWidget()
+        result_layout = QVBoxLayout(result_widget)
+        # 垂直滑块添加
         right_layout_horizontal = QHBoxLayout()
         self.time_slider_vertical = QSlider(Qt.Vertical)
         self.time_slider_vertical.setRange(0, 0)
@@ -114,9 +120,13 @@ class MainWindow(QMainWindow):
         self.result_display = ResultDisplayWidget()
         right_layout_horizontal.addWidget(self.time_slider_vertical)
         right_layout_horizontal.addWidget(self.result_display)
-        right_layout.addLayout(right_layout_horizontal, stretch=2)
-        main_layout.addWidget(right_panel, stretch=3)
-
+        result_layout.addLayout(right_layout_horizontal)
+        self.result_dock.setWidget(result_widget)
+        self.result_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.result_dock)
+        self.splitDockWidget(self.param_dock, self.image_dock, Qt.Horizontal)
+        self.splitDockWidget(self.image_dock, self.result_dock, Qt.Horizontal)
+        self.resizeDocks([self.image_dock, self.result_dock], [400, 400], Qt.Horizontal)
         self.setup_status_bar()
 
         # 设置控制台
@@ -448,10 +458,9 @@ class MainWindow(QMainWindow):
         self.console_widget = ConsoleWidget(self)
         self.command_processor = CommandProcessor(self)
 
-
-
         self.console_dock.setWidget(self.console_widget)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.console_dock)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
+        self.splitDockWidget(self.result_dock, self.console_dock, Qt.Vertical)
 
         # 设置控制台特性
         self.console_dock.setMinimumWidth(400)

@@ -218,7 +218,7 @@ class ResultDisplayWidget(QWidget):
             positions = series[0]
             fitting_curve = series[1]
             ax.plot(positions, fitting_curve, '--',
-                    label=f'{self.dif_result['time_series'][i]:.0f}ps')
+                    label=f'{self.dif_result["time_series"][i]:.0f}ps')
 
         # 设置图表属性
         ax.set_title("多帧ROI信号强度及高斯拟合")
