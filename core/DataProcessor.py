@@ -83,7 +83,7 @@ class DataProcessor:
         if mask is not None and mask.shape == data_origin[0].shape:
             data_mask = [ ]
             for every_data in data_origin:
-                # data_mask.append(np.multiply(every_data, mask))
+                # data_mask.append(np.multiply(every_data, mask)) 目前这里有问题 还没想好怎么改
                 every_data[~mask] = data['boundary']['min']
             data_origin = data_mask
         vmax_array = []
@@ -207,6 +207,7 @@ class DataProcessor:
 
         normalized = self.normalize_data(self.sif_data_original,self.normalize_type)
         return {
+            'signal':np.stack(),
             'data_origin': np.stack(self.sif_data_original , axis=0),
             'data_type': 'sif',
             'images': np.stack(normalized, axis=0),

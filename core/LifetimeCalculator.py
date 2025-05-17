@@ -192,10 +192,10 @@ class LifetimeCalculator:
 
         # 创建区域掩模
         if shape == 'square':
-            y_min = max(0, y - size // 2)
-            y_max = min(h, y + size // 2 + 1)
-            x_min = max(0, x - size // 2)
-            x_max = min(w, x + size // 2 + 1)
+            y_min = max(0, y - (size - 1) // 2)
+            y_max = min(h, y_min + size)
+            x_min = max(0, x - (size - 1) // 2)
+            x_max = min(w, x_min + size)
             mask = np.zeros((h, w), dtype=bool)
             mask[y_min:y_max, x_min:x_max] = True
         elif shape == 'circle':  # circle

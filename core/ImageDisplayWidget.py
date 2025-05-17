@@ -117,15 +117,15 @@ class ImageDisplayWidget(QWidget):
 
         # 获取鼠标在图像上的坐标
         pos = self.graphics_view.mapToScene(event.pos())
-        x_img, y_img = int(pos.x()), int(pos.y())
+        self.x_img, self.y_img = int(pos.x()), int(pos.y())
 
         # 检查坐标是否在图像范围内
         h, w = self.current_image.shape
-        if 0 <= x_img < w and 0 <= y_img < h:
-            self.mouse_pos = (x_img, y_img)
-            value = self.current_image[y_img, x_img]
+        if 0 <= self.x_img < w and 0 <= self.y_img < h:
+            self.mouse_pos = (self.x_img, self.y_img)
+            value = self.current_image[self.y_img, self.x_img]
             # 发射信号(需要主窗口连接此信号)
-            self.mouse_position_signal.emit(x_img, y_img, self.current_time_idx, value)
+            self.mouse_position_signal.emit(self.x_img, self.y_img, self.current_time_idx, value)
 
         super().mouseMoveEvent(event)
 
@@ -167,7 +167,6 @@ class ImageDisplayWidget(QWidget):
         qimage = QImage(image_to_show.data, image_to_show.shape[1], image_to_show.shape[0],
                         image_to_show.shape[1], QImage.Format_Grayscale8)
         pixmap = QPixmap.fromImage(qimage)
-
         # 直接更新现有pixmap，避免重置场景
         self.pixmap_item.setPixmap(pixmap)
 

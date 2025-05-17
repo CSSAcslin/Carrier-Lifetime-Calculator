@@ -271,8 +271,9 @@ class ROIdrawDialog(QDialog):
 
     def set_pen_size(self, size):
         self.pen_size = size
-        self.vector_line.setWidth(size) # 目前是向量直线的线宽也一起设置了
         self.pen_size_value_label.setText(str(size))
+        if self.current_tool == 'VectorLine':
+            self.vector_line.setWidth(size) # 目前是向量直线的线宽也一起设置了
 
     def set_top_layer_opacity(self, value):
         self.top_layer_opacity = value / 100.0
@@ -522,7 +523,7 @@ class ROIdrawDialog(QDialog):
 
     def get_top_layer_array(self):
         """获取顶部图层数组"""
-        bool_mask = self.top_layer_array >128
+        bool_mask = self.top_layer_array >0
 
         return self.top_layer_array.copy(), bool_mask
 

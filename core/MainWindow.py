@@ -73,11 +73,11 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("载流子寿命分析工具")
-        self.setGeometry(100, 50, 1500, 850)
+        self.setGeometry(100, 50, 1600, 850)
 
         # 主部件和布局
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
+        # main_widget = QWidget()
+        # self.setCentralWidget(main_widget)
 
         # 左侧参数设置区域
         self.setup_left_panel()
@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
         image_widget = QWidget()
         image_layout = QVBoxLayout(image_widget)
         image_layout.addWidget(self.image_display)
+
         # 时间滑块
         self.time_slider = QSlider(Qt.Horizontal)
         self.time_slider.setMinimum(0)
@@ -123,10 +124,11 @@ class MainWindow(QMainWindow):
         result_layout.addLayout(right_layout_horizontal)
         self.result_dock.setWidget(result_widget)
         self.result_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.result_dock.setMinimumSize(350, 350)
         self.addDockWidget(Qt.RightDockWidgetArea, self.result_dock)
         self.splitDockWidget(self.param_dock, self.image_dock, Qt.Horizontal)
         self.splitDockWidget(self.image_dock, self.result_dock, Qt.Horizontal)
-        self.resizeDocks([self.image_dock, self.result_dock], [400, 400], Qt.Horizontal)
+        self.resizeDocks([self.image_dock, self.result_dock], [650, 650], Qt.Horizontal)
         self.setup_status_bar()
 
         # 设置控制台
@@ -194,16 +196,6 @@ class MainWindow(QMainWindow):
         # 时间参数
         time_set = self.QGroupBoxCreator("时间参数:")
         time_layout = QVBoxLayout()
-        # 起始时间设置暂不使用
-        # time_start_layout = QHBoxLayout()
-        # time_start_layout.addWidget(QLabel("起始时间:"))
-        # self.time_start_input = QDoubleSpinBox()
-        # self.time_start_input.setMinimum(0)
-        # self.time_start_input.setValue(0)
-        # self.time_start_input.setDecimals(3)
-        # time_start_layout.addWidget(self.time_start_input)
-        # time_start_layout.addWidget(QLabel("帧"))
-        # time_layout.addLayout(time_start_layout)
 
         time_step_layout = QHBoxLayout()
         time_step_layout.addWidget(QLabel("时间单位:"))
@@ -232,10 +224,7 @@ class MainWindow(QMainWindow):
         space_step_layout.addWidget(QLabel("μm/像素"))
         space_layout.addLayout(space_step_layout)
         space_layout.addWidget(QLabel('     (最小分辨率：1 nm)'))
-        # 鼠标悬停显示
-        self.mouse_pos_label = QLabel("鼠标位置: x= -, y= -, t= -\n值: -")
-        self.mouse_pos_label.setStyleSheet("background-color: #f0f0f0; padding-top: 5px;")
-        space_layout.addWidget(self.mouse_pos_label)
+
         space_set.setLayout(space_layout)
         left_layout.addWidget(space_set)
 
@@ -414,14 +403,18 @@ class MainWindow(QMainWindow):
 
         # 状态文本
         self.status_label = QLabel("准备就绪")
-        self.status_label.setFixedWidth(300)
+        self.status_label.setFixedWidth(250)
         self.status_bar.addWidget(self.status_label)
-
+        # 鼠标悬停显示
+        self.mouse_pos_label = QLabel("鼠标位置: x= -, y= -, t= -; 值: -")
+        self.mouse_pos_label.setFixedWidth(500)
+        self.status_bar.addWidget(self.mouse_pos_label)
+        self._handle_hover = self.make_hover_handler()
         # 进度条
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedWidth(800)
+        self.progress_bar.setFixedWidth(650)
         self.progress_bar.setStyleSheet("""
             QProgressBar {
                 border: 1px solid #CCCCCC;
@@ -632,15 +625,26 @@ class MainWindow(QMainWindow):
             self.region_y_input.setMaximum(self.data['images'].shape[2])
         pass
 
-    def _handle_hover(self, x, y, t, value):
-        """更新鼠标位置显示"""
-        if hasattr(self, 'time_points') and self.time_points is not None:
-            time_val = self.time_points[t]
-        else:
-            time_val = t
+    def make_hover_handler(self):
+        args = {'x': None, 'y': None, 't': None, 'value': None}
+        def _handle_hover(x=None, y=None, t=None, value=None):
+            """鼠标位置显示"""
+            # 更新传入的参数（未传入的保持原值）
+            if x is not None: args['x'] = x
+            if y is not None: args['y'] = y
+            if t is not None: args['t'] = t
+            if value is not None:
+                args['value'] = value
+            else:
+                args['value'] = self.data['images'][args['t'], args['x'], args['y']]
+            if args['x'] is None or args['y'] is None:
+                return
 
-        self.mouse_pos_label.setText(
-            f"鼠标位置: x={x}, y={y}, t={time_val}\n值: {value:.2f}")
+            # 更新显示
+            self.mouse_pos_label.setText(
+                f"鼠标位置: x={args['x']}, y={args['y']}, t={args['t']}; 归一值: {args['value']:.2f}, 原始值：{self.data['data_origin'][args['t'], args['x'], args['y']]:.6e}")
+
+        return _handle_hover
 
     def _handle_click(self, x, y):
         """处理图像点击事件"""
@@ -720,9 +724,10 @@ class MainWindow(QMainWindow):
             self.time_label.setText(f"时间点: {idx}/{len(self.data['images']) - 1}")
             self.image_display.current_image = self.data['images'][idx]
             if first_create:
-                self.image_display.display_image(self.data['images'][idx])
+                self.image_display.display_image(self.data['images'][idx],idx)
             else:
-                self.image_display.update_display_idx(self.data['images'][idx])
+                self.image_display.update_display_idx(self.data['images'][idx],idx)
+                self._handle_hover(t = idx)
 
     def update_progress(self, current, total=None):
         """更新进度条"""
