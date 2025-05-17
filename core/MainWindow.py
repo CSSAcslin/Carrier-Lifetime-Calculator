@@ -970,8 +970,8 @@ class StreamLogger(object):
 if __name__ == "__main__":
     app = QApplication([])
     app.setStyle("Fusion")
-    app.setWindowIcon(QIcon('LifeCalor.ico'))
+    app.setWindowIcon(QIcon(':/LifeCalor.ico'))
     window = MainWindow()
-    window.setWindowIcon(QIcon('LifeCalor.ico'))
+    window.setWindowIcon(QIcon(':/LifeCalor.ico'))
     window.show()
     app.exec_()
