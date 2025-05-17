@@ -207,7 +207,7 @@ class DataProcessor:
 
         normalized = self.normalize_data(self.sif_data_original,self.normalize_type)
         return {
-            'signal':np.stack(),
+            # 'signal':np.stack(),
             'data_origin': np.stack(self.sif_data_original , axis=0),
             'data_type': 'sif',
             'images': np.stack(normalized, axis=0),
