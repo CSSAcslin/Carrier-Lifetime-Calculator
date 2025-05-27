@@ -79,7 +79,10 @@ class DataProcessor:
     def amend_data(self, data, mask = None):
         """函数修改方法
         输入修改的源数据，导出修改的数据包"""
-        data_origin = data['data_origin']
+        if isinstance(data, dict): # 加roi来的
+            data_origin = data['data_origin']
+        elif isinstance(data, np.ndarray): # 坏点修复来的
+            data_origin = data
         if mask is not None and mask.shape == data_origin[0].shape:
             data_mask = [ ]
             for every_data in data_origin:
@@ -207,7 +210,7 @@ class DataProcessor:
 
         normalized = self.normalize_data(self.sif_data_original,self.normalize_type)
         return {
-            # 'signal':np.stack(),
+            # 'signal':np.stack(), 不写了先
             'data_origin': np.stack(self.sif_data_original , axis=0),
             'data_type': 'sif',
             'images': np.stack(normalized, axis=0),
