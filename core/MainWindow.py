@@ -242,7 +242,7 @@ class MainWindow(QMainWindow):
         operation_mode_layout = QHBoxLayout()
         operation_mode_layout.addWidget(QLabel("模式:"))
         self.function_combo = QComboBox()
-        self.function_combo.addItems(["载流子热图分析", "特定区域寿命分析","载流子扩散系数计算"])
+        self.function_combo.addItems(["载流子寿命热图", "选区指数衰减寿命曲线","载流子扩散系数计算"])
         operation_mode_layout.addWidget(self.function_combo)
         operation_layout.addLayout(operation_mode_layout)
 
@@ -454,7 +454,7 @@ class MainWindow(QMainWindow):
         self.console_dock.setWidget(self.console_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
         self.splitDockWidget(self.result_dock, self.console_dock, Qt.Vertical)
-
+        self.resizeDocks([self.result_dock, self.console_dock], [550, 300], Qt.Vertical)
         # 设置控制台特性
         self.console_dock.setMinimumWidth(400)
         self.console_dock.setMinimumHeight(200)
@@ -499,16 +499,16 @@ class MainWindow(QMainWindow):
 
     def log_startup_message(self):
         """记录程序启动消息"""
-        startup_msg = f"""
-        ============================================
-        载流子寿命分析工具启动
-        启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-        日志文件: {self.log_file}
-        程序版本: 1.7.1
-        ============================================
+        startup_msg = f"""\n
+============================================
+载流子寿命分析工具启动
+启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+日志位置: {self.log_file}
+程序版本: 1.8.0
+============================================
         """
         logging.info(startup_msg.strip())
-        logging.info("程序已进入准备状态，等待用户操作...")
+        logging.info("程序已进入准备状态，等待用户操作...（第一次计算可能较慢）")
 
     def thread_open(self):
         """计算线程相关 以及信号槽连接都放在这里了"""
@@ -636,13 +636,13 @@ class MainWindow(QMainWindow):
             if value is not None:
                 args['value'] = value
             else:
-                args['value'] = self.data['images'][args['t'], args['x'], args['y']]
+                args['value'] = self.data['images'][args['t'], args['y'], args['x']]
             if args['x'] is None or args['y'] is None:
                 return
 
             # 更新显示
             self.mouse_pos_label.setText(
-                f"鼠标位置: x={args['x']}, y={args['y']}, t={args['t']}; 归一值: {args['value']:.2f}, 原始值：{self.data['data_origin'][args['t'], args['x'], args['y']]:.6e}")
+                f"鼠标位置: x={args['x']}, y={args['y']}, t={args['t']}; 归一值: {args['value']:.2f}, 原始值：{self.data['data_origin'][args['t'], args['y'], args['x']]:.6e}")
 
         return _handle_hover
 
@@ -693,7 +693,7 @@ class MainWindow(QMainWindow):
             # 将参数传递给ResultDisplayWidget
             self.result_display.update_plot_settings(dialog.params)
             self.plot_params = dialog.params
-            logging.info("绘图设置已更新，请重新绘图")
+            logging.info("绘图已更新")
         self.update_status("准备就绪", False)
 
     def roi_select_dialog(self):
