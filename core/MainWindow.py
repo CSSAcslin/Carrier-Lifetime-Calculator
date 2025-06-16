@@ -79,9 +79,9 @@ class MainWindow(QMainWindow):
         # main_widget = QWidget()
         # self.setCentralWidget(main_widget)
 
-        # 左侧参数设置区域
+        # 左侧设置区域
         self.setup_left_panel()
-        self.param_dock = QDockWidget("参数设置", self)
+        self.param_dock = QDockWidget("基础设置", self)
         self.param_dock.setWidget(self.left_panel)
         self.param_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.param_dock.setMinimumSize(300, 700)
@@ -138,65 +138,88 @@ class MainWindow(QMainWindow):
         """设置左侧面板"""
         self.left_panel = QWidget()
         self.left_panel_layout = QVBoxLayout()
+        self.left_panel_layout.setContentsMargins(15,15,15,15)
 
-        # 数据导入面板
+    # 数据导入面板
         self.data_import = self.QGroupBoxCreator('数据导入')
         left_layout0 = QVBoxLayout()
         left_layout0.setSpacing(2)
-        left_layout0.setContentsMargins(1,7,1,7)
-        # 文件夹选择
-        self.file_type_selector = QComboBox()
-        self.file_type_selector.addItems(['tiff格式', 'sif格式'])
 
-        # 文件类型为tiff
-        folder_choose = QHBoxLayout()
-        file_types = QVBoxLayout()
-        file_types.addWidget(self.file_type_selector)
-        self.file_type_stack = QStackedWidget()
-        tiff_group = self.QGroupBoxCreator(style = "noborder")
+        # 模式选择
+        self.fuction_select = QComboBox()
+        self.fuction_select.addItems(['请选择分析模式','FS-iSCAT','光热信号处理','EM-iSCAT'])
+        left_layout0.addWidget(self.fuction_select)
+        self.funtion_stack = QStackedWidget()
+        nothing_group = self.QGroupBoxCreator(style="inner")
+        nothing_layout = QVBoxLayout()
+        nothing_layout.addWidget(QLabel("首先：请选择分析模式!"))
+        nothing_group.setLayout(nothing_layout)
+        self.funtion_stack.addWidget(nothing_group)
+
+        # FS-iSCAT模式下的文件夹选择
+        fs_iSCAT_group = self.QGroupBoxCreator(style="inner")
         tiff_layout = QVBoxLayout()
         self.group_selector = QComboBox()
         self.group_selector.addItems(['n', 'p'])
         self.tiff_folder_btn = QPushButton("选择TIFF文件夹")
         tiff_layout.addWidget(self.group_selector)
         tiff_layout.addWidget(self.tiff_folder_btn)
-        tiff_group.setLayout(tiff_layout)
-        self.file_type_stack.addWidget(tiff_group)
-        # 文件类型为sif 试用
-        sif_group = self.QGroupBoxCreator(style = "noborder")
+        fs_iSCAT_group.setLayout(tiff_layout)
+        self.funtion_stack.addWidget(fs_iSCAT_group)
+
+        # 光热信号处理模式下的文件夹选择
+        PA_group = self.QGroupBoxCreator(style="inner")
         sif_layout = QVBoxLayout()
-        # 归一化方法选择
-        method_label = QLabel("归一化方法:")
+        method_label = QLabel("归一化方法:")         # 归一化方法选择
         self.method_combo = QComboBox()
         self.method_combo.addItems(["linear", "percentile", "sigmoid", "log", "clahe"])
         self.sif_folder_btn = QPushButton('选择SIF文件夹')
         sif_layout.addWidget(method_label)
         sif_layout.addWidget(self.method_combo)
         sif_layout.addWidget(self.sif_folder_btn)
-        sif_group.setLayout(sif_layout)
-        self.file_type_stack.addWidget(sif_group)
+        PA_group.setLayout(sif_layout)
+        self.funtion_stack.addWidget(PA_group)
+
+        # 文件类型为tiff
+        EM_iSCAT_group = self.QGroupBoxCreator(style="inner")
+        type_choose = QHBoxLayout()
+        self.file_type_selector = QComboBox()
+        self.file_type_selector.addItems(['avi格式', 'tiff格式'])
+        file_types = QVBoxLayout()
+        file_types.addWidget(self.file_type_selector)
+        self.file_type_stack = QStackedWidget()
+        avi_group = self.QGroupBoxCreator(style = "noborder") # avi 选择
+        avi_layout = QVBoxLayout()
+        self.avi_select_btn = QPushButton("选择avi文件")
+        avi_layout.addWidget(self.avi_select_btn)
+        avi_group.setLayout(avi_layout)
+        self.file_type_stack.addWidget(avi_group)
+        tiff_group = self.QGroupBoxCreator(style = "noborder") # tiff 选择
+        tiff_layout = QVBoxLayout()
+        self.EMtiff_folder_btn = QPushButton("选择TIFF文件夹")
+        tiff_layout.addWidget(self.EMtiff_folder_btn)
+        tiff_group.setLayout(tiff_layout)
+        self.file_type_stack.addWidget(tiff_group)
+        type_choose.addLayout(file_types)
+        type_choose.addWidget(self.file_type_stack)
+        EM_iSCAT_group.setLayout(type_choose)
+        self.funtion_stack.addWidget(EM_iSCAT_group)
         # 总提示
         self.folder_path_label = QLabel("未选择文件夹")
         self.folder_path_label.setMaximumWidth(300)
         self.folder_path_label.setWordWrap(True)
         self.folder_path_label.setStyleSheet("font-size: 14px;")  # 后续还要改
 
-        folder_choose.addLayout(file_types)
-        folder_choose.addWidget(self.file_type_stack)
-
-        left_layout0.addLayout(folder_choose)
+        left_layout0.addWidget(self.funtion_stack)
+        left_layout0.addSpacing(3)
         left_layout0.addWidget(self.folder_path_label)
         self.data_import.setLayout(left_layout0)
 
+    # 参数设置
         self.parameter_panel = self.QGroupBoxCreator("参数设置")
         left_layout = QVBoxLayout()
         left_layout.setSpacing(2)
-        left_layout.setContentsMargins(1,7,1,7)
-
-        # 时间参数
-        time_set = self.QGroupBoxCreator("时间参数:")
-        time_layout = QVBoxLayout()
-
+        # left_layout.setContentsMargins(1,7,1,7)
         time_step_layout = QHBoxLayout()
         time_step_layout.addWidget(QLabel("时间单位:"))
         self.time_step_input = QDoubleSpinBox()
@@ -205,15 +228,14 @@ class MainWindow(QMainWindow):
         self.time_step_input.setValue(1.0)
         self.time_step_input.setDecimals(3)
         time_step_layout.addWidget(self.time_step_input)
-        time_step_layout.addWidget(QLabel("ps/帧"))
-        time_layout.addLayout(time_step_layout)
-        time_layout.addWidget(QLabel("     (最小分辨率：1 fs)"))
-        time_set.setLayout(time_layout)
-        left_layout.addWidget(time_set)
-
-        # 空间参数
-        space_set = self.QGroupBoxCreator("空间参数:")
-        space_layout = QVBoxLayout()
+        self.time_unit_combo = QComboBox()
+        self.time_unit_combo.addItems(["ms", "μs", "ns", "ps", "fs"])
+        self.time_unit_combo.setCurrentIndex(3)
+        time_step_layout.addWidget(self.time_unit_combo)
+        time_step_layout.addWidget(QLabel("/帧"))
+        left_layout.addLayout(time_step_layout)
+        left_layout.addWidget(QLabel("     (最小分辨率：.001 fs)"))
+        left_layout.addSpacing(5)
         space_step_layout = QHBoxLayout()
         space_step_layout.addWidget(QLabel("空间单位:"))
         self.space_step_input = QDoubleSpinBox()
@@ -221,15 +243,29 @@ class MainWindow(QMainWindow):
         self.space_step_input.setValue(1.0)
         self.space_step_input.setDecimals(3)
         space_step_layout.addWidget(self.space_step_input)
-        space_step_layout.addWidget(QLabel("μm/像素"))
-        space_layout.addLayout(space_step_layout)
-        space_layout.addWidget(QLabel('     (最小分辨率：1 nm)'))
+        self.space_unit_combo = QComboBox()
+        self.space_unit_combo.addItems(["mm", "μm", "nm"])
+        self.space_unit_combo.setCurrentIndex(1)
+        space_step_layout.addWidget(self.space_unit_combo)
+        space_step_layout.addWidget(QLabel("/像素"))
+        left_layout.addLayout(space_step_layout)
+        left_layout.addWidget(QLabel('     (最小分辨率：.001 nm)'))
+        self.parameter_panel.setLayout(left_layout)
 
-        space_set.setLayout(space_layout)
-        left_layout.addWidget(space_set)
+    # 分析总体设置
+        self.modes_panel = self.QGroupBoxCreator("分析设置:")
+        left_layout1 = QVBoxLayout()
+        left_layout1.setContentsMargins(1, 2, 1, 2)
+        self.between_stack = QStackedWidget()
+        # 默认显示
+        nothing_GROUP = self.QGroupBoxCreator(style="noborder")
+        nothing_layout1 = QVBoxLayout()
+        nothing_layout1.addWidget(QLabel("首先：请选择分析模式!"))
+        nothing_GROUP.setLayout(nothing_layout1)
+        self.between_stack.addWidget(nothing_GROUP)
 
-        # 分析总体设置
-        operation_set = self.QGroupBoxCreator("分析设置:")
+        # fs_iSCAT下的功能选择
+        fs_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
         operation_layout = QVBoxLayout()
         # 寿命模型选择
         lifetime_layout = QHBoxLayout()
@@ -241,12 +277,11 @@ class MainWindow(QMainWindow):
         # operation_layout.addSpacing(10)
         operation_mode_layout = QHBoxLayout()
         operation_mode_layout.addWidget(QLabel("模式:"))
-        self.function_combo = QComboBox()
-        self.function_combo.addItems(["载流子寿命热图", "选区指数衰减寿命曲线","载流子扩散系数计算"])
-        operation_mode_layout.addWidget(self.function_combo)
+        self.FS_mode_combo = QComboBox()
+        self.FS_mode_combo.addItems(["载流子寿命热图", "选区寿命曲线","载流子扩散系数计算"])
+        operation_mode_layout.addWidget(self.FS_mode_combo)
         operation_layout.addLayout(operation_mode_layout)
-
-        self.function_stack = QStackedWidget()
+        self.FS_mode_stack = QStackedWidget()
         # 载流子寿命分布图参数板
         heatmap_group = self.QGroupBoxCreator(style = "inner")
         heatmap_layout = QVBoxLayout()
@@ -254,7 +289,7 @@ class MainWindow(QMainWindow):
         self.analyze_btn = QPushButton("开始分析")
         heatmap_layout.addWidget(self.analyze_btn)
         heatmap_group.setLayout(heatmap_layout)
-        self.function_stack.addWidget(heatmap_group)
+        self.FS_mode_stack.addWidget(heatmap_group)
         # 特定区域寿命分析功能参数板
             # 区域分析参数
         self.region_shape_combo = QComboBox()
@@ -294,7 +329,7 @@ class MainWindow(QMainWindow):
         region_layout.addLayout(size_layout)
         region_layout.addWidget(self.analyze_region_btn)
         region_group.setLayout(region_layout)
-        self.function_stack.addWidget(region_group)
+        self.FS_mode_stack.addWidget(region_group)
         # 载流子扩散系数计算参数板
         diffusion_group = self.QGroupBoxCreator(style = "inner")
         diffusion_layout = QVBoxLayout()
@@ -309,22 +344,88 @@ class MainWindow(QMainWindow):
         diffusion_layout.addWidget(self.select_frames_btn)
         diffusion_layout.addWidget(self.diffusion_coefficient_btn)
         diffusion_group.setLayout(diffusion_layout)
-        self.function_stack.addWidget(diffusion_group)
-        operation_layout.addWidget(self.function_stack)
-        operation_set.setLayout(operation_layout)
-        left_layout.addWidget(operation_set)
+        self.FS_mode_stack.addWidget(diffusion_group)
+        operation_layout.addWidget(self.FS_mode_stack)
+        fs_iSCAT_GROUP.setLayout(operation_layout)
+        self.between_stack.addWidget(fs_iSCAT_GROUP)
+
+        # 光热信号处理下的功能选择
+        PA_GROUP = self.QGroupBoxCreator(style="noborder")
+        PA_layout1 = QVBoxLayout()
+        self.PA_mode_combo = QComboBox()
+        self.PA_mode_combo.addItems(["选区寿命指数衰减检测"])
+        PA_layout1.addWidget(self.PA_mode_combo)
+        self.PA_mode_stack = QStackedWidget()
+        # 区域分析参数
+        self.region_shape_combo = QComboBox()
+        self.region_shape_combo.addItems(["正方形", "圆形"])
+        self.region_size_input = QSpinBox()
+        self.region_size_input.setMinimum(1)
+        self.region_size_input.setMaximum(50)
+        self.region_size_input.setValue(5)
+        self.analyze_region_btn = QPushButton("分析选定区域")
+        # 区域坐标输入
+        self.region_x_input = QSpinBox()
+        self.region_y_input = QSpinBox()
+        self.region_x_input.setMaximum(131)
+        self.region_y_input.setMaximum(131)
+        # 区域分析面板生成
+        region_group = self.QGroupBoxCreator(style="inner")
+        region_layout = QVBoxLayout()
+        lifetime_layout = QHBoxLayout()
+        lifetime_layout.addWidget(QLabel("寿命模型:"))
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["单指数衰减", "双指数-仅区域"])
+        lifetime_layout.addWidget(self.model_combo)
+        coord_layout = QHBoxLayout()
+        coord_layout.addWidget(QLabel("中心X:"))
+        coord_layout.addWidget(self.region_x_input)
+        coord_layout.addWidget(QLabel("中心Y:"))
+        coord_layout.addWidget(self.region_y_input)
+        shape_layout = QHBoxLayout()
+        shape_layout.addWidget(QLabel("区域形状:"))
+        shape_layout.addWidget(self.region_shape_combo)
+        size_layout = QHBoxLayout()
+        size_layout.addWidget(QLabel("区域大小:"))
+        size_layout.addWidget(self.region_size_input)
+        region_layout.addLayout(lifetime_layout)
+        region_layout.addLayout(coord_layout)
+        region_layout.addLayout(shape_layout)
+        region_layout.addLayout(size_layout)
+        region_layout.addWidget(self.analyze_region_btn)
+        region_group.setLayout(region_layout)
+        self.PA_mode_stack.addWidget(region_group)
+        PA_layout1.addWidget(self.PA_mode_stack)
+        PA_GROUP.setLayout(PA_layout1)
+        self.between_stack.addWidget(PA_GROUP)
+
+        # EM_iSCAT下的功能选择
+        EM_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
+        EM_iSCAT_layout1 = QVBoxLayout()
+        self.EM_mode_combo = QComboBox()
+        self.EM_mode_combo.addItems(["未完成"])
+        EM_iSCAT_layout1.addWidget(self.EM_mode_combo)
+        self.EM_mode_stack = QStackedWidget()
+        self.EM_mode_stack.addWidget(QLabel("未完成"))
+        EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
+        EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout1)
+        self.between_stack.addWidget(EM_iSCAT_GROUP)
+
+        left_layout1.addWidget(self.between_stack)
+        self.modes_panel.setLayout(left_layout1)
+
         # 添加分析按钮和导出按钮
-        left_layout.addSpacing(20)
         data_save_layout = QHBoxLayout()
         self.export_image_btn = QPushButton("导出结果为图片")
         self.export_data_btn = QPushButton("导出结果为数据")
         data_save_layout.addWidget(self.export_image_btn)
         data_save_layout.addWidget(self.export_data_btn)
-        left_layout.addLayout(data_save_layout)
-        self.parameter_panel.setLayout(left_layout)
 
         self.left_panel_layout.addWidget(self.data_import)
         self.left_panel_layout.addWidget(self.parameter_panel)
+        self.left_panel_layout.addWidget(self.modes_panel)
+        self.left_panel_layout.addSpacing(15)
+        self.left_panel_layout.addLayout(data_save_layout)
         self.left_panel.setLayout(self.left_panel_layout)
 
     def setup_menus(self):
@@ -529,12 +630,18 @@ class MainWindow(QMainWindow):
 
     def signal_connect(self):
         # 连接参数区域按钮
+        self.fuction_select.currentIndexChanged.connect(self.funtion_stack.setCurrentIndex)
+        self.fuction_select.currentIndexChanged.connect(self.between_stack.setCurrentIndex)
         self.file_type_selector.currentIndexChanged.connect(self.file_type_stack.setCurrentIndex)
         self.tiff_folder_btn.clicked.connect(self.load_tiff_folder)
         self.sif_folder_btn.clicked.connect(self.load_sif_folder)
+        self.avi_select_btn.clicked.connect(self.load_avi_file)
+        self.EMtiff_folder_btn.clicked.connect(self.load_tiff_folder_EM)
         self.analyze_region_btn.clicked.connect(self.region_analyze_start)
         self.analyze_btn.clicked.connect(self.distribution_analyze_start)
-        self.function_combo.currentIndexChanged.connect(self.function_stack.setCurrentIndex)
+        self.FS_mode_combo.currentIndexChanged.connect(self.FS_mode_stack.setCurrentIndex)
+        self.PA_mode_combo.currentIndexChanged.connect(self.PA_mode_stack.setCurrentIndex)
+        self.EM_mode_combo.currentIndexChanged.connect(self.EM_mode_stack.setCurrentIndex)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
         self.diffusion_coefficient_btn.clicked.connect(self.result_display.plot_variance_evolution)
@@ -554,7 +661,7 @@ class MainWindow(QMainWindow):
 
     '''上面是初始化预设，下面是功能响应'''
     def load_tiff_folder(self):
-        """加载TIFF文件夹"""
+        """加载TIFF文件夹(FS-iSCAT)"""
         self.time_unit = float(self.time_step_input.value())
         folder_path = QFileDialog.getExistingDirectory(self, "选择TIFF图像文件夹")
         self.data_processor = DataProcessor(folder_path)
@@ -625,6 +732,14 @@ class MainWindow(QMainWindow):
             self.region_y_input.setMaximum(self.data['images'].shape[2])
         pass
 
+    def load_avi_file(self):
+        """加载avi文件"""
+        pass
+
+    def load_tiff_folder_EM(self):
+        """加载TIFF文件夹(FS-iSCAT)"""
+        pass
+
     def make_hover_handler(self):
         args = {'x': None, 'y': None, 't': None, 'value': None}
         def _handle_hover(x=None, y=None, t=None, value=None):
@@ -648,7 +763,7 @@ class MainWindow(QMainWindow):
 
     def _handle_click(self, x, y):
         """处理图像点击事件"""
-        if self.function_combo.currentIndex() == 1:  # 区域分析模式
+        if self.FS_mode_combo.currentIndex() == 1 or self.PA_mode_combo.currentIndex() == 0:  # 区域分析模式
             self.region_x_input.setValue(x)
             self.region_y_input.setValue(y)
 
