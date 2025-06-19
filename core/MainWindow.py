@@ -333,11 +333,11 @@ class MainWindow(QMainWindow):
         # 载流子扩散系数计算参数板
         diffusion_group = self.QGroupBoxCreator(style = "inner")
         diffusion_layout = QVBoxLayout()
-        self.vector_signal_btn = QPushButton("1.展示ROI上全时信号强度")
+        self.vector_signal_btn = QPushButton("1.计算ROI上全时信号强度")
         self.frame_input = QTextEdit()
-        self.frame_input.setPlaceholderText("2.请输入帧的位数（起始帧位为0），以逗号或分号分隔\n例如：0, 5, 10, 15")
+        self.frame_input.setPlaceholderText("2.输入帧位（起始帧位为0），以逗号或分号分隔，范围用-\n输入all选取全部帧")
         self.frame_input.setFixedHeight(70)
-        self.select_frames_btn = QPushButton("3.展示选定时刻信号强度")
+        self.select_frames_btn = QPushButton("3.计算选定时刻信号强度")
         self.diffusion_coefficient_btn = QPushButton("4.展示方差演化图及扩散系数")
         diffusion_layout.addWidget(self.vector_signal_btn)
         diffusion_layout.addWidget(self.frame_input)
@@ -349,53 +349,53 @@ class MainWindow(QMainWindow):
         fs_iSCAT_GROUP.setLayout(operation_layout)
         self.between_stack.addWidget(fs_iSCAT_GROUP)
 
-        # 光热信号处理下的功能选择
+        # 光热信号处理下的功能选择（因为功能冲突，此板块暂不启用，通过between_stack_change覆盖选取）
         PA_GROUP = self.QGroupBoxCreator(style="noborder")
         PA_layout1 = QVBoxLayout()
-        self.PA_mode_combo = QComboBox()
-        self.PA_mode_combo.addItems(["选区寿命指数衰减检测"])
-        PA_layout1.addWidget(self.PA_mode_combo)
-        self.PA_mode_stack = QStackedWidget()
-        # 区域分析参数
-        self.region_shape_combo = QComboBox()
-        self.region_shape_combo.addItems(["正方形", "圆形"])
-        self.region_size_input = QSpinBox()
-        self.region_size_input.setMinimum(1)
-        self.region_size_input.setMaximum(50)
-        self.region_size_input.setValue(5)
-        self.analyze_region_btn = QPushButton("分析选定区域")
-        # 区域坐标输入
-        self.region_x_input = QSpinBox()
-        self.region_y_input = QSpinBox()
-        self.region_x_input.setMaximum(131)
-        self.region_y_input.setMaximum(131)
-        # 区域分析面板生成
-        region_group = self.QGroupBoxCreator(style="inner")
-        region_layout = QVBoxLayout()
-        lifetime_layout = QHBoxLayout()
-        lifetime_layout.addWidget(QLabel("寿命模型:"))
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(["单指数衰减", "双指数-仅区域"])
-        lifetime_layout.addWidget(self.model_combo)
-        coord_layout = QHBoxLayout()
-        coord_layout.addWidget(QLabel("中心X:"))
-        coord_layout.addWidget(self.region_x_input)
-        coord_layout.addWidget(QLabel("中心Y:"))
-        coord_layout.addWidget(self.region_y_input)
-        shape_layout = QHBoxLayout()
-        shape_layout.addWidget(QLabel("区域形状:"))
-        shape_layout.addWidget(self.region_shape_combo)
-        size_layout = QHBoxLayout()
-        size_layout.addWidget(QLabel("区域大小:"))
-        size_layout.addWidget(self.region_size_input)
-        region_layout.addLayout(lifetime_layout)
-        region_layout.addLayout(coord_layout)
-        region_layout.addLayout(shape_layout)
-        region_layout.addLayout(size_layout)
-        region_layout.addWidget(self.analyze_region_btn)
-        region_group.setLayout(region_layout)
-        self.PA_mode_stack.addWidget(region_group)
-        PA_layout1.addWidget(self.PA_mode_stack)
+        # self.PA_mode_combo = QComboBox()
+        # self.PA_mode_combo.addItems(["选区寿命指数衰减检测"])
+        # PA_layout1.addWidget(self.PA_mode_combo)
+        # self.PA_mode_stack = QStackedWidget()
+        # # 区域分析参数
+        # self.region_shape_combo = QComboBox()
+        # self.region_shape_combo.addItems(["正方形", "圆形"])
+        # self.region_size_input = QSpinBox()
+        # self.region_size_input.setMinimum(1)
+        # self.region_size_input.setMaximum(50)
+        # self.region_size_input.setValue(5)
+        # self.analyze_region_btn = QPushButton("分析选定区域")
+        # # 区域坐标输入
+        # self.region_x_input = QSpinBox()
+        # self.region_y_input = QSpinBox()
+        # self.region_x_input.setMaximum(131)
+        # self.region_y_input.setMaximum(131)
+        # # 区域分析面板生成
+        # region_group = self.QGroupBoxCreator(style="inner")
+        # region_layout = QVBoxLayout()
+        # lifetime_layout = QHBoxLayout()
+        # lifetime_layout.addWidget(QLabel("寿命模型:"))
+        # self.model_combo = QComboBox()
+        # self.model_combo.addItems(["单指数衰减", "双指数-仅区域"])
+        # lifetime_layout.addWidget(self.model_combo)
+        # coord_layout = QHBoxLayout()
+        # coord_layout.addWidget(QLabel("中心X:"))
+        # coord_layout.addWidget(self.region_x_input)
+        # coord_layout.addWidget(QLabel("中心Y:"))
+        # coord_layout.addWidget(self.region_y_input)
+        # shape_layout = QHBoxLayout()
+        # shape_layout.addWidget(QLabel("区域形状:"))
+        # shape_layout.addWidget(self.region_shape_combo)
+        # size_layout = QHBoxLayout()
+        # size_layout.addWidget(QLabel("区域大小:"))
+        # size_layout.addWidget(self.region_size_input)
+        # region_layout.addLayout(lifetime_layout)
+        # region_layout.addLayout(coord_layout)
+        # region_layout.addLayout(shape_layout)
+        # region_layout.addLayout(size_layout)
+        # region_layout.addWidget(self.analyze_region_btn)
+        # region_group.setLayout(region_layout)
+        # self.PA_mode_stack.addWidget(region_group)
+        # PA_layout1.addWidget(self.PA_mode_stack)
         PA_GROUP.setLayout(PA_layout1)
         self.between_stack.addWidget(PA_GROUP)
 
@@ -427,6 +427,20 @@ class MainWindow(QMainWindow):
         self.left_panel_layout.addSpacing(15)
         self.left_panel_layout.addLayout(data_save_layout)
         self.left_panel.setLayout(self.left_panel_layout)
+
+    def between_stack_change(self):
+        if self.fuction_select.currentIndex() == 0: # nothing
+            self.between_stack.setCurrentIndex(0)
+            self.FS_mode_combo.setCurrentIndex(0)
+        if self.fuction_select.currentIndex() == 1:  # FS-iSCAT
+            self.between_stack.setCurrentIndex(1)
+            self.FS_mode_combo.setCurrentIndex(0)
+        if self.fuction_select.currentIndex() == 2:  # PA
+            self.between_stack.setCurrentIndex(1)
+            self.FS_mode_combo.setCurrentIndex(1)
+        if self.fuction_select.currentIndex() == 3:  # FS-iSCAT
+            self.between_stack.setCurrentIndex(3)
+
 
     def setup_menus(self):
         """加入菜单栏"""
@@ -631,7 +645,7 @@ class MainWindow(QMainWindow):
     def signal_connect(self):
         # 连接参数区域按钮
         self.fuction_select.currentIndexChanged.connect(self.funtion_stack.setCurrentIndex)
-        self.fuction_select.currentIndexChanged.connect(self.between_stack.setCurrentIndex)
+        self.fuction_select.currentIndexChanged.connect(self.between_stack_change)
         self.file_type_selector.currentIndexChanged.connect(self.file_type_stack.setCurrentIndex)
         self.tiff_folder_btn.clicked.connect(self.load_tiff_folder)
         self.sif_folder_btn.clicked.connect(self.load_sif_folder)
@@ -640,7 +654,7 @@ class MainWindow(QMainWindow):
         self.analyze_region_btn.clicked.connect(self.region_analyze_start)
         self.analyze_btn.clicked.connect(self.distribution_analyze_start)
         self.FS_mode_combo.currentIndexChanged.connect(self.FS_mode_stack.setCurrentIndex)
-        self.PA_mode_combo.currentIndexChanged.connect(self.PA_mode_stack.setCurrentIndex)
+        # self.PA_mode_combo.currentIndexChanged.connect(self.PA_mode_stack.setCurrentIndex)
         self.EM_mode_combo.currentIndexChanged.connect(self.EM_mode_stack.setCurrentIndex)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
@@ -691,6 +705,7 @@ class MainWindow(QMainWindow):
 
             # 显示第一张图像
             self.update_time_slice(0,True)
+            self.time_slider.setValue(0)
 
             # 根据图像大小调节region范围
             self.region_x_input.setMaximum(self.data['images'].shape[1])
@@ -726,6 +741,7 @@ class MainWindow(QMainWindow):
 
             # 显示第一张图像
             self.update_time_slice(0,True)
+            self.time_slider.setValue(0)
 
             # 根据图像大小调节region范围
             self.region_x_input.setMaximum(self.data['images'].shape[1])
@@ -763,7 +779,7 @@ class MainWindow(QMainWindow):
 
     def _handle_click(self, x, y):
         """处理图像点击事件"""
-        if self.FS_mode_combo.currentIndex() == 1 or self.PA_mode_combo.currentIndex() == 0:  # 区域分析模式
+        if self.FS_mode_combo.currentIndex() == 1 :  # 区域分析模式 or self.PA_mode_combo.currentIndex() == 0
             self.region_x_input.setValue(x)
             self.region_y_input.setValue(y)
 
@@ -871,18 +887,20 @@ class MainWindow(QMainWindow):
             self.time_slider_vertical.setVisible(True)
             self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
             self.time_slider_vertical.setValue(0)
-            self.update_result_display(0)
+            self.update_result_display(0,reuse_current = False)
         else:
             logging.error("数据长度不匹配")
             return
 
-    def update_result_display(self,idx):
+    def update_result_display(self,idx,reuse_current=True):
         if self.vector_array is not None and 0 <= idx < self.vector_array.shape[0]:
             frame_data = self.vector_array[idx]
             self.result_display.display_roi_series(
                 positions=frame_data[:, 0],
                 intensities=frame_data[:, 1],
-                title=f"ROI信号强度 (帧:{idx})"
+                fig_title=f"ROI信号强度 (帧:{idx})",
+                reuse_current = reuse_current
+
             )
 
     def vectorROI_selection(self):
@@ -895,17 +913,18 @@ class MainWindow(QMainWindow):
             return
 
         # 检查帧数是否有效
-        max_frame = self.vector_array.shape[0] - 1
-        invalid_frames = [f for f in frames if f < 0 or f > max_frame]
+        invalid_frames = [f for f in frames if f < 0 or f > self.max_frame]
         if invalid_frames:
             QMessageBox.warning(
                 self, "帧数超出范围",
-                f"有效帧数范围: 0-{max_frame}\n无效帧: {invalid_frames}"
+                f"有效帧数范围: 0-{self.max_frame}\n无效帧: {invalid_frames}"
             )
             logging.warning("请输入有效帧数")
-            frames = [f for f in frames if 0 <= f <= max_frame]
+            frames = [f for f in frames if 0 <= f <= self.max_frame]
             if not frames:
                 return
+        else:
+            logging.info(f"输入帧数{frames}，帧数有效可以处理")
 
         # 收集选定帧的数据
         self.vectorROI_data = {f: self.vector_array[f] for f in frames}
@@ -919,14 +938,58 @@ class MainWindow(QMainWindow):
     def parse_frame_input(self):
         """解析用户输入的帧数"""
         text = self.frame_input.toPlainText()
+        self.max_frame = self.vector_array.shape[0] - 1
         # 替换所有分隔符为逗号
+        if text == 'all':
+            return list(range(self.max_frame + 1))
+        if not text:
+            QMessageBox.warning(self, "输入为空", "请输入有效的帧数选择")
+            return None
+
         text = text.replace(';', ',').replace('，', ',')
+        frames = set()
+        parts = text.split(',')
         try:
-            frames = [int(f.strip()) for f in text.split(',') if f.strip()]
-            return sorted(list(set(frames)))  # 去重并排序
-        except ValueError:
-            QMessageBox.warning(self, "输入错误", "请输入有效的帧数，用逗号或分号分隔")
-            logging.warning("输入错误,请输入有效的帧数，用逗号或分号分隔")
+            for part in parts:
+                if not part:
+                    continue
+                # 处理范围输入 (e.g., "5-10", "20-25")
+                if '-' in part:
+                    range_parts = part.split('-')
+                    if len(range_parts) != 2:
+                        raise ValueError(f"无效的范围格式: {part}")
+
+                    start = int(range_parts[0])
+                    end = int(range_parts[1])
+
+                    if start > end:
+                        raise ValueError(f"起始帧({start})不能大于结束帧({end})")
+
+                    # 确保范围在有效区间内
+                    if start < 0 or end > self.max_frame:
+                        raise ValueError(f"范围 {part} 超出有效帧范围 (0-{self.max_frame})")
+
+                    frames.update(range(start, end + 1))
+
+                # 处理单帧数字
+                else:
+                    frame = int(part)
+                    if frame < 0 or frame > self.max_frame:
+                        raise ValueError(f"帧号 {frame} 超出有效范围 (0-{self.max_frame})")
+                    frames.add(frame)
+            return sorted(frames)
+        except ValueError as e:
+            QMessageBox.warning(
+                self,
+                "输入错误",
+                f"无效输入: {str(e)}\n\n正确格式示例:\n"
+                "• 单帧: 5\n"
+                "• 序列: 1,3,5,7\n"
+                "• 范围: 10-15,20-25\n"
+                "• 混合: 1,3-5,7,9-10\n"
+                f"• 所有帧: all\n\n有效帧范围: 0-{self.max_frame}"
+            )
+            logging.warning(f"帧数输入错误: {str(e)} - 输入内容: {text}")
             return None
 
     def region_analyze_start(self):

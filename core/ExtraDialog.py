@@ -58,6 +58,9 @@ class BadFrameDialog(QDialog):
         manual_layout.addWidget(self.frame_input)
         manual_group.setLayout(manual_layout)
 
+        # 处理方法选择
+        process_group = QGroupBox("坏帧处理方法")
+
         # 帧平均参数
         avg_group = QGroupBox("修复参数")
         avg_layout = QVBoxLayout()

@@ -255,8 +255,8 @@ class LifetimeCalculator:
     def gaussian_fit(x, y):
         """高斯拟合"""
         # 初始猜测参数 [幅值, 均值, 标准差]
-        a_guess = max(y)
-        mu_guess = x[np.argmax(y)]
+        a_guess = max(abs(y))
+        mu_guess = np.median(x)
         sigma_guess = (max(x) - min(x)) / 4
 
         popt, pcov = curve_fit(
