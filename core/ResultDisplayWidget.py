@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib as plt
 import matplotlib.font_manager as fm
 import pandas as pd
+from PyQt5.QtCore import pyqtSignal
+from fontTools.misc.cython import returns
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -11,12 +13,13 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QTabWidget
                              )
+from numpy.ma.core import shape
 from pandas.core.interchange.dataframe_protocol import DataFrame
 
 
 class ResultDisplayWidget(QTabWidget):
     """结果显示部件"""
-
+    tab_type_changed = pyqtSignal(str)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTabsClosable(True)
@@ -24,7 +27,6 @@ class ResultDisplayWidget(QTabWidget):
         self.setMovable(True)
         self.currentChanged.connect(self._current_index)
 
-        self.current_data = None
         self.font_list = fm.findSystemFonts(fontpaths=r"C:\Windows\Fonts" , fontext='ttf')
         self.chinese_fonts = [f for f in self.font_list if
                          any(c in f.lower() for c in ['simhei', 'simsun', 'microsoft yahei', 'fang'])]
@@ -42,14 +44,18 @@ class ResultDisplayWidget(QTabWidget):
             '_from_start_cal': False
         }
         self._init_counters()
-        # 存储每个选项卡的数据，用于更新绘图
+        # 存储每个选项卡的数据
         self.tab_data = {}
+        self.current_data = None
+        self.current_dataframe = None
 
         # 设置Matplotlib默认字体
         if self.chinese_fonts:
             plt.rcParams['font.sans-serif'] = ['microsoft yahei']  # Windows常用
             # 或者使用其他字体如: 'Microsoft YaHei', 'SimSun', 'FangSong', 'KaiTi'
             plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
+
 
     def _init_counters(self):
         """计数器初始化"""
@@ -64,17 +70,45 @@ class ResultDisplayWidget(QTabWidget):
     def _current_index(self, index):
         """存储当前选中的选项卡索引"""
         self.current_index = index
+        if index >= 0:
+            tab = self.widget(index)
+            tab_id = id(tab)
+
+            if tab_id in self.tab_data:
+                # # 更新当前原始数据（无用，待删）
+                # self.current_data = self.tab_data.get(tab_id).get('raw_data')
+                # 更新当前DataFrame
+                self.current_dataframe = self.tab_data.get(tab_id).get('dataframe')
+
+            # 发出标签页类型信号
+            if tab_id in self.tab_data:
+                tab_type = self.tab_data[tab_id]['type']
+                self.tab_type_changed.emit(tab_type)
+                return
+            elif self.current_mode:
+                self.tab_type_changed.emit(self.current_mode)
+                return
+
+
+    def store_tab_data(self, tab, tab_type, **kwargs):
+        """存储选项卡数据"""
+        self.tab_data[id(tab)] = {
+            'type': tab_type,
+            'raw_data': kwargs,
+            'dataframe': self.current_dataframe.copy()
+        }
+
 
     def close_tab(self, index):
         """关闭指定选项卡"""
-        widget = self.widget(index)
-        title = self.tabText(index)
+        tab = self.widget(index)
+        tab_id = id(tab)
 
         # 删除关联数据
-        if title in self.tab_data:
-            del self.tab_data[title]
+        if tab_id in self.tab_data:
+            del self.tab_data[tab_id]
 
-        widget.deleteLater()
+        tab.deleteLater()
         self.removeTab(index)
 
         # 更新当前索引
@@ -118,62 +152,61 @@ class ResultDisplayWidget(QTabWidget):
 
             return figure, canvas, index, title, tab
 
-    def update_plot_settings(self, new_settings):
+    def update_plot_settings(self, new_settings,update = True):
         """更新绘图设置"""
         self.plot_settings.update(new_settings)
-        self.update_plot()
+        if update:
+            self.update_plot()
 
     def update_plot(self):
         """根据当前设置重新绘图"""
         if self.count() == 0:
             # 没有选项卡时就不需要更新
             return
-        index = self.current_index
-        title = self.tabText(index)
 
-        if title in self.tab_data:
-            tab_info = self.tab_data[title]
-            tab_type = tab_info['type']
+        tab = self.widget(self.current_index)
+        tab_id = id(tab)
+        tab_info = self.tab_data.get(tab_id)
 
-            if tab_type == 'heatmap':
-                # 更新热图
-                data = tab_info.get('lifetime_map')
-                if data is not None:
-                    self.display_distribution_map(data, reuse_current=True)
-            elif tab_type == 'curve':
-                # 更新寿命曲线
-                self.display_lifetime_curve(
-                    tab_info['phy_signal'],
-                    tab_info['lifetime'],
-                    tab_info['r_squared'],
-                    tab_info['fit_curve'],
-                    tab_info['time_points'],
-                    tab_info['boundary'],
-                    tab_info['model_type'],
-                    reuse_current=True
-                )
-            elif tab_type == 'roi':
-                # 更新ROI曲线
-                data = tab_info.get('fig_title'), tab_info.get('positions'), tab_info.get('intensities')
-                if all(d is not None for d in data):
-                    self.display_roi_series(*data, reuse_current=True)
-            elif tab_type == 'diff':
-                # 更新扩散系数
-                data = tab_info.get('frame_data_dict')
-                if data is not None:
-                    self.display_diffusion_coefficient(data, reuse_current=True)
-            elif tab_type == 'var':
-                # 更新方差演化
-                data = tab_info.get('dif_result')
-                if data is not None:
-                    self.plot_variance_evolution(data, reuse_current=True)
+        if not tab_info:
+            return
 
-    def store_tab_data(self, title, tab_type, **kwargs):
-        """存储选项卡数据用于后续更新"""
-        self.tab_data[title] = {
-            'type': tab_type,
-            **kwargs
-        }
+        tab_type = tab_info['type']
+        raw_data = tab_info.get('raw_data', {})
+
+        # 根据标签页类型调用对应的绘图方法
+        if tab_type == 'heatmap':
+            self.display_distribution_map(
+                raw_data['lifetime_map'],
+                reuse_current=True
+            )
+        elif tab_type == 'curve':
+            self.display_lifetime_curve(
+                raw_data['phy_signal'],
+                raw_data['lifetime'],
+                raw_data['r_squared'],
+                raw_data['fit_curve'],
+                raw_data['time_points'],
+                raw_data['boundary'],
+                raw_data['model_type'],
+                reuse_current=True
+            )
+        elif tab_type == 'roi':
+            self.display_roi_series(
+                raw_data['positions'],
+                raw_data['intensities'],
+                raw_data.get('fig_title', ""),
+                reuse_current=True
+            )
+        elif tab_type == 'diff':
+            self.display_diffusion_coefficient(
+                raw_data['frame_data_dict'],
+                reuse_current=True
+            )
+        elif tab_type == 'var':
+            self.plot_variance_evolution(
+                reuse_current=True)
+
 
     def display_distribution_map(self, lifetime_map, reuse_current=False):
         """显示寿命热图"""
@@ -193,16 +226,14 @@ class ResultDisplayWidget(QTabWidget):
         canvas.draw()
 
         # 保存当前数据
-        self.current_data = pd.DataFrame(lifetime_map)
-        if not reuse_current:
-            self.store_tab_data(title, self.current_mode, lifetime_map=lifetime_map)
+        self.current_dataframe = pd.DataFrame(lifetime_map)
+        self.store_tab_data(tab, self.current_mode, lifetime_map=lifetime_map)
 
     def display_lifetime_curve(self, phy_signal, lifetime, r_squared, fit_curve,time_points,boundary, model_type, reuse_current=False):
         """显示区域分析结果"""
         # 使用原来的结果显示区域
         self.current_mode = "curve"
         figure, canvas, index, title, tab = self.create_tab(self.current_mode, '寿', reuse_current)
-
 
         line_style = self.plot_settings['line_style']
         line_width = self.plot_settings['line_width']
@@ -235,10 +266,11 @@ class ResultDisplayWidget(QTabWidget):
             ax.plot(fit_time, fit_curve, 'r', linestyle=line_style, label='拟合曲线')
             # 标记最大值
             ax.axvline(time_points[max_idx], color='g', linestyle=':', label='峰值位置')
-        else:
+        elif self.plot_settings['_from_start_cal'] and np.shape(time_points)==np.shape(fit_curve):
             # 这是从头算的拟合曲线绘制
             fit_time = time_points
             ax.plot(fit_time, fit_curve, 'r', linestyle=line_style, label='拟合曲线')
+
         # 标记r^2和τ
         if model_type == 'single':
             ax.text(0.05, 0.95, f' τ={lifetime:.2f}\n'
@@ -263,21 +295,20 @@ class ResultDisplayWidget(QTabWidget):
         ax.grid(show_grid)
 
         canvas.draw()
-        self.current_data = pd.DataFrame({
+        self.current_dataframe = pd.DataFrame({
                                 'time': pd.Series(time_points),
                                 'signal': pd.Series(phy_signal),
                                 'fit_time': pd.Series(fit_time),
                                 'fit_curve':pd.Series(fit_curve)
                             })
-        if not reuse_current:
-            self.store_tab_data(title, self.current_mode,
-                               phy_signal=phy_signal,
-                               lifetime=lifetime,
-                               r_squared=r_squared,
-                               fit_curve=fit_curve,
-                               time_points=time_points,
-                               boundary=boundary,
-                               model_type=model_type)
+        self.store_tab_data(tab, self.current_mode,
+                           phy_signal=phy_signal,
+                           lifetime=lifetime,
+                           r_squared=r_squared,
+                           fit_curve=fit_curve,
+                           time_points=time_points,
+                           boundary=boundary,
+                           model_type=model_type)
 
     def display_roi_series(self, positions, intensities, fig_title="", reuse_current=False):
         """绘制向量ROI信号强度曲线"""
@@ -310,12 +341,11 @@ class ResultDisplayWidget(QTabWidget):
 
         canvas.draw()
 
-        self.current_data = pd.DataFrame({
+        self.current_dataframe = pd.DataFrame({
                                         'time': pd.Series(positions),
                                         'signal': pd.Series(intensities),
                                     })
-        if not reuse_current:
-            self.store_tab_data(title, self.current_mode, fig_title=fig_title , positions=positions, intensities=intensities)
+        self.store_tab_data(tab, self.current_mode, fig_title=fig_title , positions=positions, intensities=intensities)
 
     def display_diffusion_coefficient(self, frame_data_dict, reuse_current=False):
         """绘制多帧信号及高斯拟合"""
@@ -351,9 +381,6 @@ class ResultDisplayWidget(QTabWidget):
         ax.legend()
         canvas.draw()
 
-        if not reuse_current:
-            self.store_tab_data(title, self.current_mode, frame_data_dict=frame_data_dict)
-
         # 以下是整合数据
         try:
             layer1,layer2 = [],[]
@@ -374,7 +401,8 @@ class ResultDisplayWidget(QTabWidget):
                                   mode='constant', constant_values=np.nan)
                 outcome.extend([position,signal,fitting])
             columns = pd.MultiIndex.from_arrays([layer1,layer2])
-            self.current_data = pd.DataFrame(np.array(outcome).T, columns = columns)
+            self.current_dataframe = pd.DataFrame(np.array(outcome).T, columns = columns)
+            self.store_tab_data(tab, self.current_mode, frame_data_dict=frame_data_dict)
         except Exception as e:
             logging.error(f'数据打包出现问题：{e}')
 
@@ -408,11 +436,10 @@ class ResultDisplayWidget(QTabWidget):
         ax.legend()
         canvas.draw()
 
-        self.current_data = pd.DataFrame({
+        self.current_dataframe = pd.DataFrame({
                                         'time': self.dif_result['time_series'],
                                         'sigma': self.dif_result['sigma'][1],
         })
-        if not reuse_current:
-            self.store_tab_data(title, self.current_mode, dif_result=self.dif_result)
+        self.store_tab_data(tab, self.current_mode, dif_result=self.dif_result)
 
 

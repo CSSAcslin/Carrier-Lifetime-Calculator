@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QStatusBar, QScrollBar
                              )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from DataProcessor import DataProcessor
 from ImageDisplayWidget import ImageDisplayWidget
@@ -672,6 +673,8 @@ class MainWindow(QMainWindow):
         self.command_processor.save_config_requested.connect(self.save_config)
         self.command_processor.load_config_requested.connect(self.load_config)
         self.command_processor.clear_result_requested.connect(self.clear_result)
+        # 结果区域信号
+        self.result_display.tab_type_changed.connect(self._handle_result_tab)
 
     '''上面是初始化预设，下面是功能响应'''
     def load_tiff_folder(self):
@@ -783,6 +786,17 @@ class MainWindow(QMainWindow):
             self.region_x_input.setValue(x)
             self.region_y_input.setValue(y)
 
+    def _handle_result_tab(self, tab_type):
+        """特殊标签页类型处理"""
+        if tab_type == 'roi':
+            # 如果是roi结果
+            self.time_slider_vertical.setVisible(True)
+            self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
+            self.time_slider_vertical.setValue(0)
+        else:
+            if self.time_slider_vertical.isVisible():
+                self.time_slider_vertical.setVisible(False)
+
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
         if not hasattr(self, 'data') or self.data is None:
@@ -812,7 +826,7 @@ class MainWindow(QMainWindow):
             LifetimeCalculator.set_cal_parameters(self.cal_set_params)
             # 同步修改绘图设置并传参
             self.plot_params['_from_start_cal'] = self.cal_set_params['from_start_cal']
-            self.result_display.update_plot_settings(self.plot_params)
+            self.result_display.update_plot_settings(self.plot_params, update=False)
             logging.info("设置已更新，请重新绘图")
         self.update_status("准备就绪", False)
 
@@ -884,10 +898,11 @@ class MainWindow(QMainWindow):
             logging.warning("未选取向量直线ROI")
             return
         elif self.data['data_origin'].shape[0] == self.vector_array.shape[0]:
-            self.time_slider_vertical.setVisible(True)
-            self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
-            self.time_slider_vertical.setValue(0)
+            # self.time_slider_vertical.setVisible(True)
+            # self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
+            # self.time_slider_vertical.setValue(0)
             self.update_result_display(0,reuse_current = False)
+            return
         else:
             logging.error("数据长度不匹配")
             return
@@ -910,6 +925,9 @@ class MainWindow(QMainWindow):
             logging.warning("请输入选取的帧数")
         elif not hasattr(self, 'vector_array'):
             logging.warning("请选择矢量直线绘制ROI选区")
+            return
+        elif frames is None:
+            logging.warning("帧数无效，请重新输入")
             return
 
         # 检查帧数是否有效
@@ -996,7 +1014,7 @@ class MainWindow(QMainWindow):
         """分析选定区域载流子寿命"""
         if self.data is None or not hasattr(self, 'time_points'):
             return logging.warning('无数据载入')
-        self.time_slider_vertical.setVisible(False)
+        # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要开启
         if not self.is_thread_active("thread"):
             self.thread_open()
@@ -1018,7 +1036,7 @@ class MainWindow(QMainWindow):
         """分析载流子寿命"""
         if self.data is None:
             return logging.warning('无数据载入')
-        self.time_slider_vertical.setVisible(False)
+        # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
         if not self.is_thread_active("thread"):
             self.thread_open()
@@ -1036,7 +1054,7 @@ class MainWindow(QMainWindow):
             return logging.warning('无数据载入')
         elif self.vectorROI_data is None:
             return  logging.warning("无有效ROI数据")
-        self.time_slider_vertical.setVisible(False)
+        # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
         if not self.is_thread_active("thread"):
             self.thread_open()
@@ -1077,18 +1095,42 @@ class MainWindow(QMainWindow):
 
     def export_image(self):
         """导出热图为图片"""
-        if hasattr(self.result_display, 'current_data'):
-            file_path, _ = QFileDialog.getSaveFileName(
-                self, "保存图像", "", "PNG图像 (*.png);;JPEG图像 (*.jpg *.jpeg);;TIFF图像 (*.tif *.tiff)")
+        current_index = self.result_display.currentIndex()
+        if current_index < 0:
+            QMessageBox.warning(self, "导出失败", "没有可导出的图像")
+            return
 
-            if file_path:
-                # 从matplotlib保存图像
-                self.result_display.figure.savefig(file_path, dpi=300, bbox_inches='tight')
-            logging.info("图片已保存")
+        tab = self.result_display.widget(current_index)
+        canvas = tab.findChild(FigureCanvas)
+
+        if not canvas:
+            QMessageBox.warning(self, "导出失败", "未找到图像画布")
+            return
+
+        try:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "保存图像", "", "PNG(*.png);;JPEG(*.jpg);;TIFF图像 (*.tif *.tiff);;所有文件(*.*)"
+            )
+
+            if path:
+                canvas.figure.savefig(path, dpi=300)
+                QMessageBox.information(self, "导出成功", f"图像已保存至:\n{path}")
+                logging.info(f"导出成功,图像已保存至:{path}")
+        except:
+            logging.info("数据未保存")
+
+        # if hasattr(self.result_display, 'current_data'):
+        #     file_path, _ = QFileDialog.getSaveFileName(
+        #         self, "保存图像", "", "PNG图像 (*.png);;JPEG图像 (*.jpg *.jpeg);;TIFF图像 (*.tif *.tiff)")
+        #
+        #     if file_path:
+        #         # 从matplotlib保存图像
+        #         self.result_display.figure.savefig(file_path, dpi=300, bbox_inches='tight')
+        #     logging.info("图片已保存")
 
     def export_data(self):
         """导出寿命数据"""
-        if hasattr(self.result_display, 'current_data'):
+        if hasattr(self.result_display, 'current_dataframe'):
             file_path, _ = QFileDialog.getSaveFileName(
                 self, "保存数据", "", "CSV文件 (*.csv);;文本文件 (*.txt)")
 
@@ -1096,13 +1138,13 @@ class MainWindow(QMainWindow):
                 # 保存为CSV或TXT
                 if file_path.lower().endswith('.csv'):
                     try:
-                        self.result_display.current_data.to_csv(file_path, index=False, header=False)
+                        self.result_display.current_dataframe.to_csv(file_path, index=False, header=False)
                         logging.info("数据已保存")
                     except:
                         logging.info("数据未保存")
                 else:
                     try:
-                        self.result_display.current_data.to_csv(file_path, sep='\t', index=False, header=False)
+                        self.result_display.current_dataframe.to_csv(file_path, sep='\t', index=False, header=False)
                         logging.info("数据已保存")
                     except:
                         logging.info("数据未保存")
