@@ -18,7 +18,7 @@ class LifetimeCalculator:
     """
     _cal_params = {
         'from_start_cal':False,
-        'r_squared_min': 0.8,
+        'r_squared_min': 0.6,
         'peak_range': (0.0, 10.0),
         'tau_range': (1e-3, 1e2)
     }

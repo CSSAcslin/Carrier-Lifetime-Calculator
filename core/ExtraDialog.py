@@ -385,3 +385,51 @@ class PltSettingsDialog(QDialog):
             'set_axis':self.axis_set.isChecked()
         }
         self.accept()
+
+# 数据保存弹窗
+class DataSavingPop(QDialog):
+    def __init__(self,parent = None):
+        super().__init__(parent)
+        self.setWindowTitle("数据保存")
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(200)
+
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # 创建水平布局容器来放置标签和复选框
+        def create_checkbox_row(label_text, checkbox):
+            row_layout = QHBoxLayout()
+            label = QLabel(label_text)
+            row_layout.addWidget(label)
+            row_layout.addStretch()  # 添加弹性空间使复选框靠右
+            row_layout.addWidget(checkbox)
+            return row_layout
+
+        # 是否拟合
+        self.fitting_check = QCheckBox()
+        self.fitting_check.setChecked(True)
+        # 是否加标题
+        self.index_check = QCheckBox()
+        self.index_check.setChecked(False)
+        # 是否显示额外信息（未完成）
+        self.extra_check = QCheckBox()
+        self.extra_check.setChecked(False)
+
+        # 添加各个复选框行
+        layout.addLayout(create_checkbox_row("是否导出拟合数据:", self.fitting_check))
+        layout.addLayout(create_checkbox_row("是否导出标题:(utf-8编码)", self.index_check))
+        layout.addLayout(create_checkbox_row("是否显示额外信息（未完成）:", self.extra_check))
+
+        button_layout = QHBoxLayout()
+        self.apply_btn = QPushButton("导出")
+        self.apply_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.apply_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+
+        self.setLayout(layout)

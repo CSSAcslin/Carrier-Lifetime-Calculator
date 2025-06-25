@@ -385,21 +385,24 @@ class ResultDisplayWidget(QTabWidget):
         try:
             layer1,layer2 = [],[]
             times = self.dif_result['time_series']
+            layer2.extend(['时间点：'])
+            layer1.extend(['位置(μm)'])
             for i in range(times.shape[0]):
                 # times0 = np.full(len(times),'时间点：')
                 # times2 = np.full(len(times),'μs')
-                layer1.extend(['时间点：',f'{times[i]:.2f}','μs'])
-                layer2.extend(['位置(μm)','原始数值','拟合曲线'])
+                layer2.extend([f'{times[i]:.2f}','μs'])
+                layer1.extend(['原始数值','拟合曲线'])
             max_len = max(data.shape[1] for data in self.dif_result['signal'])
             outcome = []
+            position = np.pad(self.dif_result['signal'][0,0], (0, max_len - len(self.dif_result['signal'][0,0])),
+                              mode='constant', constant_values=np.nan)
+            outcome.extend([position])
             for i,data in enumerate(self.dif_result['signal']):
-                position = np.pad(data[0],(0,max_len - len(data[0])),
-                                  mode = 'constant', constant_values=np.nan)
                 signal = np.pad(data[1], (0, max_len - len(data[1])),
                                   mode='constant', constant_values=np.nan)
                 fitting = np.pad(self.dif_result['fitting'][i, 1], (0, max_len - len(self.dif_result['fitting'][i, 1])),
                                   mode='constant', constant_values=np.nan)
-                outcome.extend([position,signal,fitting])
+                outcome.extend([signal,fitting])
             columns = pd.MultiIndex.from_arrays([layer1,layer2])
             self.current_dataframe = pd.DataFrame(np.array(outcome).T, columns = columns)
             self.store_tab_data(tab, self.current_mode, frame_data_dict=frame_data_dict)
@@ -418,7 +421,7 @@ class ResultDisplayWidget(QTabWidget):
 
         times = self.dif_result["sigma"][0]
         variances = self.dif_result["sigma"][1]
-
+        sigma_trim = self.dif_result["sigma"][:, self.dif_result["sigma"][1, :] != 0]
         # 绘制数据点
         ax.scatter(times, variances, c='r', s=50, label='方差数据')
 
@@ -438,7 +441,7 @@ class ResultDisplayWidget(QTabWidget):
 
         self.current_dataframe = pd.DataFrame({
                                         'time': self.dif_result['time_series'],
-                                        'sigma': self.dif_result['sigma'][1],
+                                        'sigma': sigma_trim,
         })
         self.store_tab_data(tab, self.current_mode, dif_result=self.dif_result)
 

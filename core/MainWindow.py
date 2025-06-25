@@ -1131,26 +1131,51 @@ class MainWindow(QMainWindow):
     def export_data(self):
         """导出寿命数据"""
         if hasattr(self.result_display, 'current_dataframe'):
-            file_path, _ = QFileDialog.getSaveFileName(
-                self, "保存数据", "", "CSV文件 (*.csv);;文本文件 (*.txt)")
+            dialog = DataSavingPop(self)
+            file_path = None
+            self.update_status("数据导出ing", True)
+            if dialog.exec_():
+                isfiting = dialog.fitting_check.isChecked()
+                hasheader = dialog.index_check.isChecked()
+                extra_check = dialog.extra_check.isChecked()
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self, "保存数据", "", "CSV文件 (*.csv);;文本文件 (*.txt)")
+        else:
+            logging.warning("没有数据可以导出")
+            self.update_status("准备就绪", False)
+            return
 
-            if file_path:
-                # 保存为CSV或TXT
-                if file_path.lower().endswith('.csv'):
-                    try:
-                        self.result_display.current_dataframe.to_csv(file_path, index=False, header=False)
-                        logging.info("数据已保存")
-                    except:
-                        logging.info("数据未保存")
-                else:
-                    try:
-                        self.result_display.current_dataframe.to_csv(file_path, sep='\t', index=False, header=False)
-                        logging.info("数据已保存")
-                    except:
-                        logging.info("数据未保存")
+        if file_path:
+            df = self.result_display.current_dataframe
+            if not isfiting:
+                if self.result_display.current_mode == 'curve':
+                    df = df.loc[:, df.columns != 'fit_curve']
+                elif self.result_display.current_mode == 'diff':
+                    df = df.loc[:, df.columns.get_level_values(0) != '拟合曲线']
+                elif self.result_display.current_mode == 'heatmap':
+                    pass
+                elif self.result_display.current_mode == 'roi':
+                    pass
+                elif self.result_display.current_mode == 'var':
+                    pass
+            # 保存为CSV或TXT
+            if file_path.lower().endswith('.csv'):
+                try:
+                    df.to_csv(file_path, index=False, header=hasheader)
+                    logging.info("数据已保存")
+                except:
+                    logging.info("数据未保存")
             else:
-                logging.info("数据未保存")
-                return
+                try:
+                    df.to_csv(file_path, sep='\t', index=False, header=hasheader)
+                    logging.info("数据已保存")
+                except:
+                    logging.info("数据未保存")
+            self.update_status("准备就绪", False)
+        else:
+            logging.info("数据未保存")
+            self.update_status("准备就绪", False)
+            return
 
     '''以下控制台命令更新'''
     def stop_calculation(self):
