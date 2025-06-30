@@ -1130,7 +1130,7 @@ class MainWindow(QMainWindow):
 
     def export_data(self):
         """导出寿命数据"""
-        if hasattr(self.result_display, 'current_dataframe'):
+        if self.result_display.current_dataframe is not None:
             dialog = DataSavingPop(self)
             file_path = None
             self.update_status("数据导出ing", True)
@@ -1151,7 +1151,7 @@ class MainWindow(QMainWindow):
                 if self.result_display.current_mode == 'curve':
                     df = df.loc[:, df.columns != 'fit_curve']
                 elif self.result_display.current_mode == 'diff':
-                    df = df.loc[:, df.columns.get_level_values(0) != '拟合曲线']
+                    df = df.loc[:, df.columns.get_level_values(1) != '拟合曲线']
                 elif self.result_display.current_mode == 'heatmap':
                     pass
                 elif self.result_display.current_mode == 'roi':
