@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from DataProcessor import DataProcessor
+from DataProcessor import DataProcessor, MassDataProcessor
 from ImageDisplayWidget import ImageDisplayWidget
 from LifetimeCalculator import LifetimeCalculator, CalculationThread
 from ResultDisplayWidget import ResultDisplayWidget
@@ -27,6 +27,9 @@ class MainWindow(QMainWindow):
     start_reg_cal_signal = pyqtSignal(dict, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(dict, float, str)
     start_dif_cal_signal = pyqtSignal(dict, float, float)
+    load_avi_EM_signal = pyqtSignal(str)
+    load_tif_EM_signal = pyqtSignal(str)
+    pre_process_signal = pyqtSignal(dict,int)
 
     def __init__(self):
         super().__init__()
@@ -353,50 +356,7 @@ class MainWindow(QMainWindow):
         # 光热信号处理下的功能选择（因为功能冲突，此板块暂不启用，通过between_stack_change覆盖选取）
         PA_GROUP = self.QGroupBoxCreator(style="noborder")
         PA_layout1 = QVBoxLayout()
-        # self.PA_mode_combo = QComboBox()
-        # self.PA_mode_combo.addItems(["选区寿命指数衰减检测"])
-        # PA_layout1.addWidget(self.PA_mode_combo)
-        # self.PA_mode_stack = QStackedWidget()
-        # # 区域分析参数
-        # self.region_shape_combo = QComboBox()
-        # self.region_shape_combo.addItems(["正方形", "圆形"])
-        # self.region_size_input = QSpinBox()
-        # self.region_size_input.setMinimum(1)
-        # self.region_size_input.setMaximum(50)
-        # self.region_size_input.setValue(5)
-        # self.analyze_region_btn = QPushButton("分析选定区域")
-        # # 区域坐标输入
-        # self.region_x_input = QSpinBox()
-        # self.region_y_input = QSpinBox()
-        # self.region_x_input.setMaximum(131)
-        # self.region_y_input.setMaximum(131)
-        # # 区域分析面板生成
-        # region_group = self.QGroupBoxCreator(style="inner")
-        # region_layout = QVBoxLayout()
-        # lifetime_layout = QHBoxLayout()
-        # lifetime_layout.addWidget(QLabel("寿命模型:"))
-        # self.model_combo = QComboBox()
-        # self.model_combo.addItems(["单指数衰减", "双指数-仅区域"])
-        # lifetime_layout.addWidget(self.model_combo)
-        # coord_layout = QHBoxLayout()
-        # coord_layout.addWidget(QLabel("中心X:"))
-        # coord_layout.addWidget(self.region_x_input)
-        # coord_layout.addWidget(QLabel("中心Y:"))
-        # coord_layout.addWidget(self.region_y_input)
-        # shape_layout = QHBoxLayout()
-        # shape_layout.addWidget(QLabel("区域形状:"))
-        # shape_layout.addWidget(self.region_shape_combo)
-        # size_layout = QHBoxLayout()
-        # size_layout.addWidget(QLabel("区域大小:"))
-        # size_layout.addWidget(self.region_size_input)
-        # region_layout.addLayout(lifetime_layout)
-        # region_layout.addLayout(coord_layout)
-        # region_layout.addLayout(shape_layout)
-        # region_layout.addLayout(size_layout)
-        # region_layout.addWidget(self.analyze_region_btn)
-        # region_group.setLayout(region_layout)
-        # self.PA_mode_stack.addWidget(region_group)
-        # PA_layout1.addWidget(self.PA_mode_stack)
+        # 重复代码已删除
         PA_GROUP.setLayout(PA_layout1)
         self.between_stack.addWidget(PA_GROUP)
 
@@ -404,10 +364,19 @@ class MainWindow(QMainWindow):
         EM_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
         EM_iSCAT_layout1 = QVBoxLayout()
         self.EM_mode_combo = QComboBox()
-        self.EM_mode_combo.addItems(["未完成"])
+        self.EM_mode_combo.addItems(["stft未完成"])
         EM_iSCAT_layout1.addWidget(self.EM_mode_combo)
         self.EM_mode_stack = QStackedWidget()
-        self.EM_mode_stack.addWidget(QLabel("未完成"))
+        # stft 短时傅里叶变换
+        stft_GROUP = self.QGroupBoxCreator(style="noborder")
+        stft_layout = QVBoxLayout()
+        stft_GROUP.setLayout(stft_layout)
+        self.preprocess_data_btn = QPushButton("数据预处理")
+        self.stft_process_btn = QPushButton("执行短时傅里叶变换")
+        stft_layout.addWidget(QLabel("stft未完成"))
+        stft_layout.addWidget(self.preprocess_data_btn)
+        stft_layout.addWidget(self.stft_process_btn)
+        self.EM_mode_stack.addWidget(stft_GROUP)
         EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
         EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout1)
         self.between_stack.addWidget(EM_iSCAT_GROUP)
@@ -439,9 +408,9 @@ class MainWindow(QMainWindow):
         if self.fuction_select.currentIndex() == 2:  # PA
             self.between_stack.setCurrentIndex(1)
             self.FS_mode_combo.setCurrentIndex(1)
-        if self.fuction_select.currentIndex() == 3:  # FS-iSCAT
+        if self.fuction_select.currentIndex() == 3:  # ES-iSCAT
             self.between_stack.setCurrentIndex(3)
-
+            self.EM_thread_open()
 
     def setup_menus(self):
         """加入菜单栏"""
@@ -650,13 +619,14 @@ class MainWindow(QMainWindow):
         self.file_type_selector.currentIndexChanged.connect(self.file_type_stack.setCurrentIndex)
         self.tiff_folder_btn.clicked.connect(self.load_tiff_folder)
         self.sif_folder_btn.clicked.connect(self.load_sif_folder)
-        self.avi_select_btn.clicked.connect(self.load_avi_file)
+        self.avi_select_btn.clicked.connect(self.load_avi)
         self.EMtiff_folder_btn.clicked.connect(self.load_tiff_folder_EM)
         self.analyze_region_btn.clicked.connect(self.region_analyze_start)
         self.analyze_btn.clicked.connect(self.distribution_analyze_start)
         self.FS_mode_combo.currentIndexChanged.connect(self.FS_mode_stack.setCurrentIndex)
         # self.PA_mode_combo.currentIndexChanged.connect(self.PA_mode_stack.setCurrentIndex)
         self.EM_mode_combo.currentIndexChanged.connect(self.EM_mode_stack.setCurrentIndex)
+        self.preprocess_data_btn.clicked.connect(self.pre_process_EM)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
         self.diffusion_coefficient_btn.clicked.connect(self.result_display.plot_variance_evolution)
@@ -751,12 +721,77 @@ class MainWindow(QMainWindow):
             self.region_y_input.setMaximum(self.data['images'].shape[2])
         pass
 
-    def load_avi_file(self):
-        """加载avi文件"""
-        pass
+
+    def EM_thread_open(self):
+        """加载EM文件的线程开启"""
+        # 初始化数据处理线程
+
+        self.status_label.setText("正在处理数据...")
+        self.avi_thread = QThread()
+        self.mass_data_processor = MassDataProcessor()
+        self.mass_data_processor.moveToThread(self.avi_thread)
+
+        self.mass_data_processor.mass_finished.connect(self.loaded_avi)
+        self.mass_data_processor.processing_progress_signal.connect(self.update_progress)
+
+        self.load_avi_EM_signal.connect(self.mass_data_processor.load_avi)
+
+
+    def load_avi(self):
+        """加载avi读取线程传递函数"""
+        file_types = "AVI视频文件 (*.avi);;所有文件 (*)"
+
+        # 获取文件路径
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择AVI视频文件",
+            "",  # 起始目录
+            file_types
+        )
+
+        if not file_path:
+            self.folder_path_label.setText("未选择文件")
+            logging.info("用户取消选择")
+            return
+
+        logging.info(f"已选择AVI文件: {file_path}")
+        self.folder_path_label.setText("正在加载AVI文件...")
+
+        self.load_avi_EM_signal.emit(file_path)
+
+    def loaded_avi(self,result):
+        self.data = result
+
+        if not self.data:
+            self.folder_path_label.setText("无法读取AVI文件")
+            logging.error("AVI文件读取失败")
+            return
+        else:
+            self.folder_path_label.setText("已加载AVI文件")
+            logging.info("AVI文件加载成功")
+
+
+        # 设置时间滑块
+        self.time_slider.setMaximum(len(self.data['images']) - 1)
+        self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
+
+        # 显示第一张图像
+        self.update_time_slice(0, True)
+        self.time_slider.setValue(0)
+
+        # 根据图像大小调节region范围
+        self.region_x_input.setMaximum(self.data['images'].shape[1])
+        self.region_y_input.setMaximum(self.data['images'].shape[2])
 
     def load_tiff_folder_EM(self):
         """加载TIFF文件夹(FS-iSCAT)"""
+        pass
+
+    def pre_process_EM(self):
+        """EM的数据预处理"""
+
+    def process_EM(self):
+        """EM的数据处理"""
         pass
 
     def make_hover_handler(self):
@@ -1086,12 +1121,17 @@ class MainWindow(QMainWindow):
             self.analyze_region_btn.setEnabled(True)
         return
 
-    def stop_thread(self):
+    def stop_thread(self,type = 0):
         """彻底删除线程（反正关闭也不能重启）后续线程多了加入选择关闭的能力"""
-        self.thread.quit()  # 请求退出
-        self.thread.wait()  # 等待结束
-        self.thread.deleteLater()  # 标记删除
-        logging.info("计算线程关闭")
+        if type == 0:
+            self.thread.quit()  # 请求退出
+            self.thread.wait()  # 等待结束
+            self.thread.deleteLater()  # 标记删除
+            logging.info("计算线程关闭")
+        if type == 1 and hasattr(self,"avi_thread"):
+            self.avi_thread.quit()
+            self.avi_thread.wait()
+            self.avi_thread.deleteLater()
 
     def export_image(self):
         """导出热图为图片"""

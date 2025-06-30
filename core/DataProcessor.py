@@ -4,14 +4,16 @@ import os
 import re
 import numpy as np
 import tifffile as tiff
-import sif_parser 
+import sif_parser
+import cv2
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
 
 
 class DataProcessor:
     """本类仅包含导入数据时的数据处理"""
-    def __init__(self,path,normalize_type='linear'):
+    def __init__(self,path,normalize_type='linear',**kwargs):
         self.path = path
         self.normalize_type = normalize_type
 
@@ -269,3 +271,103 @@ class DataProcessor:
         elif method == 'clahe':
             # CLAHE自适应直方图均衡化
             return equalize_adapthist(data, clip_limit=clip_limit)
+
+
+
+class MassDataProcessor(QObject):
+    mass_finished = pyqtSignal(dict)
+    processing_progress_signal = pyqtSignal(int, int)
+
+    def __init__(self):
+        super(MassDataProcessor, self).__init__()
+        self.abortion = False
+
+    """avi"""
+    @pyqtSlot()
+    def load_avi(self,path):
+        """
+        处理AVI视频文件，返回包含视频数据和元信息的字典
+        返回字典:
+            - data_origin: 原始视频帧数据 (n_frames, height, width)
+            - images: 归一化后的视频帧数据
+            - time_points: 时间点数组
+            - data_type: 数据类型标识 ('video')
+            - boundary: 最大最小值边界
+            - fps: 视频帧率
+            - frame_size: 视频帧尺寸 (width, height)
+            - duration: 视频时长(秒)
+        """
+
+        # 读取视频文件
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            raise IOError(f"无法打开视频文件: {path}")
+
+        # 获取视频元信息
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # codec = int(cap.get(cv2.CAP_PROP_FOURCC))
+        # codec_str = "".join([chr((codec >> 8 * i) & 0xFF) for i in range(4)])
+        duration = frame_count / fps if fps > 0 else 0
+
+        # 读取所有帧
+        frames = []
+        loading_bar_value = 0  # 进度条
+        total_l = frame_count
+        while not self.abortion:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            # 转换为灰度图(如果原始是彩色)
+            if len(frame.shape) == 3:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frames.append(frame)
+            loading_bar_value += 1
+            self.processing_progress_signal.emit(loading_bar_value, total_l)
+
+        cap.release()
+
+        if not frames:
+            raise ValueError("视频中没有读取到有效帧")
+
+        # 转换为numpy数组
+        frames_array = np.stack(frames, axis=0)
+
+        # 计算统计信息
+        vmax = np.max(frames_array)
+        vmin = np.min(frames_array)
+        vmean = np.mean(frames_array)
+
+        # 归一化处理
+        normalized_frames = self.normalize_data(frames_array)
+
+        avi_data = {
+            'data_origin': frames_array,
+            'images': normalized_frames,
+            'time_points': np.arange(len(frames)) / fps if fps > 0 else np.arange(len(frames)),
+            'data_type': 'video',
+            'boundary': {'max': vmax, 'min': vmin},
+            'fps': fps,
+            'frame_size': (width, height),
+            'duration': duration,
+            # 'codec': codec_str,
+            'data_mean': vmean
+        }
+        self.mass_finished.emit(avi_data)
+
+    @pyqtSlot()
+    def load_tiff(self,path):
+        pass
+
+    def pre_process(self,data_dict,bg_num):
+        """数据预处理，包含背景去除，数组展开"""
+        pass
+
+    def normalize_data(self, data):
+        return (data - np.min(data)) / (np.max(data) - np.min(data))
+
+    def stop_thread(self):
+        """请求中止处理"""
+        self.abort = True
