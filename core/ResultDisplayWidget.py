@@ -64,7 +64,8 @@ class ResultDisplayWidget(QTabWidget):
             'curve': 1,  # 寿命曲线
             'roi': 1,  # ROI曲线
             'diff': 1,  # 扩散系数
-            'var': 1  # 方差演化
+            'var': 1,  # 方差演化
+            'stft_avg': 1 # 信号评估
         }
 
     def _current_index(self, index):
@@ -95,7 +96,7 @@ class ResultDisplayWidget(QTabWidget):
         self.tab_data[id(tab)] = {
             'type': tab_type,
             'raw_data': kwargs,
-            'dataframe': self.current_dataframe.copy()
+            'dataframe': self.current_dataframe.copy() if self.current_dataframe is not None else None
         }
 
 
@@ -445,4 +446,30 @@ class ResultDisplayWidget(QTabWidget):
         })
         self.store_tab_data(tab, self.current_mode, dif_result=self.dif_result)
 
+    def plot_stft_avg(self, f, t, Zxx,target_freq):
+        """绘制平均信号STFT结果（信号质量评估）"""
+        # 提取目标频率附近的区域
+        freq_range = [target_freq - 1, target_freq + 1]
+        freq_mask = (f >= freq_range[0]) & (f <= freq_range[1])
 
+        self.current_mode = "stft_avg"
+        figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'stft')
+
+        ax = figure.add_subplot(111)
+
+        spec = ax.pcolormesh(t, f, 10 * np.log10(np.abs(Zxx)),
+                             shading='gouraud', cmap='viridis')
+        ax.set_ylabel('频率 [Hz]')
+        ax.set_xlabel('时间 [秒]')
+        figure.colorbar(spec, label='强度 [dB]')
+        # 标记目标频率
+        ax.axhline(y=target_freq, color='r', linestyle='--', alpha=0.7)
+        ax.set_title(f'信号质量评估 (目标频率: {target_freq} Hz)')
+        canvas.draw()
+
+        # self.current_dataframe = pd.DataFrame({"Zxx":Zxx}) 目前有问题
+        self.current_dataframe = None
+        self.store_tab_data(tab, self.current_mode, freq = f,
+            time = t,
+            Zxx = Zxx,
+            target_freq = target_freq)

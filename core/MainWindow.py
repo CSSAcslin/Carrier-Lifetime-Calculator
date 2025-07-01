@@ -1,5 +1,7 @@
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+
+import numpy as np
 from PyQt5 import sip
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -29,7 +31,8 @@ class MainWindow(QMainWindow):
     start_dif_cal_signal = pyqtSignal(dict, float, float)
     load_avi_EM_signal = pyqtSignal(str)
     load_tif_EM_signal = pyqtSignal(str)
-    pre_process_signal = pyqtSignal(dict,int)
+    pre_process_signal = pyqtSignal(dict,int,bool)
+    stft_python_signal = pyqtSignal(float, int, int, int)
 
     def __init__(self):
         super().__init__()
@@ -70,8 +73,6 @@ class MainWindow(QMainWindow):
         }
         # 状态控制
         self._is_calculating = False
-        # 线程管理
-        self.thread_open()
         # 信号连接
         self.signal_connect()
 
@@ -162,7 +163,7 @@ class MainWindow(QMainWindow):
 
         # FS-iSCAT模式下的文件夹选择
         fs_iSCAT_group = self.QGroupBoxCreator(style="inner")
-        tiff_layout = QVBoxLayout()
+        tiff_layout = QHBoxLayout()
         self.group_selector = QComboBox()
         self.group_selector.addItems(['n', 'p'])
         self.tiff_folder_btn = QPushButton("选择TIFF文件夹")
@@ -174,12 +175,14 @@ class MainWindow(QMainWindow):
         # 光热信号处理模式下的文件夹选择
         PA_group = self.QGroupBoxCreator(style="inner")
         sif_layout = QVBoxLayout()
+        sif_layout_inner = QHBoxLayout()
         method_label = QLabel("归一化方法:")         # 归一化方法选择
         self.method_combo = QComboBox()
         self.method_combo.addItems(["linear", "percentile", "sigmoid", "log", "clahe"])
         self.sif_folder_btn = QPushButton('选择SIF文件夹')
-        sif_layout.addWidget(method_label)
-        sif_layout.addWidget(self.method_combo)
+        sif_layout_inner.addWidget(method_label)
+        sif_layout_inner.addWidget(self.method_combo)
+        sif_layout.addLayout(sif_layout_inner)
         sif_layout.addWidget(self.sif_folder_btn)
         PA_group.setLayout(sif_layout)
         self.funtion_stack.addWidget(PA_group)
@@ -259,7 +262,7 @@ class MainWindow(QMainWindow):
     # 分析总体设置
         self.modes_panel = self.QGroupBoxCreator("分析设置:")
         left_layout1 = QVBoxLayout()
-        left_layout1.setContentsMargins(1, 2, 1, 2)
+        left_layout1.setContentsMargins(1, 0, 1, 0)
         self.between_stack = QStackedWidget()
         # 默认显示
         nothing_GROUP = self.QGroupBoxCreator(style="noborder")
@@ -363,18 +366,38 @@ class MainWindow(QMainWindow):
         # EM_iSCAT下的功能选择
         EM_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
         EM_iSCAT_layout1 = QVBoxLayout()
+        preprocess_set_layout = QHBoxLayout()
+        preprocess_set_layout.addWidget(QLabel("背景帧数："))
+        self.bg_nums_input = QSpinBox()
+        self.bg_nums_input.setMinimum(1)
+        self.bg_nums_input.setMaximum(9999)
+        self.bg_nums_input.setValue(360)
+        preprocess_set_layout.addWidget(self.bg_nums_input)
+        self.preprocess_data_btn = QPushButton("数据预处理")
+        EM_iSCAT_layout1.addLayout(preprocess_set_layout)
+        EM_iSCAT_layout1.addWidget(self.preprocess_data_btn)
         self.EM_mode_combo = QComboBox()
         self.EM_mode_combo.addItems(["stft未完成"])
         EM_iSCAT_layout1.addWidget(self.EM_mode_combo)
         self.EM_mode_stack = QStackedWidget()
         # stft 短时傅里叶变换
-        stft_GROUP = self.QGroupBoxCreator(style="noborder")
+        stft_GROUP = self.QGroupBoxCreator(style="inner")
         stft_layout = QVBoxLayout()
         stft_GROUP.setLayout(stft_layout)
-        self.preprocess_data_btn = QPushButton("数据预处理")
+        process_set_layout1 = QHBoxLayout()
+        process_set_layout1.addWidget(QLabel("处理方法"))
+        self.process_program_select = QComboBox()
+        self.process_program_select.addItems(["python","julia"])
+        process_set_layout1.addWidget(self.process_program_select)
+        process_set_layout2 = QHBoxLayout()
+        process_set_layout2.addWidget(QLabel("是否显示结果"))
+        self.show_stft_check = QCheckBox()
+        self.show_stft_check.setChecked(False)
+        process_set_layout2.addWidget(self.show_stft_check)
         self.stft_process_btn = QPushButton("执行短时傅里叶变换")
-        stft_layout.addWidget(QLabel("stft未完成"))
-        stft_layout.addWidget(self.preprocess_data_btn)
+
+        stft_layout.addLayout(process_set_layout1)
+        stft_layout.addLayout(process_set_layout2)
         stft_layout.addWidget(self.stft_process_btn)
         self.EM_mode_stack.addWidget(stft_GROUP)
         EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
@@ -405,12 +428,19 @@ class MainWindow(QMainWindow):
         if self.fuction_select.currentIndex() == 1:  # FS-iSCAT
             self.between_stack.setCurrentIndex(1)
             self.FS_mode_combo.setCurrentIndex(0)
+            self.cal_thread_open()
+            self.stop_thread(type=1)
+            self.folder_path_label = QLabel("未选择文件夹")
         if self.fuction_select.currentIndex() == 2:  # PA
             self.between_stack.setCurrentIndex(1)
             self.FS_mode_combo.setCurrentIndex(1)
+            self.cal_thread_open()
+            self.stop_thread(type=1)
+            self.folder_path_label = QLabel("未选择文件夹")
         if self.fuction_select.currentIndex() == 3:  # ES-iSCAT
             self.between_stack.setCurrentIndex(3)
             self.EM_thread_open()
+            self.stop_thread(type=0)
 
     def setup_menus(self):
         """加入菜单栏"""
@@ -595,7 +625,7 @@ class MainWindow(QMainWindow):
         logging.info(startup_msg.strip())
         logging.info("程序已进入准备状态，等待用户操作...（第一次计算可能较慢）")
 
-    def thread_open(self):
+    def cal_thread_open(self):
         """计算线程相关 以及信号槽连接都放在这里了"""
         self.thread = QThread()
         self.cal_thread = CalculationThread()
@@ -627,6 +657,7 @@ class MainWindow(QMainWindow):
         # self.PA_mode_combo.currentIndexChanged.connect(self.PA_mode_stack.setCurrentIndex)
         self.EM_mode_combo.currentIndexChanged.connect(self.EM_mode_stack.setCurrentIndex)
         self.preprocess_data_btn.clicked.connect(self.pre_process_EM)
+        self.stft_process_btn.clicked.connect(self.process_EM)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
         self.diffusion_coefficient_btn.clicked.connect(self.result_display.plot_variance_evolution)
@@ -726,19 +757,23 @@ class MainWindow(QMainWindow):
         """加载EM文件的线程开启"""
         # 初始化数据处理线程
 
-        self.status_label.setText("正在处理数据...")
         self.avi_thread = QThread()
         self.mass_data_processor = MassDataProcessor()
         self.mass_data_processor.moveToThread(self.avi_thread)
 
         self.mass_data_processor.mass_finished.connect(self.loaded_avi)
         self.mass_data_processor.processing_progress_signal.connect(self.update_progress)
-
+        self.mass_data_processor.avg_stft_result.connect(self.result_display.plot_stft_avg)
+        self.mass_data_processor.stft_completed.connect(self.stft_result)
         self.load_avi_EM_signal.connect(self.mass_data_processor.load_avi)
-
+        self.load_tif_EM_signal.connect(self.mass_data_processor.load_tiff) # 未完成
+        self.pre_process_signal.connect(self.mass_data_processor.pre_process)
+        self.stft_python_signal.connect(self.mass_data_processor.python_stft)
 
     def load_avi(self):
         """加载avi读取线程传递函数"""
+        self.status_label.setText("正在处理数据...")
+        self.avi_thread.start()
         file_types = "AVI视频文件 (*.avi);;所有文件 (*)"
 
         # 获取文件路径
@@ -789,10 +824,46 @@ class MainWindow(QMainWindow):
 
     def pre_process_EM(self):
         """EM的数据预处理"""
-
+        if self.data is None:
+            logging.error("请先加载数据")
+            return
+        self.pre_process_signal.emit(self.data,self.bg_nums_input.value(),True)
     def process_EM(self):
         """EM的数据处理"""
-        pass
+        if self.process_program_select.currentIndex() == 0:
+            type = "python"
+        if self.process_program_select.currentIndex() == 1:
+            type = "julia"
+        if self.data is not None:
+            dialog = STFTComputePop(self)
+            self.update_status("STFT计算ing", True)
+            if dialog.exec_():
+                target_freq = dialog.target_freq_input.value()
+                window_size = dialog.window_size_input.value()
+                noverlap = dialog.noverlap_input.value()
+                custom_nfft = dialog.custom_nfft_input.value()
+                self.stft_python_signal.emit(target_freq,window_size,noverlap,custom_nfft)
+        else:
+            logging.warning("没有数据可以计算")
+            self.update_status("准备就绪", False)
+            return
+    def stft_result(self,result):
+        """stft结果处理"""
+        if self.show_stft_check.isChecked():
+            self.data['images'] = (result - np.min(result)) / (np.max(result) - np.min(result))
+            self.time_slider.setMaximum(len(self.data['images']) - 1)
+            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
+
+            # 显示第一张图像
+            self.update_time_slice(0, True)
+            self.time_slider.setValue(0)
+
+            # 根据图像大小调节region范围
+            self.region_x_input.setMaximum(self.data['images'].shape[1])
+            self.region_y_input.setMaximum(self.data['images'].shape[2])
+
+        self.data['stft_result'] = result
+
 
     def make_hover_handler(self):
         args = {'x': None, 'y': None, 't': None, 'value': None}
@@ -899,6 +970,9 @@ class MainWindow(QMainWindow):
 
     def update_time_slice(self, idx, first_create = False):
         """更新时间切片显示"""
+        if self.data is None:
+            logging.warning("无数据可显示")
+            return
         self.idx = idx
         if self.data is not None and 0 <= idx < len(self.data['images']):
             self.time_label.setText(f"时间点: {idx}/{len(self.data['images']) - 1}")
@@ -921,7 +995,7 @@ class MainWindow(QMainWindow):
             # self.update_status("计算中...", True)
             pass
         elif current >= self.progress_bar.maximum():
-            self.update_status("计算完成")
+            self.update_status("进程任务完成")
             self.progress_bar.reset()
 
     def vectorROI_signal_show(self):
@@ -1052,7 +1126,7 @@ class MainWindow(QMainWindow):
         # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要开启
         if not self.is_thread_active("thread"):
-            self.thread_open()
+            self.cal_thread_open()
         # 如果有线程在运算，要提示（不过目前不需要，保留语句）
         if self.cal_thread and self.thread.isRunning():
             logging.warning("已有计算任务正在运行")
@@ -1074,7 +1148,7 @@ class MainWindow(QMainWindow):
         # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
         if not self.is_thread_active("thread"):
-            self.thread_open()
+            self.cal_thread_open()
 
 
         self.thread.start()
@@ -1092,7 +1166,7 @@ class MainWindow(QMainWindow):
         # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
         if not self.is_thread_active("thread"):
-            self.thread_open()
+            self.cal_thread_open()
 
         self.thread.start()
         self.update_status('计算进行中...', True)
@@ -1123,15 +1197,22 @@ class MainWindow(QMainWindow):
 
     def stop_thread(self,type = 0):
         """彻底删除线程（反正关闭也不能重启）后续线程多了加入选择关闭的能力"""
-        if type == 0:
-            self.thread.quit()  # 请求退出
-            self.thread.wait()  # 等待结束
-            self.thread.deleteLater()  # 标记删除
-            logging.info("计算线程关闭")
-        if type == 1 and hasattr(self,"avi_thread"):
-            self.avi_thread.quit()
-            self.avi_thread.wait()
-            self.avi_thread.deleteLater()
+        if type == 0 and self.is_thread_active("thread"):
+            try:
+                self.thread.quit()  # 请求退出
+                self.thread.wait()  # 等待结束
+                self.thread.deleteLater()  # 标记删除
+                logging.info("计算线程关闭")
+            except Exception as e:
+                logging.error(f"线程退出错误{e}")
+        if type == 1 and hasattr(self,"avi_thread") and self.is_thread_active("avi_thread"):
+            try:
+                self.avi_thread.quit()
+                self.avi_thread.wait()
+                self.avi_thread.deleteLater()
+                logging.info("大数据处理线程关闭")
+            except Exception as e:
+                logging.error(f"线程退出错误{e}")
 
     def export_image(self):
         """导出热图为图片"""

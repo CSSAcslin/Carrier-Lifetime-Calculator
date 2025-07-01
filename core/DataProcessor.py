@@ -6,9 +6,10 @@ import numpy as np
 import tifffile as tiff
 import sif_parser
 import cv2
-from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
+from scipy import signal
 
 
 class DataProcessor:
@@ -275,15 +276,19 @@ class DataProcessor:
 
 
 class MassDataProcessor(QObject):
-    mass_finished = pyqtSignal(dict)
-    processing_progress_signal = pyqtSignal(int, int)
+    """大型数据（EM-iSCAT）处理的线程解决"""
+    mass_finished = pyqtSignal(dict) # 数据读取
+    processing_progress_signal = pyqtSignal(int, int) # 进度槽
+    stft_completed = pyqtSignal(np.ndarray)  # 三维STFT结果数组
+    avg_stft_result = pyqtSignal(np.ndarray, np.ndarray, np.ndarray,float)  # 平均信号STFT结果
 
     def __init__(self):
-        super(MassDataProcessor, self).__init__()
+        super(MassDataProcessor,self).__init__()
+        logging.info("大数据处理线程已载入")
         self.abortion = False
 
     """avi"""
-    @pyqtSlot()
+    @pyqtSlot(str)
     def load_avi(self,path):
         """
         处理AVI视频文件，返回包含视频数据和元信息的字典
@@ -315,7 +320,7 @@ class MassDataProcessor(QObject):
         # 读取所有帧
         frames = []
         loading_bar_value = 0  # 进度条
-        total_l = frame_count
+        total_l = frame_count+1
         while not self.abortion:
             ret, frame = cap.read()
             if not ret:
@@ -338,11 +343,11 @@ class MassDataProcessor(QObject):
         # 计算统计信息
         vmax = np.max(frames_array)
         vmin = np.min(frames_array)
-        vmean = np.mean(frames_array)
 
         # 归一化处理
         normalized_frames = self.normalize_data(frames_array)
 
+        self.processing_progress_signal.emit(loading_bar_value+1, total_l)
         avi_data = {
             'data_origin': frames_array,
             'images': normalized_frames,
@@ -353,17 +358,159 @@ class MassDataProcessor(QObject):
             'frame_size': (width, height),
             'duration': duration,
             # 'codec': codec_str,
-            'data_mean': vmean
         }
         self.mass_finished.emit(avi_data)
 
-    @pyqtSlot()
+    @pyqtSlot(str)
     def load_tiff(self,path):
         pass
-
-    def pre_process(self,data_dict,bg_num):
+    @pyqtSlot(dict,int,bool)
+    def pre_process(self,data_dict:dict,bg_num = 360,unfold=True):
         """数据预处理，包含背景去除，数组展开"""
-        pass
+        try:
+            logging.info("开始预处理...")
+            self.processing_progress_signal.emit(0, 100)
+
+            # 1. 提取前n帧计算背景帧
+            data_origin = data_dict['data_origin']
+            total_frames = data_origin.shape[0]
+
+            # 计算背景帧 (前n帧的平均)
+            self.processing_progress_signal.emit(10, 100)
+            bg_frame = np.mean(data_origin[:bg_num], axis=0)
+            self.processing_progress_signal.emit(20, 100)
+
+            # 2. 所有帧减去背景
+            processed_data = np.empty_like(data_origin)
+            for i in range(total_frames):
+                if self.abortion:
+                    return None
+
+                # 减去背景帧
+                processed_data[i] = data_origin[i] - bg_frame
+
+                # 每隔10%的进度更新一次
+                if i % max(1, total_frames // 10) == 0:
+                    progress_value = 20 + int(60 * i / total_frames)
+                    self.processing_progress_signal.emit(progress_value, 100)
+
+            # 3. 可选：展开为二维数组
+            self.processing_progress_signal.emit(85, 100)
+            if unfold:
+                T, H, W = processed_data.shape
+                unfolded_data = processed_data.reshape((T, H * W)).T
+                data_dict['unfolded_data'] = unfolded_data
+
+            self.processing_progress_signal.emit(95, 100)
+
+            # 4. 更新结果字典
+            data_dict['bg_frame'] = bg_frame
+            data_dict['data_process'] = processed_data
+
+            # 计算统计信息
+            vmax = np.max(processed_data)
+            vmin = np.min(processed_data)
+            data_dict['boundary'] = {'max': vmax, 'min': vmin}
+
+            self.processing_progress_signal.emit(100, 100)
+            self.data = data_dict
+            logging.info("预处理结束")
+
+        except Exception as e:
+            logging.error(f"预处理错误: {str(e)}")
+
+    def python_stft(self, target_freq: float, window_size: int, noverlap: int,
+                    custom_nfft: int):
+        """
+        执行逐像素STFT分析
+        参数:
+            avi_data: 预处理后的数据字典
+            target_freq: 目标分析频率(Hz)
+            window_size: Hanning窗口大小(样本数)
+            noverlap: 重叠样本数
+            custom_nfft: 自定义FFT点数(可选)
+        """
+        try:
+            if not self.data:
+                raise ValueError("清闲静心预处理")
+            # 1. 检查必要数据存在
+            if 'unfolded_data' not in self.data:
+                raise ValueError("需要先进行unfold预处理")
+
+            timer = QElapsedTimer()
+            timer.start()
+
+            unfolded_data = self.data['unfolded_data']  # [像素数 x 帧数]
+            frame_size = self.data['frame_size']  # (宽度, 高度)
+            fps = self.data['fps']  # 原始帧率
+
+            # 2. 计算采样率和FFT参数
+            total_frames = unfolded_data.shape[1]
+            total_pixels = unfolded_data.shape[0]
+            nfft = custom_nfft
+
+            # 3. 计算平均信号的STFT (用于质量评估)
+            mean_signal = np.mean(unfolded_data, axis=0)
+            f, t, Zxx = signal.stft(
+                mean_signal,
+                fs=fps,
+                window=signal.windows.hann(window_size),
+                nperseg=window_size,
+                noverlap=noverlap,
+                nfft=nfft,
+                return_onesided=True
+            )
+            # 发送平均信号STFT结果
+            self.avg_stft_result.emit(f, t, np.abs(Zxx),target_freq)
+            self.processing_progress_signal.emit(1, total_pixels)
+
+            # 4. 初始化结果数组
+            width, height = frame_size
+            stft_py_out = np.zeros((Zxx.shape[1], height, width), dtype=np.float32)
+
+            # 5. 逐像素STFT处理
+            self.processing_progress_signal.emit(0, total_pixels)
+
+            # 找到目标频率最近的索引
+            target_idx = np.argmin(np.abs(f - target_freq))
+
+            # 对每个像素执行STFT
+            for i in range(total_pixels):
+                if self.abortion:
+                    return
+
+                pixel_signal = unfolded_data[i, :]
+
+                # 计算当前像素的STFT
+                _, _, Zxx = signal.stft(
+                    pixel_signal,
+                    fs=fps,
+                    window=signal.windows.hann(window_size),
+                    nperseg=window_size,
+                    noverlap=noverlap,
+                    nfft=nfft,
+                    return_onesided=False
+                )
+
+                # 提取目标频率处的幅度
+                magnitude = np.abs(Zxx[target_idx, :])
+
+                # 将结果存入对应像素位置
+                y = i // width
+                x = i % width
+                stft_py_out[:, y, x] = magnitude
+
+                # 每100个像素更新一次进度
+                if i % 100 == 0:
+                    self.processing_progress_signal.emit(i, total_pixels)
+
+            # 6. 发送完整结果
+            self.stft_completed.emit(stft_py_out)
+            self.processing_progress_signal.emit(total_pixels, total_pixels)
+            logging.info(f"计算完成，总耗时{timer.elapsed()}ms")
+
+        except Exception as e:
+            logging.error(f"STFT计算错误: {str(e)}")
 
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))

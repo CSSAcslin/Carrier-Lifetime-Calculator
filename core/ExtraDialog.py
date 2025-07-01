@@ -2,7 +2,7 @@ import logging
 from symtable import Class
 from typing import List
 
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QIntValidator
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QRadioButton, QSpinBox, QLineEdit, QPushButton,
                              QLabel, QMessageBox, QFormLayout, QDoubleSpinBox, QColorDialog, QComboBox, QCheckBox)
@@ -425,6 +425,63 @@ class DataSavingPop(QDialog):
 
         button_layout = QHBoxLayout()
         self.apply_btn = QPushButton("导出")
+        self.apply_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.apply_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+
+        self.setLayout(layout)
+
+# 计算stft参数弹窗
+class STFTComputePop(QDialog):
+    def __init__(self,parent = None):
+        super().__init__(parent)
+        self.setWindowTitle("短时傅里叶变换")
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(400)
+
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # 创建水平布局容器来放置标签和复选框
+        def create_checkbox_row(label_text, checkbox):
+            row_layout = QHBoxLayout()
+            label = QLabel(label_text)
+            row_layout.addWidget(label)
+            row_layout.addStretch()  # 添加弹性空间使复选框靠右
+            row_layout.addWidget(checkbox)
+            return row_layout
+
+        self.target_freq_input = QDoubleSpinBox()
+        self.target_freq_input.setRange(0.1, 100)
+        self.target_freq_input.setValue(30.0)
+        self.target_freq_input.setPrefix("测试：")
+        self.target_freq_input.setSuffix(" Hz")
+
+        self.window_size_input = QSpinBox()
+        self.window_size_input.setRange(16, 2048)
+        self.window_size_input.setValue(128)
+
+        self.noverlap_input = QSpinBox()
+        self.noverlap_input.setRange(0, 1024)
+        self.noverlap_input.setValue(120)
+
+        self.noverlap_input = QSpinBox()
+        self.noverlap_input.setRange(0, 1024)
+        self.noverlap_input.setValue(256)
+
+        layout.addWidget(self.target_freq_input)
+        layout.addWidget(self.window_size_input)
+        layout.addWidget(self.noverlap_input)
+        layout.addWidget(self.custom_nfft_input)
+
+
+        button_layout = QHBoxLayout()
+        self.apply_btn = QPushButton("执行STFT")
         self.apply_btn.clicked.connect(self.accept)
         self.cancel_btn = QPushButton("取消")
         self.cancel_btn.clicked.connect(self.reject)
