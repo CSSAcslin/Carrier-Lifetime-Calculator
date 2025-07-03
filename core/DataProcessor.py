@@ -432,7 +432,7 @@ class MassDataProcessor(QObject):
         """
         try:
             if not self.data:
-                raise ValueError("清闲静心预处理")
+                raise ValueError("请先进行预处理")
             # 1. 检查必要数据存在
             if 'unfolded_data' not in self.data:
                 raise ValueError("需要先进行unfold预处理")

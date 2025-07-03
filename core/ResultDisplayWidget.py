@@ -65,7 +65,8 @@ class ResultDisplayWidget(QTabWidget):
             'roi': 1,  # ROI曲线
             'diff': 1,  # 扩散系数
             'var': 1,  # 方差演化
-            'stft_avg': 1 # 信号评估
+            'stft_avg': 1, # 信号评估
+            'series': 1 # EM信号
         }
 
     def _current_index(self, index):
@@ -206,6 +207,12 @@ class ResultDisplayWidget(QTabWidget):
             )
         elif tab_type == 'var':
             self.plot_variance_evolution(
+                reuse_current=True)
+
+        elif tab_type == 'series':
+            self.plot_time_series(
+                raw_data['time'],
+                raw_data['series'],
                 reuse_current=True)
 
 
@@ -419,6 +426,7 @@ class ResultDisplayWidget(QTabWidget):
         figure, canvas, index, title, tab = self.create_tab(self.current_mode, '方', reuse_current)
 
         ax = figure.add_subplot(111)
+        show_grid = self.plot_settings['show_grid']
 
         times = self.dif_result["sigma"][0]
         variances = self.dif_result["sigma"][1]
@@ -436,7 +444,7 @@ class ResultDisplayWidget(QTabWidget):
         ax.set_title("高斯方差随时间演化")
         ax.set_xlabel("时间 (s)")
         ax.set_ylabel("方差 (μm²)")
-        ax.grid(True)
+        ax.grid(show_grid)
         ax.legend()
         canvas.draw()
 
@@ -450,7 +458,6 @@ class ResultDisplayWidget(QTabWidget):
         """绘制平均信号STFT结果（信号质量评估）"""
         # 提取目标频率附近的区域
         freq_range = [target_freq - 1, target_freq + 1]
-        freq_mask = (f >= freq_range[0]) & (f <= freq_range[1])
 
         self.current_mode = "stft_avg"
         figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'stft')
@@ -473,3 +480,26 @@ class ResultDisplayWidget(QTabWidget):
             time = t,
             Zxx = Zxx,
             target_freq = target_freq)
+
+    def plot_time_series(self,time, series,reuse_current=False):
+        """信号处理结果"""
+        self.current_mode = "series"
+
+        figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'signal',reuse_current)
+        show_grid = self.plot_settings['show_grid']
+        line_style = self.plot_settings['line_style']
+        line_width = self.plot_settings['line_width']
+
+        ax = figure.add_subplot(111)
+        line, = ax.plot(time, series, 'b-', linewidth=line_width)
+        ax.set_title(title)
+        ax.set_xlabel("time (s)")
+        ax.set_ylabel(r"$\Delta$S")
+        ax.grid(show_grid)
+        canvas.draw()
+
+        self.current_dataframe = pd.DataFrame({
+            'time': time,
+            'series': series[1],
+        })
+        self.store_tab_data(tab, self.current_mode, time = time, series = series)

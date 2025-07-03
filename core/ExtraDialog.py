@@ -1,4 +1,5 @@
 import logging
+from cProfile import label
 from symtable import Class
 from typing import List
 
@@ -440,26 +441,16 @@ class STFTComputePop(QDialog):
         super().__init__(parent)
         self.setWindowTitle("短时傅里叶变换")
         self.setMinimumWidth(300)
-        self.setMinimumHeight(400)
+        self.setMinimumHeight(200)
 
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout()
-
-        # 创建水平布局容器来放置标签和复选框
-        def create_checkbox_row(label_text, checkbox):
-            row_layout = QHBoxLayout()
-            label = QLabel(label_text)
-            row_layout.addWidget(label)
-            row_layout.addStretch()  # 添加弹性空间使复选框靠右
-            row_layout.addWidget(checkbox)
-            return row_layout
+        layout = QFormLayout()
 
         self.target_freq_input = QDoubleSpinBox()
         self.target_freq_input.setRange(0.1, 100)
         self.target_freq_input.setValue(30.0)
-        self.target_freq_input.setPrefix("测试：")
         self.target_freq_input.setSuffix(" Hz")
 
         self.window_size_input = QSpinBox()
@@ -470,14 +461,14 @@ class STFTComputePop(QDialog):
         self.noverlap_input.setRange(0, 1024)
         self.noverlap_input.setValue(120)
 
-        self.noverlap_input = QSpinBox()
-        self.noverlap_input.setRange(0, 1024)
-        self.noverlap_input.setValue(256)
+        self.custom_nfft_input = QSpinBox()
+        self.custom_nfft_input.setRange(0, 1024)
+        self.custom_nfft_input.setValue(256)
 
-        layout.addWidget(self.target_freq_input)
-        layout.addWidget(self.window_size_input)
-        layout.addWidget(self.noverlap_input)
-        layout.addWidget(self.custom_nfft_input)
+        layout.addRow(QLabel("目标频率"),self.target_freq_input)
+        layout.addRow(QLabel("窗口大小"),self.window_size_input)
+        layout.addRow(QLabel("窗口重叠"),self.noverlap_input)
+        layout.addRow(QLabel("变换长度"),self.custom_nfft_input)
 
 
         button_layout = QHBoxLayout()
@@ -487,6 +478,6 @@ class STFTComputePop(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.apply_btn)
         button_layout.addWidget(self.cancel_btn)
-        layout.addLayout(button_layout)
+        layout.setLayout(4,QFormLayout.FieldRole,button_layout)
 
         self.setLayout(layout)

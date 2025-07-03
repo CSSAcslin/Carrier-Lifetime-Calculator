@@ -395,12 +395,14 @@ class MainWindow(QMainWindow):
         self.show_stft_check.setChecked(False)
         process_set_layout2.addWidget(self.show_stft_check)
         self.stft_process_btn = QPushButton("执行短时傅里叶变换")
+        self.roi_signal_btn = QPushButton("选区信号均值变化")
 
         stft_layout.addLayout(process_set_layout1)
         stft_layout.addLayout(process_set_layout2)
         stft_layout.addWidget(self.stft_process_btn)
         self.EM_mode_stack.addWidget(stft_GROUP)
         EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
+        EM_iSCAT_layout1.addWidget(self.roi_signal_btn)
         EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout1)
         self.between_stack.addWidget(EM_iSCAT_GROUP)
 
@@ -658,6 +660,7 @@ class MainWindow(QMainWindow):
         self.EM_mode_combo.currentIndexChanged.connect(self.EM_mode_stack.setCurrentIndex)
         self.preprocess_data_btn.clicked.connect(self.pre_process_EM)
         self.stft_process_btn.clicked.connect(self.process_EM)
+        self.roi_signal_btn.clicked.connect(self.roi_signal_avg)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
         self.diffusion_coefficient_btn.clicked.connect(self.result_display.plot_variance_evolution)
@@ -822,49 +825,6 @@ class MainWindow(QMainWindow):
         """加载TIFF文件夹(FS-iSCAT)"""
         pass
 
-    def pre_process_EM(self):
-        """EM的数据预处理"""
-        if self.data is None:
-            logging.error("请先加载数据")
-            return
-        self.pre_process_signal.emit(self.data,self.bg_nums_input.value(),True)
-    def process_EM(self):
-        """EM的数据处理"""
-        if self.process_program_select.currentIndex() == 0:
-            type = "python"
-        if self.process_program_select.currentIndex() == 1:
-            type = "julia"
-        if self.data is not None:
-            dialog = STFTComputePop(self)
-            self.update_status("STFT计算ing", True)
-            if dialog.exec_():
-                target_freq = dialog.target_freq_input.value()
-                window_size = dialog.window_size_input.value()
-                noverlap = dialog.noverlap_input.value()
-                custom_nfft = dialog.custom_nfft_input.value()
-                self.stft_python_signal.emit(target_freq,window_size,noverlap,custom_nfft)
-        else:
-            logging.warning("没有数据可以计算")
-            self.update_status("准备就绪", False)
-            return
-    def stft_result(self,result):
-        """stft结果处理"""
-        if self.show_stft_check.isChecked():
-            self.data['images'] = (result - np.min(result)) / (np.max(result) - np.min(result))
-            self.time_slider.setMaximum(len(self.data['images']) - 1)
-            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
-
-            # 显示第一张图像
-            self.update_time_slice(0, True)
-            self.time_slider.setValue(0)
-
-            # 根据图像大小调节region范围
-            self.region_x_input.setMaximum(self.data['images'].shape[1])
-            self.region_y_input.setMaximum(self.data['images'].shape[2])
-
-        self.data['stft_result'] = result
-
-
     def make_hover_handler(self):
         args = {'x': None, 'y': None, 't': None, 'value': None}
         def _handle_hover(x=None, y=None, t=None, value=None):
@@ -958,9 +918,12 @@ class MainWindow(QMainWindow):
             if roi_dialog.action_type == "mask":
                 self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
                 logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
-                data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
-                self.data.update(data_amend)
-                self.update_time_slice(self.idx)
+                if self.fuction_select.currentIndex() == 3:
+                    pass
+                else:
+                    data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
+                    self.data.update(data_amend)
+                    self.update_time_slice(self.idx)
             elif roi_dialog.action_type == "vector":
                 self.vector_array = roi_dialog.vector_line.getPixelValues(self.data,self.space_unit,self.time_unit)
                 logging.info(f'成功绘制ROI，大小{self.vector_array.shape}')
@@ -1173,6 +1136,78 @@ class MainWindow(QMainWindow):
         self.time_unit = float(self.time_step_input.value())
         self.space_unit = float(self.space_step_input.value())
         self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_unit, self.space_unit)
+
+    def pre_process_EM(self):
+        """EM的数据预处理"""
+        if self.data is None:
+            logging.error("请先加载数据")
+            return
+        self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
+
+    def process_EM(self):
+        """EM的数据处理"""
+        if self.process_program_select.currentIndex() == 0:
+            type = "python"
+        if self.process_program_select.currentIndex() == 1:
+            type = "julia"
+        if self.data is None:
+            logging.warning("没有数据可以计算")
+            return
+        if "unfolded_data" in self.data:
+            dialog = STFTComputePop(self)
+            self.update_status("STFT计算ing", True)
+            if dialog.exec_():
+                target_freq = dialog.target_freq_input.value()
+                window_size = dialog.window_size_input.value()
+                noverlap = dialog.noverlap_input.value()
+                custom_nfft = dialog.custom_nfft_input.value()
+                self.stft_python_signal.emit(target_freq, window_size, noverlap, custom_nfft)
+        else:
+            logging.warning("请先对数据进行预处理")
+            self.update_status("准备就绪", False)
+            return
+
+    def stft_result(self, result):
+        """stft结果处理"""
+        if self.show_stft_check.isChecked():
+            self.data['images'] = (result - np.min(result)) / (np.max(result) - np.min(result))
+            self.time_slider.setMaximum(len(self.data['images']) - 1)
+            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
+
+            # 显示第一张图像
+            self.update_time_slice(0, True)
+            self.time_slider.setValue(0)
+
+            # 根据图像大小调节region范围
+            self.region_x_input.setMaximum(self.data['images'].shape[1])
+            self.region_y_input.setMaximum(self.data['images'].shape[2])
+
+        self.data['stft_result'] = result
+
+    def roi_signal_avg(self):
+        """计算选区信号平均值并显示"""
+        if not hasattr(self,"mask"):
+            QMessageBox.warning(self,"警告","请先绘制ROI")
+            return
+        if 'stft_result' not in self.data:
+            logging.warning("请先处理数据")
+
+        mask = self.bool_mask
+        if mask.dtype == bool:
+            stft_masked = np.where(mask[np.newaxis,:,:],self.data['stft_result'],0)
+
+            total_valid_pixels = np.sum(mask)
+            if total_valid_pixels == 0:
+                QMessageBox.warning(self, "蒙版错误", "布尔蒙版中没有True像素")
+                return
+            # 计算每个时间点上的平均值
+            average_series = np.sum(stft_masked, axis=(1, 2)) / total_valid_pixels
+        else:
+            raise TypeError(f"不支持的蒙版类型: {mask.dtype}")
+
+        time_series = np.arange(stft_masked.shape[0]) * self.data['duration'] / stft_masked.shape[0]
+        self.data['masked_stft'] = stft_masked
+        self.result_display.plot_time_series(time_series , average_series)
 
     def is_thread_active(self, thread_name: str) -> bool:
         """检查指定名称的线程是否存在且正在运行"""
