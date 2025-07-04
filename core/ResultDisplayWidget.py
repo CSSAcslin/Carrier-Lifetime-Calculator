@@ -484,14 +484,15 @@ class ResultDisplayWidget(QTabWidget):
     def plot_time_series(self,time, series,reuse_current=False):
         """信号处理结果"""
         self.current_mode = "series"
-
+        time = time[1:-1]
+        series = series[1:-1]
         figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'signal',reuse_current)
         show_grid = self.plot_settings['show_grid']
         line_style = self.plot_settings['line_style']
         line_width = self.plot_settings['line_width']
 
         ax = figure.add_subplot(111)
-        line, = ax.plot(time, series, 'b-', linewidth=line_width)
+        ax.plot(time, series, 'b-', linewidth=line_width)
         ax.set_title(title)
         ax.set_xlabel("time (s)")
         ax.set_ylabel(r"$\Delta$S")
@@ -500,6 +501,6 @@ class ResultDisplayWidget(QTabWidget):
 
         self.current_dataframe = pd.DataFrame({
             'time': time,
-            'series': series[1],
+            'series': series,
         })
         self.store_tab_data(tab, self.current_mode, time = time, series = series)

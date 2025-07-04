@@ -32,7 +32,7 @@ class MainWindow(QMainWindow):
     load_avi_EM_signal = pyqtSignal(str)
     load_tif_EM_signal = pyqtSignal(str)
     pre_process_signal = pyqtSignal(dict,int,bool)
-    stft_python_signal = pyqtSignal(float, int, int, int)
+    stft_python_signal = pyqtSignal(float, int, int, int, int)
 
     def __init__(self):
         super().__init__()
@@ -1158,10 +1158,11 @@ class MainWindow(QMainWindow):
             self.update_status("STFT计算ing", True)
             if dialog.exec_():
                 target_freq = dialog.target_freq_input.value()
+                fs = dialog.fs_input.value()
                 window_size = dialog.window_size_input.value()
                 noverlap = dialog.noverlap_input.value()
                 custom_nfft = dialog.custom_nfft_input.value()
-                self.stft_python_signal.emit(target_freq, window_size, noverlap, custom_nfft)
+                self.stft_python_signal.emit(target_freq,fs, window_size, noverlap, custom_nfft)
         else:
             logging.warning("请先对数据进行预处理")
             self.update_status("准备就绪", False)
@@ -1186,7 +1187,7 @@ class MainWindow(QMainWindow):
 
     def roi_signal_avg(self):
         """计算选区信号平均值并显示"""
-        if not hasattr(self,"mask"):
+        if not hasattr(self,"bool_mask") or self.bool_mask is None:
             QMessageBox.warning(self,"警告","请先绘制ROI")
             return
         if 'stft_result' not in self.data:

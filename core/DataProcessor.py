@@ -370,32 +370,36 @@ class MassDataProcessor(QObject):
         try:
             logging.info("开始预处理...")
             self.processing_progress_signal.emit(0, 100)
-
+            timer = QElapsedTimer()
+            timer.start()
             # 1. 提取前n帧计算背景帧
-            data_origin = data_dict['data_origin']
+            data_origin = data_dict['data_origin'].astype(np.float32) # 注意这里开始原本Uint8 转为了F32
             total_frames = data_origin.shape[0]
 
             # 计算背景帧 (前n帧的平均)
             self.processing_progress_signal.emit(10, 100)
-            bg_frame = np.mean(data_origin[:bg_num], axis=0)
+            bg_frame = np.median(data_origin[:bg_num], axis=0)
             self.processing_progress_signal.emit(20, 100)
 
             # 2. 所有帧减去背景
+
+            # processed_data = (data_origin - bg_frame[np.newaxis, :, :]) / bg_frame[np.newaxis, :, :]
+            # self.processing_progress_signal.emit(50, 100)
             processed_data = np.empty_like(data_origin)
             for i in range(total_frames):
                 if self.abortion:
                     return None
 
                 # 减去背景帧
-                processed_data[i] = data_origin[i] - bg_frame
+                processed_data[i] = (data_origin[i] - bg_frame ) / bg_frame
 
                 # 每隔10%的进度更新一次
                 if i % max(1, total_frames // 10) == 0:
                     progress_value = 20 + int(60 * i / total_frames)
                     self.processing_progress_signal.emit(progress_value, 100)
 
-            # 3. 可选：展开为二维数组
-            self.processing_progress_signal.emit(85, 100)
+            # 3. 展开为二维数组
+            self.processing_progress_signal.emit(80, 100)
             if unfold:
                 T, H, W = processed_data.shape
                 unfolded_data = processed_data.reshape((T, H * W)).T
@@ -414,12 +418,13 @@ class MassDataProcessor(QObject):
 
             self.processing_progress_signal.emit(100, 100)
             self.data = data_dict
-            logging.info("预处理结束")
+            logging.info(f"预处理完成，总耗时{timer.elapsed()}ms")
+
 
         except Exception as e:
             logging.error(f"预处理错误: {str(e)}")
 
-    def python_stft(self, target_freq: float, window_size: int, noverlap: int,
+    def python_stft(self, target_freq: float,fs:int, window_size: int, noverlap: int,
                     custom_nfft: int):
         """
         执行逐像素STFT分析
@@ -453,7 +458,7 @@ class MassDataProcessor(QObject):
             mean_signal = np.mean(unfolded_data, axis=0)
             f, t, Zxx = signal.stft(
                 mean_signal,
-                fs=fps,
+                fs=fs,
                 window=signal.windows.hann(window_size),
                 nperseg=window_size,
                 noverlap=noverlap,
@@ -484,7 +489,7 @@ class MassDataProcessor(QObject):
                 # 计算当前像素的STFT
                 _, _, Zxx = signal.stft(
                     pixel_signal,
-                    fs=fps,
+                    fs=fs,
                     window=signal.windows.hann(window_size),
                     nperseg=window_size,
                     noverlap=noverlap,

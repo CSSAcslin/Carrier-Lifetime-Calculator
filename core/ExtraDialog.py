@@ -453,6 +453,10 @@ class STFTComputePop(QDialog):
         self.target_freq_input.setValue(30.0)
         self.target_freq_input.setSuffix(" Hz")
 
+        self.fs_input = QSpinBox()
+        self.fs_input.setRange(100,9999)
+        self.fs_input.setValue(300)
+
         self.window_size_input = QSpinBox()
         self.window_size_input.setRange(16, 2048)
         self.window_size_input.setValue(128)
@@ -466,6 +470,7 @@ class STFTComputePop(QDialog):
         self.custom_nfft_input.setValue(256)
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
+        layout.addRow(QLabel("采样频率"),self.fs_input)
         layout.addRow(QLabel("窗口大小"),self.window_size_input)
         layout.addRow(QLabel("窗口重叠"),self.noverlap_input)
         layout.addRow(QLabel("变换长度"),self.custom_nfft_input)
@@ -478,6 +483,6 @@ class STFTComputePop(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.apply_btn)
         button_layout.addWidget(self.cancel_btn)
-        layout.setLayout(4,QFormLayout.FieldRole,button_layout)
+        layout.setLayout(5,QFormLayout.FieldRole,button_layout)
 
         self.setLayout(layout)
