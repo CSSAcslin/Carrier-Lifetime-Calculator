@@ -65,7 +65,7 @@ class ResultDisplayWidget(QTabWidget):
             'roi': 1,  # ROI曲线
             'diff': 1,  # 扩散系数
             'var': 1,  # 方差演化
-            'stft_avg': 1, # 信号评估
+            'quality': 1, # 信号评估
             'series': 1 # EM信号
         }
 
@@ -454,13 +454,13 @@ class ResultDisplayWidget(QTabWidget):
         })
         self.store_tab_data(tab, self.current_mode, dif_result=self.dif_result)
 
-    def plot_stft_avg(self, f, t, Zxx,target_freq):
+    def quality_avg(self, f, t, Zxx, target_freq):
         """绘制平均信号STFT结果（信号质量评估）"""
         # 提取目标频率附近的区域
         freq_range = [target_freq - 1, target_freq + 1]
 
-        self.current_mode = "stft_avg"
-        figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'stft')
+        self.current_mode = "quality"
+        figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'EM')
 
         ax = figure.add_subplot(111)
 

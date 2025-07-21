@@ -33,6 +33,8 @@ class MainWindow(QMainWindow):
     load_tif_EM_signal = pyqtSignal(str)
     pre_process_signal = pyqtSignal(dict,int,bool)
     stft_python_signal = pyqtSignal(float, int, int, int, int)
+    cwt_quality_signal = pyqtSignal(float, int, int, str)
+    cwt_python_signal = pyqtSignal(float, int, int, str)
 
     def __init__(self):
         super().__init__()
@@ -77,7 +79,7 @@ class MainWindow(QMainWindow):
         self.signal_connect()
 
     def init_ui(self):
-        self.setWindowTitle("载流子寿命分析工具")
+        self.setWindowTitle("成像数据处理工具箱")
         self.setGeometry(100, 50, 1600, 850)
 
         # 主部件和布局
@@ -236,12 +238,12 @@ class MainWindow(QMainWindow):
         self.time_step_input.setDecimals(3)
         time_step_layout.addWidget(self.time_step_input)
         self.time_unit_combo = QComboBox()
-        self.time_unit_combo.addItems(["ms", "μs", "ns", "ps", "fs"])
+        self.time_unit_combo.addItems(["ms", "μs", "ns", "ps", "EM_fs"])
         self.time_unit_combo.setCurrentIndex(3)
         time_step_layout.addWidget(self.time_unit_combo)
         time_step_layout.addWidget(QLabel("/帧"))
         left_layout.addLayout(time_step_layout)
-        left_layout.addWidget(QLabel("     (最小分辨率：.001 fs)"))
+        left_layout.addWidget(QLabel("     (最小分辨率：.001 EM_fs)"))
         left_layout.addSpacing(5)
         space_step_layout = QHBoxLayout()
         space_step_layout.addWidget(QLabel("空间单位:"))
@@ -377,7 +379,7 @@ class MainWindow(QMainWindow):
         EM_iSCAT_layout1.addLayout(preprocess_set_layout)
         EM_iSCAT_layout1.addWidget(self.preprocess_data_btn)
         self.EM_mode_combo = QComboBox()
-        self.EM_mode_combo.addItems(["stft未完成"])
+        self.EM_mode_combo.addItems(["stft短时傅里叶","cwt连续小波变换"])
         EM_iSCAT_layout1.addWidget(self.EM_mode_combo)
         self.EM_mode_stack = QStackedWidget()
         # stft 短时傅里叶变换
@@ -386,21 +388,37 @@ class MainWindow(QMainWindow):
         stft_GROUP.setLayout(stft_layout)
         process_set_layout1 = QHBoxLayout()
         process_set_layout1.addWidget(QLabel("处理方法"))
-        self.process_program_select = QComboBox()
-        self.process_program_select.addItems(["python","julia"])
-        process_set_layout1.addWidget(self.process_program_select)
+        self.stft_program_select = QComboBox()
+        self.stft_program_select.addItems(["python", "julia"])
+        process_set_layout1.addWidget(self.stft_program_select)
         process_set_layout2 = QHBoxLayout()
         process_set_layout2.addWidget(QLabel("是否显示结果"))
         self.show_stft_check = QCheckBox()
         self.show_stft_check.setChecked(False)
         process_set_layout2.addWidget(self.show_stft_check)
         self.stft_process_btn = QPushButton("执行短时傅里叶变换")
-        self.roi_signal_btn = QPushButton("选区信号均值变化")
 
         stft_layout.addLayout(process_set_layout1)
         stft_layout.addLayout(process_set_layout2)
         stft_layout.addWidget(self.stft_process_btn)
         self.EM_mode_stack.addWidget(stft_GROUP)
+        # cwt 小波变换
+        cwt_GROUP = self.QGroupBoxCreator(style='inner')
+        cwt_layout = QVBoxLayout()
+        cwt_GROUP.setLayout(cwt_layout)
+        cwt_set_layout1 = QHBoxLayout()
+        cwt_set_layout1.addWidget(QLabel("处理方法"))
+        self.cwt_program_select = QComboBox()
+        self.cwt_program_select.addItems(["python","julia"])
+        cwt_set_layout1.addWidget(self.cwt_program_select)
+        self.cwt_quality_btn = QPushButton("质量检验")
+        self.cwt_process_btn = QPushButton("执行连续小波变换")
+        cwt_layout.addLayout(cwt_set_layout1)
+        cwt_layout.addWidget(self.cwt_quality_btn)
+        cwt_layout.addWidget(self.cwt_process_btn)
+        self.EM_mode_stack.addWidget(cwt_GROUP)
+
+        self.roi_signal_btn = QPushButton("选区信号均值变化")
         EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
         EM_iSCAT_layout1.addWidget(self.roi_signal_btn)
         EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout1)
@@ -659,7 +677,9 @@ class MainWindow(QMainWindow):
         # self.PA_mode_combo.currentIndexChanged.connect(self.PA_mode_stack.setCurrentIndex)
         self.EM_mode_combo.currentIndexChanged.connect(self.EM_mode_stack.setCurrentIndex)
         self.preprocess_data_btn.clicked.connect(self.pre_process_EM)
-        self.stft_process_btn.clicked.connect(self.process_EM)
+        self.stft_process_btn.clicked.connect(self.process_EM_stft)
+        self.cwt_quality_btn.clicked.connect(self.quality_EM_cwt)
+        self.cwt_process_btn.clicked.connect(self.process_EM_cwt)
         self.roi_signal_btn.clicked.connect(self.roi_signal_avg)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
@@ -764,14 +784,18 @@ class MainWindow(QMainWindow):
         self.mass_data_processor = MassDataProcessor()
         self.mass_data_processor.moveToThread(self.avi_thread)
 
-        self.mass_data_processor.mass_finished.connect(self.loaded_avi)
+        self.mass_data_processor.mass_finished.connect(self.loaded_EM)
         self.mass_data_processor.processing_progress_signal.connect(self.update_progress)
-        self.mass_data_processor.avg_stft_result.connect(self.result_display.plot_stft_avg)
-        self.mass_data_processor.stft_completed.connect(self.stft_result)
+        self.mass_data_processor.avg_stft_result.connect(self.result_display.quality_avg)
+        self.mass_data_processor.stft_completed.connect(self.EM_result)
+        self.mass_data_processor.cwt_completed.connect(self.EM_result)
+        self.mass_data_processor.avg_cwt_result.connect(self.result_display.quality_avg)
         self.load_avi_EM_signal.connect(self.mass_data_processor.load_avi)
-        self.load_tif_EM_signal.connect(self.mass_data_processor.load_tiff) # 未完成
+        self.load_tif_EM_signal.connect(self.mass_data_processor.load_tiff)
         self.pre_process_signal.connect(self.mass_data_processor.pre_process)
         self.stft_python_signal.connect(self.mass_data_processor.python_stft)
+        self.cwt_quality_signal.connect(self.mass_data_processor.quality_cwt)
+        self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
 
     def load_avi(self):
         """加载avi读取线程传递函数"""
@@ -797,7 +821,7 @@ class MainWindow(QMainWindow):
 
         self.load_avi_EM_signal.emit(file_path)
 
-    def loaded_avi(self,result):
+    def loaded_EM(self, result):
         self.data = result
 
         if not self.data:
@@ -823,7 +847,25 @@ class MainWindow(QMainWindow):
 
     def load_tiff_folder_EM(self):
         """加载TIFF文件夹(FS-iSCAT)"""
-        pass
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "选择TIFF图像序列文件夹",
+            ""
+        )
+
+        if not folder_path:
+            self.folder_path_label.setText("未选择文件夹")
+            logging.info("用户取消选择")
+            return
+
+        for f in os.listdir(folder_path):
+            if f.lower().endswith(('.tif', '.tiff')):
+                self.load_tif_EM_signal.emit(folder_path)
+                return
+            else:
+                self.folder_path_label.setText("文件夹中没有TIFF文件")
+                logging.warning("文件夹中没有TIFF文件")
+                return
 
     def make_hover_handler(self):
         args = {'x': None, 'y': None, 't': None, 'value': None}
@@ -1144,14 +1186,14 @@ class MainWindow(QMainWindow):
             return
         self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
 
-    def process_EM(self):
+    def process_EM_stft(self):
         """EM的数据处理"""
-        if self.process_program_select.currentIndex() == 0:
+        if self.stft_program_select.currentIndex() == 0:
             type = "python"
-        if self.process_program_select.currentIndex() == 1:
+        if self.stft_program_select.currentIndex() == 1:
             type = "julia"
         if self.data is None:
-            logging.warning("没有数据可以计算")
+            logging.warning("没有数据可以计算，请先加载数据")
             return
         if "unfolded_data" in self.data:
             dialog = STFTComputePop(self)
@@ -1168,7 +1210,7 @@ class MainWindow(QMainWindow):
             self.update_status("准备就绪", False)
             return
 
-    def stft_result(self, result):
+    def EM_result(self, result):
         """stft结果处理"""
         if self.show_stft_check.isChecked():
             self.data['images'] = (result - np.min(result)) / (np.max(result) - np.min(result))
@@ -1183,33 +1225,69 @@ class MainWindow(QMainWindow):
             self.region_x_input.setMaximum(self.data['images'].shape[1])
             self.region_y_input.setMaximum(self.data['images'].shape[2])
 
-        self.data['stft_result'] = result
+        self.data['EM_result'] = result
+
+    def quality_EM_cwt(self):
+        if self.data is None:
+            logging.warning("没有数据可以计算，请先加载数据")
+            return
+        if "unfolded_data" in self.data:
+            dialog = CWTComputePop(self)
+
+            if dialog.exec_():
+                self.target_freq = dialog.target_freq_input.value()
+                self.EM_fs = dialog.fs_input.value()
+                self.cwt_size = dialog.cwt_size_input.value()
+                self.wavelet = dialog.wavelet.currentText()
+                self.cwt_quality_signal.emit(self.target_freq, self.EM_fs, self.cwt_size, self.wavelet)
+        else:
+            logging.warning("请先对数据进行预处理")
+            self.update_status("准备就绪", False)
+            return
+
+    def process_EM_cwt(self):
+        """小波变换"""
+        if self.data is None:
+            logging.warning("没有数据可以计算，请先加载数据")
+            return
+        if "unfolded_data" in self.data :
+            if hasattr(self, 'wavelet'):
+                pass
+            else:
+                self.quality_EM_cwt()
+            self.update_status("CWT计算ing", True)
+            self.cwt_python_signal.emit(self.target_freq, self.EM_fs, self.cwt_size, self.wavelet)
+        else:
+            logging.warning("请先对数据进行预处理")
+            self.update_status("准备就绪", False)
+            return
 
     def roi_signal_avg(self):
         """计算选区信号平均值并显示"""
         if not hasattr(self,"bool_mask") or self.bool_mask is None:
             QMessageBox.warning(self,"警告","请先绘制ROI")
             return
-        if 'stft_result' not in self.data:
+        if 'EM_result' not in self.data:
             logging.warning("请先处理数据")
 
         mask = self.bool_mask
         if mask.dtype == bool:
-            stft_masked = np.where(mask[np.newaxis,:,:],self.data['stft_result'],0)
+            EM_masked = np.where(mask[np.newaxis,:,:],self.data['EM_result'],0)
 
             total_valid_pixels = np.sum(mask)
             if total_valid_pixels == 0:
                 QMessageBox.warning(self, "蒙版错误", "布尔蒙版中没有True像素")
                 return
             # 计算每个时间点上的平均值
-            average_series = np.sum(stft_masked, axis=(1, 2)) / total_valid_pixels
+            average_series = np.sum(EM_masked, axis=(1, 2)) / total_valid_pixels
         else:
             raise TypeError(f"不支持的蒙版类型: {mask.dtype}")
 
-        time_series = np.arange(stft_masked.shape[0]) * self.data['duration'] / stft_masked.shape[0]
-        self.data['masked_stft'] = stft_masked
+        time_series = np.arange(EM_masked.shape[0]) / self.EM_fs
+        self.data['EM_masked'] = EM_masked
         self.result_display.plot_time_series(time_series , average_series)
 
+    '''其他功能'''
     def is_thread_active(self, thread_name: str) -> bool:
         """检查指定名称的线程是否存在且正在运行"""
         # :param thread_name: 线程对象的变量名（str）
@@ -1315,6 +1393,8 @@ class MainWindow(QMainWindow):
                     pass
                 elif self.result_display.current_mode == 'var':
                     pass
+                elif self.result_display.current_mode == 'series':
+                    pass
             # 保存为CSV或TXT
             if file_path.lower().endswith('.csv'):
                 try:
@@ -1340,7 +1420,13 @@ class MainWindow(QMainWindow):
         # 这里需要实现终止计算的逻辑
         # 可以通过设置标志位或直接终止计算线程
         logging.warning("计算终止请求已接收，正在停止...")
-        self.cal_thread.stop()
+        if hasattr(self, 'cal_thread'):
+            self.cal_thread.stop()
+            self.stop_thread(0)
+        if hasattr(self, 'avi_thread'):
+            self.avi_thread.stop()
+            self.stop_thread(1)
+        return
         # 实际终止逻辑需要根据你的计算实现来添加
 
     def save_config(self):

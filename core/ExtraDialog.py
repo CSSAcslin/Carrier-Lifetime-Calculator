@@ -486,3 +486,50 @@ class STFTComputePop(QDialog):
         layout.setLayout(5,QFormLayout.FieldRole,button_layout)
 
         self.setLayout(layout)
+
+# 计算cwt参数弹窗
+class CWTComputePop(QDialog):
+    def __init__(self,parent = None):
+        super().__init__(parent)
+        self.setWindowTitle("小波变换")
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(200)
+
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QFormLayout()
+
+        self.target_freq_input = QDoubleSpinBox()
+        self.target_freq_input.setRange(0.1, 100)
+        self.target_freq_input.setValue(30.0)
+        self.target_freq_input.setSuffix(" Hz")
+
+        self.fs_input = QSpinBox()
+        self.fs_input.setRange(100,9999)
+        self.fs_input.setValue(360)
+
+        self.cwt_size_input = QSpinBox()
+        self.cwt_size_input.setRange(16, 2048)
+        self.cwt_size_input.setValue(256)
+
+        self.wavelet = QComboBox()
+        self.wavelet.addItems(['morl','cmor3-3','cmor1.5-1.0','cgau8'])
+
+        layout.addRow(QLabel("目标频率"),self.target_freq_input)
+        layout.addRow(QLabel("小波类型"),self.wavelet)
+        layout.addRow(QLabel("采样频率"),self.fs_input)
+        layout.addRow(QLabel("小波尺寸"),self.cwt_size_input)
+
+
+
+        button_layout = QHBoxLayout()
+        self.apply_btn = QPushButton("执行CWT")
+        self.apply_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.apply_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.setLayout(5,QFormLayout.FieldRole,button_layout)
+
+        self.setLayout(layout)

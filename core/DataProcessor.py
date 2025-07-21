@@ -6,6 +6,7 @@ import numpy as np
 import tifffile as tiff
 import sif_parser
 import cv2
+import pywt
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
@@ -280,7 +281,9 @@ class MassDataProcessor(QObject):
     mass_finished = pyqtSignal(dict) # 数据读取
     processing_progress_signal = pyqtSignal(int, int) # 进度槽
     stft_completed = pyqtSignal(np.ndarray)  # 三维STFT结果数组
+    cwt_completed = pyqtSignal(np.ndarray)  # 三维cwt结果数组
     avg_stft_result = pyqtSignal(np.ndarray, np.ndarray, np.ndarray,float)  # 平均信号STFT结果
+    avg_cwt_result = pyqtSignal(np.ndarray, np.ndarray, np.ndarray,float)  # 平均信号cwt结果
 
     def __init__(self):
         super(MassDataProcessor,self).__init__()
@@ -363,7 +366,81 @@ class MassDataProcessor(QObject):
 
     @pyqtSlot(str)
     def load_tiff(self,path):
-        pass
+        try:
+            tiff_files = []
+            for f in os.listdir(path):
+                if f.lower().endswith(('.tif', '.tiff')):
+                    # 提取数字并排序
+                    num_groups = re.findall(r'\d+', f)
+                    last_num = int(num_groups[-1]) if num_groups else 0
+                    tiff_files.append((last_num, f))
+
+            # 按最后一组数字排序
+            tiff_files.sort(key=lambda x: x[0])
+            frame_numbers, file_names = zip(*tiff_files) if tiff_files else ([], [])
+
+            logging.info(f"找到{len(file_names)}个TIFF文件")
+
+            # 检查数字连续性（使用已排序的frame_numbers）
+            unique_nums = sorted(set(frame_numbers))
+            is_continuous = (
+                    len(unique_nums) == len(frame_numbers) and
+                    (unique_nums[-1] - unique_nums[0] + 1) == len(unique_nums)
+            )
+
+            # 读取图像数据
+            frames = []
+            total_files = len(file_names)
+            self.processing_progress_signal.emit(0, total_files)
+
+            for i, filename in enumerate(file_names):
+                if self.abortion:
+                    break
+
+                img_path = os.path.join(path, filename)
+                img = tiff.imread(img_path)
+
+                if img is None:
+                    logging.warning(f"无法读取文件: {filename}")
+                    continue
+
+                frames.append(img)
+                self.processing_progress_signal.emit(i + 1, total_files)
+
+            if not frames:
+                raise ValueError("没有有效图像数据被读取")
+
+            # 转换为numpy数组
+            frames_array = np.stack(frames, axis=0)
+            height, width = frames[0].shape
+
+            # 计算统计信息
+            vmax = np.max(frames_array)
+            vmin = np.min(frames_array)
+            normalized_frames = self.normalize_data(frames_array)
+
+            # 生成时间点
+            if is_continuous:
+                time_points = (np.array(frame_numbers) - frame_numbers[0])
+                logging.info("使用文件名数字作为时间序列")
+            else:
+                time_points = np.arange(len(frames))
+                logging.info("使用默认顺序作为时间序列")
+
+            tiff_data = {
+                'data_origin': frames_array,
+                'images': normalized_frames,
+                'time_points': time_points,
+                'data_type': 'video',
+                'boundary': {'max': vmax, 'min': vmin},
+                'frame_size': (width, height),
+                'original_files': tiff_files
+            } # fps 和 duration 删了，因为无法体现
+            self.mass_finished.emit(tiff_data)
+
+        except Exception as e:
+            logging.error(f"处理TIFF序列时出错: {str(e)}")
+
     @pyqtSlot(dict,int,bool)
     def pre_process(self,data_dict:dict,bg_num = 360,unfold=True):
         """数据预处理，包含背景去除，数组展开"""
@@ -424,6 +501,7 @@ class MassDataProcessor(QObject):
         except Exception as e:
             logging.error(f"预处理错误: {str(e)}")
 
+    @pyqtSlot(float,int,int,int,int)
     def python_stft(self, target_freq: float,fs:int, window_size: int, noverlap: int,
                     custom_nfft: int):
         """
@@ -447,7 +525,7 @@ class MassDataProcessor(QObject):
 
             unfolded_data = self.data['unfolded_data']  # [像素数 x 帧数]
             frame_size = self.data['frame_size']  # (宽度, 高度)
-            fps = self.data['fps']  # 原始帧率
+            # fps = self.data['fps']  # 原始帧率
 
             # 2. 计算采样率和FFT参数
             total_frames = unfolded_data.shape[1]
@@ -517,9 +595,126 @@ class MassDataProcessor(QObject):
         except Exception as e:
             logging.error(f"STFT计算错误: {str(e)}")
 
+    @pyqtSlot(float,int,int,str)
+    def quality_cwt(self, target_freq: float, fs: int, totalscales: int, wavelet: str = 'morl'):
+        """
+        CWT(连续小波变换)分析信号评估
+        参数:
+            target_freq: 目标分析频率(Hz)
+            EM_fs: 采样频率
+            scales: 尺度数组，控制小波变换的频率分辨率
+            wavelet: 使用的小波类型(默认为'morl'墨西哥帽小波)
+        """
+        try:
+            if not self.data:
+                raise ValueError("请先进行预处理")
+            # 1. 检查必要数据存在
+            if 'unfolded_data' not in self.data:
+                raise ValueError("需要先进行unfold预处理")
+
+            timer = QElapsedTimer()
+            timer.start()
+
+            unfolded_data = self.data['unfolded_data']  # [像素数 x 帧数]
+            frame_size = self.data['frame_size']  # (宽度, 高度)
+            # fps = self.data['fps']  # 原始帧率
+            cparam = 2 * pywt.central_frequency(wavelet) * totalscales
+            scales = cparam/np.arange(totalscales,1,-1)
+            # target_freqs = np.linspace(int(target_freq-5), int(target_freq+5), totalscales//4)
+            # scales = pywt.frequency2scale(wavelet, target_freqs * 1.0 / EM_fs)
+            self.processing_progress_signal.emit(20, 100)
+            # 计算参数
+            total_frames = unfolded_data.shape[1]
+            total_pixels = unfolded_data.shape[0]
+            width, height = frame_size
+            self.processing_progress_signal.emit(40, 100)
+            # 计算平均信号的CWT (用于质量评估)
+            mean_signal = np.mean(unfolded_data, axis=0)
+            self.coefficients, self.frequencies = pywt.cwt(mean_signal, scales, wavelet, sampling_period=1.0 / fs)
+            self.processing_progress_signal.emit(70, 100)
+            # 发送平均信号CWT结果
+            self.avg_cwt_result.emit(self.frequencies, np.arange(total_frames) / fs, np.abs(self.coefficients), target_freq)
+            self.processing_progress_signal.emit(100, 100)
+        except Exception as e:
+            logging.error(e)
+
+    @pyqtSlot(float, int, int,str)
+    def python_cwt(self, target_freq: float, fs: int, totalscales: int, wavelet: str = 'morl'):
+        """
+        执行逐像素CWT分析
+        参数:
+        参数:
+            target_freq: 目标分析频率(Hz)
+            EM_fs: 采样频率
+            scales: 尺度数组，控制小波变换的频率分辨率
+            wavelet: 使用的小波类型(默认为'morl'墨西哥帽小波)
+        """
+        try:
+            if not self.data:
+                raise ValueError("请先进行预处理")
+            # 1. 检查必要数据存在
+            if 'unfolded_data' not in self.data:
+                raise ValueError("需要先进行unfold预处理")
+
+            timer = QElapsedTimer()
+            timer.start()
+
+            unfolded_data = self.data['unfolded_data']  # [像素数 x 帧数]
+            frame_size = self.data['frame_size']  # (宽度, 高度)
+            fps = self.data['fps']  # 原始帧率
+            # cparam = 2 * pywt.central_frequency(wavelet) * totalscales
+            # scales = cparam / np.arange(totalscales, 1, -1)
+            target_freqs = np.linspace(target_freq-1, target_freq+1, 10)#totalscales//4
+            scales = pywt.frequency2scale(wavelet, target_freqs * 1.0 / fs)
+            total_frames = unfolded_data.shape[1]
+            total_pixels = unfolded_data.shape[0]
+            self.processing_progress_signal.emit(0, total_pixels)
+            # 初始化结果数组
+            width, height = frame_size
+            cwt_py_out = np.zeros((self.coefficients.shape[1], height, width), dtype=np.float32)
+
+            # 5. 逐像素STFT处理
+            self.processing_progress_signal.emit(1, total_pixels)
+
+            # 找到目标频率最近的索引
+            # target_idx = np.argmin(np.abs(self.frequencies - target_freq))
+            mid_idx = totalscales // 8
+
+            # 对每个像素执行STFT
+            for i in range(total_pixels):
+                if self.abortion:
+                    return
+
+                pixel_signal = unfolded_data[i, :]
+
+                # 计算当前像素的STFT
+                coefficients, _ = pywt.cwt(pixel_signal, scales, wavelet, sampling_period=1.0 / fs)
+
+                # 提取目标频率处（中间32个值）的幅度
+                # aim_coefficients = coefficients[mid_idx-16:mid_idx+16,:]
+                # magnitude_avg = np.mean(np.abs(aim_coefficients),axis = 0)
+                magnitude_avg = np.mean(np.abs(coefficients),axis = 0)
+
+                # 将结果存入对应像素位置
+                y = i // width
+                x = i % width
+                cwt_py_out[:, y, x] = magnitude_avg
+
+                # 每100个像素更新一次进度
+                if i % 100 == 0:
+                    self.processing_progress_signal.emit(i, total_pixels)
+
+            # 发送完整结果
+            self.cwt_completed.emit(cwt_py_out)
+            self.processing_progress_signal.emit(total_pixels, total_pixels)
+            logging.info(f"计算完成，总耗时{timer.elapsed()}ms")
+
+        except Exception as e:
+            logging.error(f"CWT计算错误: {str(e)}")
+
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
 
-    def stop_thread(self):
+    def stop(self):
         """请求中止处理"""
         self.abort = True
