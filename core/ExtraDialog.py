@@ -437,12 +437,12 @@ class DataSavingPop(QDialog):
 
 # 计算stft参数弹窗
 class STFTComputePop(QDialog):
-    def __init__(self,parent = None):
+    def __init__(self,params,case,parent = None):
         super().__init__(parent)
         self.setWindowTitle("短时傅里叶变换")
         self.setMinimumWidth(300)
         self.setMinimumHeight(200)
-
+        self.params = params
         self.init_ui()
 
     def init_ui(self):
@@ -450,24 +450,24 @@ class STFTComputePop(QDialog):
 
         self.target_freq_input = QDoubleSpinBox()
         self.target_freq_input.setRange(0.1, 100)
-        self.target_freq_input.setValue(30.0)
+        self.target_freq_input.setValue(self.params['target_freq'])
         self.target_freq_input.setSuffix(" Hz")
 
         self.fs_input = QSpinBox()
         self.fs_input.setRange(100,9999)
-        self.fs_input.setValue(300)
+        self.fs_input.setValue(self.params['EM_fs'])
 
         self.window_size_input = QSpinBox()
         self.window_size_input.setRange(16, 2048)
-        self.window_size_input.setValue(128)
+        self.window_size_input.setValue(self.params['stft_window_size'])
 
         self.noverlap_input = QSpinBox()
         self.noverlap_input.setRange(0, 1024)
-        self.noverlap_input.setValue(120)
+        self.noverlap_input.setValue(self.params['stft_noverlap'])
 
         self.custom_nfft_input = QSpinBox()
         self.custom_nfft_input.setRange(0, 1024)
-        self.custom_nfft_input.setValue(256)
+        self.custom_nfft_input.setValue(self.params['custom_nfft'])
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
         layout.addRow(QLabel("采样频率"),self.fs_input)
@@ -489,12 +489,13 @@ class STFTComputePop(QDialog):
 
 # 计算cwt参数弹窗
 class CWTComputePop(QDialog):
-    def __init__(self,parent = None):
+    def __init__(self,params,case='quality',parent = None):
         super().__init__(parent)
         self.setWindowTitle("小波变换")
         self.setMinimumWidth(300)
         self.setMinimumHeight(200)
-
+        self.params = params
+        self.case = case
         self.init_ui()
 
     def init_ui(self):
@@ -502,26 +503,32 @@ class CWTComputePop(QDialog):
 
         self.target_freq_input = QDoubleSpinBox()
         self.target_freq_input.setRange(0.1, 100)
-        self.target_freq_input.setValue(30.0)
+        self.target_freq_input.setValue(self.params['target_freq'])
         self.target_freq_input.setSuffix(" Hz")
 
         self.fs_input = QSpinBox()
         self.fs_input.setRange(100,9999)
-        self.fs_input.setValue(360)
+        self.fs_input.setValue(self.params['EM_fs'])
 
         self.cwt_size_input = QSpinBox()
-        self.cwt_size_input.setRange(16, 2048)
-        self.cwt_size_input.setValue(256)
+        self.cwt_size_input.setRange(1, 2048)
+        self.cwt_size_input.setValue(self.params['cwt_total_scales'])
 
         self.wavelet = QComboBox()
         self.wavelet.addItems(['morl','cmor3-3','cmor1.5-1.0','cgau8'])
+        self.wavelet.setCurrentText(self.params['cwt_type'])
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
         layout.addRow(QLabel("小波类型"),self.wavelet)
         layout.addRow(QLabel("采样频率"),self.fs_input)
-        layout.addRow(QLabel("小波尺寸"),self.cwt_size_input)
+        layout.addRow(QLabel("计算尺度"),self.cwt_size_input)
 
-
+        if self.case == 'signal':
+            self.cwt_scale_range = QDoubleSpinBox()
+            self.cwt_scale_range.setRange(0.1, 100)
+            self.cwt_scale_range.setValue(self.params['cwt_scale_range'])
+            self.cwt_scale_range.setSuffix(" Hz")
+            layout.addRow(QLabel("处理跨度"), self.cwt_scale_range)
 
         button_layout = QHBoxLayout()
         self.apply_btn = QPushButton("执行CWT")

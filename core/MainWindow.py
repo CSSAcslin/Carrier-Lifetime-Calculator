@@ -32,9 +32,10 @@ class MainWindow(QMainWindow):
     load_avi_EM_signal = pyqtSignal(str)
     load_tif_EM_signal = pyqtSignal(str)
     pre_process_signal = pyqtSignal(dict,int,bool)
+    stft_quality_signal = pyqtSignal(float, int, int, int, int)
     stft_python_signal = pyqtSignal(float, int, int, int, int)
     cwt_quality_signal = pyqtSignal(float, int, int, str)
-    cwt_python_signal = pyqtSignal(float, int, int, str)
+    cwt_python_signal = pyqtSignal(float, int, int, str, float)
 
     def __init__(self):
         super().__init__()
@@ -73,8 +74,20 @@ class MainWindow(QMainWindow):
             'tau_min': 1e-3,
             'tau_max': 1e3
         }
+        self.EM_params = {
+            'EM_fs': 360,
+            'target_freq' : 30.0,
+            'type': None,
+            'stft_window_size': 128,
+            'stft_noverlap':120,
+            'custom_nfft':256,
+            'cwt_type':'morl',
+            'cwt_total_scales':256, # 频率分辨率
+            'cwt_scale_range':10.0,# 取频率范围（以target frequency为中心）
+        }
         # 状态控制
         self._is_calculating = False
+        self._is_quality = False
         # 信号连接
         self.signal_connect()
 
@@ -238,12 +251,12 @@ class MainWindow(QMainWindow):
         self.time_step_input.setDecimals(3)
         time_step_layout.addWidget(self.time_step_input)
         self.time_unit_combo = QComboBox()
-        self.time_unit_combo.addItems(["ms", "μs", "ns", "ps", "EM_fs"])
+        self.time_unit_combo.addItems(["ms", "μs", "ns", "ps", "fs"])
         self.time_unit_combo.setCurrentIndex(3)
         time_step_layout.addWidget(self.time_unit_combo)
         time_step_layout.addWidget(QLabel("/帧"))
         left_layout.addLayout(time_step_layout)
-        left_layout.addWidget(QLabel("     (最小分辨率：.001 EM_fs)"))
+        left_layout.addWidget(QLabel("     (最小分辨率：.001 fs)"))
         left_layout.addSpacing(5)
         space_step_layout = QHBoxLayout()
         space_step_layout.addWidget(QLabel("空间单位:"))
@@ -396,10 +409,12 @@ class MainWindow(QMainWindow):
         self.show_stft_check = QCheckBox()
         self.show_stft_check.setChecked(False)
         process_set_layout2.addWidget(self.show_stft_check)
+        self.stft_quality_btn = QPushButton("stft质量评价")
         self.stft_process_btn = QPushButton("执行短时傅里叶变换")
 
         stft_layout.addLayout(process_set_layout1)
         stft_layout.addLayout(process_set_layout2)
+        stft_layout.addWidget(self.stft_quality_btn)
         stft_layout.addWidget(self.stft_process_btn)
         self.EM_mode_stack.addWidget(stft_GROUP)
         # cwt 小波变换
@@ -418,13 +433,18 @@ class MainWindow(QMainWindow):
         cwt_layout.addWidget(self.cwt_process_btn)
         self.EM_mode_stack.addWidget(cwt_GROUP)
 
+        EM_iSCAT_layout2 = QHBoxLayout()
         self.roi_signal_btn = QPushButton("选区信号均值变化")
+        self.EM_output_btn = QPushButton("目标频率数据导出")
         EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
-        EM_iSCAT_layout1.addWidget(self.roi_signal_btn)
+        EM_iSCAT_layout2.addWidget(self.roi_signal_btn)
+        EM_iSCAT_layout2.addWidget(self.EM_output_btn)
+        EM_iSCAT_layout1.addLayout(EM_iSCAT_layout2)
         EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout1)
         self.between_stack.addWidget(EM_iSCAT_GROUP)
 
         left_layout1.addWidget(self.between_stack)
+        left_layout1.addStretch(1)
         self.modes_panel.setLayout(left_layout1)
 
         # 添加分析按钮和导出按钮
@@ -678,6 +698,7 @@ class MainWindow(QMainWindow):
         self.EM_mode_combo.currentIndexChanged.connect(self.EM_mode_stack.setCurrentIndex)
         self.preprocess_data_btn.clicked.connect(self.pre_process_EM)
         self.stft_process_btn.clicked.connect(self.process_EM_stft)
+        self.stft_quality_btn.clicked.connect(self.quality_EM_stft)
         self.cwt_quality_btn.clicked.connect(self.quality_EM_cwt)
         self.cwt_process_btn.clicked.connect(self.process_EM_cwt)
         self.roi_signal_btn.clicked.connect(self.roi_signal_avg)
@@ -794,6 +815,7 @@ class MainWindow(QMainWindow):
         self.load_tif_EM_signal.connect(self.mass_data_processor.load_tiff)
         self.pre_process_signal.connect(self.mass_data_processor.pre_process)
         self.stft_python_signal.connect(self.mass_data_processor.python_stft)
+        self.stft_quality_signal.connect(self.mass_data_processor.quality_stft)
         self.cwt_quality_signal.connect(self.mass_data_processor.quality_cwt)
         self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
 
@@ -1186,6 +1208,30 @@ class MainWindow(QMainWindow):
             return
         self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
 
+    def quality_EM_stft(self):
+        if self.data is None:
+            logging.warning("没有数据可以计算，请先加载数据")
+            return
+        if "unfolded_data" in self.data:
+            dialog = STFTComputePop(self.EM_params,'quality')
+            self.update_status("STFT计算ing", True)
+            if dialog.exec_():
+                self.EM_params['target_freq'] = dialog.target_freq_input.value()
+                self.EM_fs = dialog.fs_input.value()
+                self.EM_params['stft_window_size'] = dialog.window_size_input.value()
+                self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
+                self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
+                self.stft_quality_signal.emit(self.EM_params['target_freq'],self.EM_fs,
+                                             self.EM_params['stft_window_size'],
+                                             self.EM_params['stft_noverlap'],
+                                             self.EM_params['custom_nfft'])
+                self.EM_params['EM_fs']=self.EM_fs
+                self._is_quality = True
+        else:
+            logging.warning("请先对数据进行预处理")
+            self.update_status("准备就绪", False)
+            return
+
     def process_EM_stft(self):
         """EM的数据处理"""
         if self.stft_program_select.currentIndex() == 0:
@@ -1196,21 +1242,79 @@ class MainWindow(QMainWindow):
             logging.warning("没有数据可以计算，请先加载数据")
             return
         if "unfolded_data" in self.data:
-            dialog = STFTComputePop(self)
-            self.update_status("STFT计算ing", True)
-            if dialog.exec_():
-                target_freq = dialog.target_freq_input.value()
-                fs = dialog.fs_input.value()
-                window_size = dialog.window_size_input.value()
-                noverlap = dialog.noverlap_input.value()
-                custom_nfft = dialog.custom_nfft_input.value()
-                self.stft_python_signal.emit(target_freq,fs, window_size, noverlap, custom_nfft)
+            if not self._is_quality:
+                dialog = STFTComputePop(self.EM_params,'signal')
+                self.update_status("STFT计算ing", True)
+                if dialog.exec_():
+                    self.EM_params['target_freq'] = dialog.target_freq_input.value()
+                    self.EM_fs = dialog.fs_input.value()
+                    self.EM_params['stft_window_size'] = dialog.window_size_input.value()
+                    self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
+                    self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
+                    self.stft_python_signal.emit(self.EM_params['target_freq'],self.EM_fs,
+                                                 self.EM_params['stft_window_size'],
+                                                 self.EM_params['stft_noverlap'],
+                                                 self.EM_params['custom_nfft'])
+                    self.EM_params['EM_fs']=self.EM_fs
+            else:
+                self.stft_python_signal.emit(self.EM_params['target_freq'], self.EM_fs,
+                                             self.EM_params['stft_window_size'],
+                                             self.EM_params['stft_noverlap'],
+                                             self.EM_params['custom_nfft'])
+                self._is_quality = False
         else:
             logging.warning("请先对数据进行预处理")
             self.update_status("准备就绪", False)
             return
 
-    def EM_result(self, result):
+    def quality_EM_cwt(self):
+        if self.data is None:
+            logging.warning("没有数据可以计算，请先加载数据")
+            return
+        if "unfolded_data" in self.data:
+            dialog = CWTComputePop(self.EM_params,'quality')
+
+            if dialog.exec_():
+                self.EM_params['target_freq'] = dialog.target_freq_input.value()
+                self.EM_fs = dialog.fs_input.value()
+                self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
+                self.EM_params['cwt_type'] = dialog.wavelet.currentText()
+                self.cwt_quality_signal.emit(self.EM_params['target_freq'],
+                                             self.EM_fs,
+                                             self.EM_params['cwt_total_scales'],
+                                             self.EM_params['cwt_type'])
+                self.EM_params['EM_fs'] = self.EM_fs
+        else:
+            logging.warning("请先对数据进行预处理")
+            self.update_status("准备就绪", False)
+            return
+
+    def process_EM_cwt(self):
+        """小波变换"""
+        if self.data is None:
+            logging.warning("没有数据可以计算，请先加载数据")
+            return
+        if "unfolded_data" in self.data :
+            dialog = CWTComputePop(self.EM_params, 'signal')
+            if dialog.exec_():
+                self.update_status("CWT计算ing", True)
+                self.EM_params['EM_fs'] = dialog.fs_input.value()
+                self.EM_fs = self.EM_params['EM_fs']
+                self.EM_params['target_freq'] = dialog.target_freq_input.value()
+                self.EM_params['cwt_type'] = dialog.wavelet.currentText()
+                self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
+                self.EM_params['cwt_scale_range'] = dialog.cwt_scale_range.value()
+                self.cwt_python_signal.emit(self.EM_params['target_freq'],
+                                            self.EM_fs,
+                                            self.EM_params['cwt_total_scales'],
+                                            self.EM_params['cwt_type'],
+                                            self.EM_params['cwt_scale_range'])
+        else:
+            logging.warning("请先对数据进行预处理")
+            self.update_status("准备就绪", False)
+            return
+
+    def EM_result(self, result, times):
         """stft结果处理"""
         if self.show_stft_check.isChecked():
             self.data['images'] = (result - np.min(result)) / (np.max(result) - np.min(result))
@@ -1226,41 +1330,7 @@ class MainWindow(QMainWindow):
             self.region_y_input.setMaximum(self.data['images'].shape[2])
 
         self.data['EM_result'] = result
-
-    def quality_EM_cwt(self):
-        if self.data is None:
-            logging.warning("没有数据可以计算，请先加载数据")
-            return
-        if "unfolded_data" in self.data:
-            dialog = CWTComputePop(self)
-
-            if dialog.exec_():
-                self.target_freq = dialog.target_freq_input.value()
-                self.EM_fs = dialog.fs_input.value()
-                self.cwt_size = dialog.cwt_size_input.value()
-                self.wavelet = dialog.wavelet.currentText()
-                self.cwt_quality_signal.emit(self.target_freq, self.EM_fs, self.cwt_size, self.wavelet)
-        else:
-            logging.warning("请先对数据进行预处理")
-            self.update_status("准备就绪", False)
-            return
-
-    def process_EM_cwt(self):
-        """小波变换"""
-        if self.data is None:
-            logging.warning("没有数据可以计算，请先加载数据")
-            return
-        if "unfolded_data" in self.data :
-            if hasattr(self, 'wavelet'):
-                pass
-            else:
-                self.quality_EM_cwt()
-            self.update_status("CWT计算ing", True)
-            self.cwt_python_signal.emit(self.target_freq, self.EM_fs, self.cwt_size, self.wavelet)
-        else:
-            logging.warning("请先对数据进行预处理")
-            self.update_status("准备就绪", False)
-            return
+        self.data['time_series'] = times
 
     def roi_signal_avg(self):
         """计算选区信号平均值并显示"""
@@ -1283,9 +1353,8 @@ class MainWindow(QMainWindow):
         else:
             raise TypeError(f"不支持的蒙版类型: {mask.dtype}")
 
-        time_series = np.arange(EM_masked.shape[0]) / self.EM_fs
         self.data['EM_masked'] = EM_masked
-        self.result_display.plot_time_series(time_series , average_series)
+        self.result_display.plot_time_series(self.data['time_series'] , average_series)
 
     '''其他功能'''
     def is_thread_active(self, thread_name: str) -> bool:
@@ -1413,6 +1482,19 @@ class MainWindow(QMainWindow):
             logging.info("数据未保存")
             self.update_status("准备就绪", False)
             return
+
+    def export_EM_data(self,result):
+        """时频变换后目标频率下的结果导出"""
+        if 'EM_result' in self.data:
+
+            path,_ = QFileDialog.getExistingDirectory(self,'选择要保存的已有目标文件夹（不支持新建）')
+
+            return
+        else:
+            logging.warning('请先处理数据')
+            return
+
+
 
     '''以下控制台命令更新'''
     def stop_calculation(self):

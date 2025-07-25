@@ -280,8 +280,8 @@ class MassDataProcessor(QObject):
     """大型数据（EM-iSCAT）处理的线程解决"""
     mass_finished = pyqtSignal(dict) # 数据读取
     processing_progress_signal = pyqtSignal(int, int) # 进度槽
-    stft_completed = pyqtSignal(np.ndarray)  # 三维STFT结果数组
-    cwt_completed = pyqtSignal(np.ndarray)  # 三维cwt结果数组
+    stft_completed = pyqtSignal(np.ndarray,np.ndarray)  # 三维STFT结果数组
+    cwt_completed = pyqtSignal(np.ndarray,np.ndarray)  # 三维cwt结果数组
     avg_stft_result = pyqtSignal(np.ndarray, np.ndarray, np.ndarray,float)  # 平均信号STFT结果
     avg_cwt_result = pyqtSignal(np.ndarray, np.ndarray, np.ndarray,float)  # 平均信号cwt结果
 
@@ -502,6 +502,36 @@ class MassDataProcessor(QObject):
             logging.error(f"预处理错误: {str(e)}")
 
     @pyqtSlot(float,int,int,int,int)
+    def quality_stft(self,target_freq: float,fs:int, window_size: int, noverlap: int,
+                    custom_nfft: int):
+        """STFT质量分析"""
+        if not self.data:
+            raise ValueError("请先进行预处理")
+        if 'unfolded_data' not in self.data:
+            raise ValueError("需要先进行unfold预处理")
+        timer = QElapsedTimer()
+        timer.start()
+
+        unfolded_data = self.data['unfolded_data']  # [像素数 x 帧数]
+        frame_size = self.data['frame_size']  # (宽度, 高度)
+
+        mean_signal = np.mean(unfolded_data, axis=0)
+        f, t, Zxx = signal.stft(
+            mean_signal,
+            fs=fs,
+            window=signal.windows.hann(window_size),
+            nperseg=window_size,
+            noverlap=noverlap,
+            nfft=custom_nfft,
+            return_onesided=True
+        )
+        # 发送平均信号STFT结果
+        self.avg_stft_result.emit(f, t, np.abs(Zxx), target_freq)
+        self.out_length = Zxx.shape[1]
+        self.target_idx = np.argmin(np.abs(f - target_freq))
+        self.time_series = t
+
+    @pyqtSlot(float,int,int,int,int)
     def python_stft(self, target_freq: float,fs:int, window_size: int, noverlap: int,
                     custom_nfft: int):
         """
@@ -532,30 +562,30 @@ class MassDataProcessor(QObject):
             total_pixels = unfolded_data.shape[0]
             nfft = custom_nfft
 
-            # 3. 计算平均信号的STFT (用于质量评估)
-            mean_signal = np.mean(unfolded_data, axis=0)
-            f, t, Zxx = signal.stft(
-                mean_signal,
-                fs=fs,
-                window=signal.windows.hann(window_size),
-                nperseg=window_size,
-                noverlap=noverlap,
-                nfft=nfft,
-                return_onesided=True
-            )
-            # 发送平均信号STFT结果
-            self.avg_stft_result.emit(f, t, np.abs(Zxx),target_freq)
+            # # 3. 计算平均信号的STFT (用于质量评估)
+            # mean_signal = np.mean(unfolded_data, axis=0)
+            # f, t, Zxx = signal.stft(
+            #     mean_signal,
+            #     fs=fs,
+            #     window=signal.windows.hann(window_size),
+            #     nperseg=window_size,
+            #     noverlap=noverlap,
+            #     nfft=nfft,
+            #     return_onesided=True
+            # )
+            # # 发送平均信号STFT结果
+            # self.avg_stft_result.emit(f, t, np.abs(Zxx),target_freq)
             self.processing_progress_signal.emit(1, total_pixels)
 
             # 4. 初始化结果数组
             width, height = frame_size
-            stft_py_out = np.zeros((Zxx.shape[1], height, width), dtype=np.float32)
+            stft_py_out = np.zeros((self.out_length, height, width), dtype=np.float32)
 
             # 5. 逐像素STFT处理
             self.processing_progress_signal.emit(0, total_pixels)
 
             # 找到目标频率最近的索引
-            target_idx = np.argmin(np.abs(f - target_freq))
+            # target_idx = np.argmin(np.abs(f - target_freq))
 
             # 对每个像素执行STFT
             for i in range(total_pixels):
@@ -576,7 +606,7 @@ class MassDataProcessor(QObject):
                 )
 
                 # 提取目标频率处的幅度
-                magnitude = np.abs(Zxx[target_idx, :])
+                magnitude = np.abs(Zxx[self.target_idx, :]) * 5
 
                 # 将结果存入对应像素位置
                 y = i // width
@@ -588,7 +618,7 @@ class MassDataProcessor(QObject):
                     self.processing_progress_signal.emit(i, total_pixels)
 
             # 6. 发送完整结果
-            self.stft_completed.emit(stft_py_out)
+            self.stft_completed.emit(stft_py_out,self.time_series)
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             logging.info(f"计算完成，总耗时{timer.elapsed()}ms")
 
@@ -638,8 +668,8 @@ class MassDataProcessor(QObject):
         except Exception as e:
             logging.error(e)
 
-    @pyqtSlot(float, int, int,str)
-    def python_cwt(self, target_freq: float, fs: int, totalscales: int, wavelet: str = 'morl'):
+    @pyqtSlot(float, int, int,str, float)
+    def python_cwt(self, target_freq: float, fs: int, totalscales: int, wavelet: str, cwt_scale_range: float):
         """
         执行逐像素CWT分析
         参数:
@@ -664,7 +694,7 @@ class MassDataProcessor(QObject):
             fps = self.data['fps']  # 原始帧率
             # cparam = 2 * pywt.central_frequency(wavelet) * totalscales
             # scales = cparam / np.arange(totalscales, 1, -1)
-            target_freqs = np.linspace(target_freq-1, target_freq+1, 10)#totalscales//4
+            target_freqs = np.linspace(target_freq-cwt_scale_range//2, target_freq+cwt_scale_range//2, totalscales)#totalscales//4
             scales = pywt.frequency2scale(wavelet, target_freqs * 1.0 / fs)
             total_frames = unfolded_data.shape[1]
             total_pixels = unfolded_data.shape[0]
@@ -705,7 +735,8 @@ class MassDataProcessor(QObject):
                     self.processing_progress_signal.emit(i, total_pixels)
 
             # 发送完整结果
-            self.cwt_completed.emit(cwt_py_out)
+            times = np.arange(cwt_py_out.shape[0]) / fs
+            self.cwt_completed.emit(cwt_py_out,times)
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             logging.info(f"计算完成，总耗时{timer.elapsed()}ms")
 
@@ -714,6 +745,25 @@ class MassDataProcessor(QObject):
 
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
+
+    def export_EM_data(self,result,output_dir,prefix):
+        """时频变换后目标频率下的结果导出"""
+        num_frames = result.shape[0]
+        num_digits = len(str(num_frames - 1))
+        self.processing_progress_signal.emit(0, num_frames)
+        created_files = []
+
+        # 遍历所有帧
+        for frame_idx in range(num_frames):
+            # 生成带序号的完整文件路径
+            frame_name = f"{prefix}-{frame_idx:0{num_digits}d}.tif"
+            output_path = os.path.join(output_dir, frame_name)
+
+            # 保存单帧TIFF
+            tiff.imwrite(output_path, result[frame_idx],photometric='minisblack')
+            created_files.append(output_path)
+        return
+
 
     def stop(self):
         """请求中止处理"""
