@@ -746,22 +746,25 @@ class MassDataProcessor(QObject):
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
 
+    @pyqtSlot(np.ndarray,str,str)
     def export_EM_data(self,result,output_dir,prefix):
         """时频变换后目标频率下的结果导出"""
         num_frames = result.shape[0]
-        num_digits = len(str(num_frames - 1))
+        num_digits = len(str(num_frames))
         self.processing_progress_signal.emit(0, num_frames)
         created_files = []
 
         # 遍历所有帧
         for frame_idx in range(num_frames):
             # 生成带序号的完整文件路径
-            frame_name = f"{prefix}-{frame_idx:0{num_digits}d}.tif"
+            frame_name = f"{prefix}-{frame_idx:0{num_digits+1}d}.tif"
             output_path = os.path.join(output_dir, frame_name)
 
             # 保存单帧TIFF
             tiff.imwrite(output_path, result[frame_idx],photometric='minisblack')
             created_files.append(output_path)
+            self.processing_progress_signal.emit(frame_idx+1, num_frames)
+        logging.info(f'完成导出，目标文件夹{output_dir},总数{num_frames}张')
         return
 
 

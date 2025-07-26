@@ -3,10 +3,11 @@ from cProfile import label
 from symtable import Class
 from typing import List
 
-from PyQt5.QtGui import QColor, QIntValidator
+from PyQt5.QtGui import QColor, QIntValidator, QFont
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QRadioButton, QSpinBox, QLineEdit, QPushButton,
-                             QLabel, QMessageBox, QFormLayout, QDoubleSpinBox, QColorDialog, QComboBox, QCheckBox)
+                             QLabel, QMessageBox, QFormLayout, QDoubleSpinBox, QColorDialog, QComboBox, QCheckBox,
+                             QFileDialog)
 from PyQt5.QtCore import Qt
 
 # 坏帧处理对话框
@@ -540,3 +541,143 @@ class CWTComputePop(QDialog):
         layout.setLayout(5,QFormLayout.FieldRole,button_layout)
 
         self.setLayout(layout)
+
+# EM时频变换数据导出
+class MassDataSavingPop(QDialog):
+    def __init__(self, parent=None, datatypes=None):
+        super().__init__(parent)
+        self.directory = None
+        self.setWindowTitle("数据导出")
+        self.setMinimumWidth(400)  # 加宽以适应新控件
+        self.setMinimumHeight(450)
+        self.datatypes = datatypes if datatypes else []
+
+        # 创建字体对象
+        font = QFont("Segoe UI", 10)  # 使用更现代化的字体
+        self.setFont(font)
+
+        self.init_ui()
+        self.setStyleSheet(self.style_sheet())  # 设置样式表
+
+    def style_sheet(self):
+        """返回美化界面的样式表"""
+        return """
+            QDialog {
+                background-color: #f8f9fa;
+                border-radius: 8px;
+            }
+            QLabel {
+                color: #495057;
+                font-weight: 500;
+            }
+            QLineEdit, QComboBox {
+                background-color: white;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 5px;
+                min-height: 20px;
+            }
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: 250;
+                min-width: 40px;
+            }
+            QPushButton#cancel {
+                background-color: #6c757d;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton#cancel:hover {
+                background-color: #5a6268;
+            }
+        """
+
+    def init_ui(self):
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+
+        # 1. 路径选择组件
+        path_layout = QVBoxLayout()
+        path_label = QLabel("保存路径:")
+        path_label.setMinimumHeight(20)
+        self.path_edit = QLineEdit()
+        self.path_edit.setMinimumHeight(35)
+        self.path_edit.setPlaceholderText("选择或输入文件保存路径")
+
+        browse_btn = QPushButton("浏览文件夹")
+        browse_btn.clicked.connect(self.browse_directory)
+        browse_btn.setMinimumHeight(35)
+
+        path_layout.addWidget(path_label)
+        path_layout.addWidget(self.path_edit)
+        path_layout.addWidget(browse_btn)
+
+        # 2. 文本输入框
+        text_layout = QVBoxLayout()
+        text_label = QLabel("文件名称:")
+        self.text_edit = QLineEdit()
+        self.text_edit.setMinimumHeight(35)
+        self.text_edit.setPlaceholderText("请输入文件名（前缀）")
+        text_layout.addWidget(text_label)
+        text_layout.addWidget(self.text_edit)
+
+        # 3. 动态数据类型选择器
+        type_layout = QVBoxLayout()
+        type_label = QLabel("数据类型:")
+        self.type_combo = QComboBox()
+        self.type_combo.setMinimumHeight(35)
+        self.update_datatype(self.datatypes)  # 初始化下拉菜单
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(self.type_combo)
+
+        # 将三个部分添加到主布局
+        main_layout.addLayout(type_layout)
+        main_layout.addLayout(path_layout)
+        main_layout.addLayout(text_layout)
+
+        # 4. 确认/取消按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setObjectName("cancel")
+        cancel_btn.clicked.connect(self.reject)
+        confirm_btn = QPushButton("确认导出")
+        confirm_btn.clicked.connect(self.accept)
+
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(confirm_btn)
+
+        main_layout.addLayout(btn_layout)
+        self.setLayout(main_layout)
+
+    def update_datatype(self, datatypes):
+        """动态更新数据类型下拉菜单"""
+        self.type_combo.clear()
+        if datatypes:
+            self.type_combo.addItems(datatypes)
+        else:
+            self.type_combo.addItem("无可用格式")
+            self.type_combo.setEnabled(False)
+
+    def browse_directory(self):
+        """打开文件夹选择对话框"""
+        self.directory = QFileDialog.getExistingDirectory(
+            self,
+            "选择保存文件夹",
+            options=QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        if self.directory:
+            self.path_edit.setText(self.directory)
+
+    def get_values(self):
+        """获取用户输入的值"""
+        return {
+            'path': self.path_edit.text().strip(),
+            'filename': self.text_edit.text().strip(),
+            'filetype': self.type_combo.currentText()
+        }

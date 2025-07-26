@@ -26,9 +26,11 @@ import resources_rc
 class MainWindow(QMainWindow):
     """主窗口"""
     # 线程激活信号
+    # cal
     start_reg_cal_signal = pyqtSignal(dict, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(dict, float, str)
     start_dif_cal_signal = pyqtSignal(dict, float, float)
+    # mass
     load_avi_EM_signal = pyqtSignal(str)
     load_tif_EM_signal = pyqtSignal(str)
     pre_process_signal = pyqtSignal(dict,int,bool)
@@ -36,6 +38,7 @@ class MainWindow(QMainWindow):
     stft_python_signal = pyqtSignal(float, int, int, int, int)
     cwt_quality_signal = pyqtSignal(float, int, int, str)
     cwt_python_signal = pyqtSignal(float, int, int, str, float)
+    mass_export_signal = pyqtSignal(np.ndarray,str,str)
 
     def __init__(self):
         super().__init__()
@@ -434,17 +437,17 @@ class MainWindow(QMainWindow):
         self.EM_mode_stack.addWidget(cwt_GROUP)
 
         EM_iSCAT_layout2 = QHBoxLayout()
+        self.EM_output_btn = QPushButton("时频变换结果导出")
         self.roi_signal_btn = QPushButton("选区信号均值变化")
-        self.EM_output_btn = QPushButton("目标频率数据导出")
         EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
-        EM_iSCAT_layout2.addWidget(self.roi_signal_btn)
         EM_iSCAT_layout2.addWidget(self.EM_output_btn)
+        EM_iSCAT_layout2.addWidget(self.roi_signal_btn)
         EM_iSCAT_layout1.addLayout(EM_iSCAT_layout2)
         EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout1)
         self.between_stack.addWidget(EM_iSCAT_GROUP)
 
         left_layout1.addWidget(self.between_stack)
-        left_layout1.addStretch(1)
+        # left_layout1.addStretch(1)
         self.modes_panel.setLayout(left_layout1)
 
         # 添加分析按钮和导出按钮
@@ -456,7 +459,7 @@ class MainWindow(QMainWindow):
 
         self.left_panel_layout.addWidget(self.data_import)
         self.left_panel_layout.addWidget(self.parameter_panel)
-        self.left_panel_layout.addWidget(self.modes_panel)
+        self.left_panel_layout.addWidget(self.modes_panel, stretch=1)
         self.left_panel_layout.addSpacing(15)
         self.left_panel_layout.addLayout(data_save_layout)
         self.left_panel.setLayout(self.left_panel_layout)
@@ -701,6 +704,7 @@ class MainWindow(QMainWindow):
         self.stft_quality_btn.clicked.connect(self.quality_EM_stft)
         self.cwt_quality_btn.clicked.connect(self.quality_EM_cwt)
         self.cwt_process_btn.clicked.connect(self.process_EM_cwt)
+        self.EM_output_btn.clicked.connect(self.export_EM_data)
         self.roi_signal_btn.clicked.connect(self.roi_signal_avg)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
@@ -818,6 +822,7 @@ class MainWindow(QMainWindow):
         self.stft_quality_signal.connect(self.mass_data_processor.quality_stft)
         self.cwt_quality_signal.connect(self.mass_data_processor.quality_cwt)
         self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
+        self.mass_export_signal.connect(self.mass_data_processor.export_EM_data)
 
     def load_avi(self):
         """加载avi读取线程传递函数"""
@@ -1204,7 +1209,10 @@ class MainWindow(QMainWindow):
     def pre_process_EM(self):
         """EM的数据预处理"""
         if self.data is None:
-            logging.error("请先加载数据")
+            logging.warning("请先加载数据")
+            return
+        if 'data_origin' not in self.data:
+            logging.error("数据加载有误，请重新加载数据")
             return
         self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
 
@@ -1485,13 +1493,19 @@ class MainWindow(QMainWindow):
 
     def export_EM_data(self,result):
         """时频变换后目标频率下的结果导出"""
-        if 'EM_result' in self.data:
+        if self.data is not None:
+            if 'EM_result' in self.data:
+                dialog = MassDataSavingPop()
+                if dialog.exec_():
+                    directory = dialog.directory
+                    prefix = dialog.text_edit.text().strip()
+                    self.mass_export_signal.emit(self.data['EM_result'],directory,prefix)
 
-            path,_ = QFileDialog.getExistingDirectory(self,'选择要保存的已有目标文件夹（不支持新建）')
-
-            return
+                return
+            else:
+                QMessageBox.warning(self,'提示','请先变换处理数据')
         else:
-            logging.warning('请先处理数据')
+            logging.warning('请先加载并处理数据')
             return
 
 
@@ -1503,10 +1517,10 @@ class MainWindow(QMainWindow):
         # 可以通过设置标志位或直接终止计算线程
         logging.warning("计算终止请求已接收，正在停止...")
         if hasattr(self, 'cal_thread'):
-            self.cal_thread.stop()
+            # self.cal_thread.stop()
             self.stop_thread(0)
         if hasattr(self, 'avi_thread'):
-            self.avi_thread.stop()
+            # self.avi_thread.stop()
             self.stop_thread(1)
         return
         # 实际终止逻辑需要根据你的计算实现来添加
