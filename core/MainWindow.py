@@ -659,10 +659,10 @@ class MainWindow(QMainWindow):
         """记录程序启动消息"""
         startup_msg = f"""\n
 ============================================
-载流子寿命分析工具启动
+成像数据处理工具箱启动
 启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 日志位置: {self.log_file}
-程序版本: 1.8.0
+程序版本: 1.9.6
 ============================================
         """
         logging.info(startup_msg.strip())
