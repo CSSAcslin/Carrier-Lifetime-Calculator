@@ -95,7 +95,7 @@ class MainWindow(QMainWindow):
         self.signal_connect()
 
     def init_ui(self):
-        self.setWindowTitle("成像数据处理工具箱")
+        self.setWindowTitle("成像数据分析工具箱")
         self.setGeometry(100, 50, 1600, 850)
 
         # 主部件和布局
@@ -659,7 +659,7 @@ class MainWindow(QMainWindow):
         """记录程序启动消息"""
         startup_msg = f"""\n
 ============================================
-成像数据处理工具箱启动
+成像数据分析工具箱启动
 启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 日志位置: {self.log_file}
 程序版本: 1.9.6

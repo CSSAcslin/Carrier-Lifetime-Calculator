@@ -549,6 +549,8 @@ class MassDataProcessor(QObject):
             # 1. 检查必要数据存在
             if 'unfolded_data' not in self.data:
                 raise ValueError("需要先进行unfold预处理")
+            if not hasattr(self,'out_length'):
+                raise ValueError("请先进行质量评估")
 
             timer = QElapsedTimer()
             timer.start()
