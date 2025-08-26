@@ -34,19 +34,14 @@ class MainWindow(QMainWindow):
     load_avi_EM_signal = pyqtSignal(str)
     load_tif_EM_signal = pyqtSignal(str)
     pre_process_signal = pyqtSignal(dict,int,bool)
-    stft_quality_signal = pyqtSignal(float, int, int, int, int)
-    stft_python_signal = pyqtSignal(float, int, int, int, int)
+    stft_quality_signal = pyqtSignal(float, int, int, int, int, str)
+    stft_python_signal = pyqtSignal(float, int, int, int, int, str)
     cwt_quality_signal = pyqtSignal(float, int, int, str)
     cwt_python_signal = pyqtSignal(float, int, int, str, float)
     mass_export_signal = pyqtSignal(np.ndarray,str,str)
 
     def __init__(self):
         super().__init__()
-        self.init_ui()
-        self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carrier_lifetime.log")
-        self.setup_menus()
-        self.setup_logging()
-        self.log_startup_message()
 
         # 参数初始化
         self.data = None
@@ -56,6 +51,12 @@ class MainWindow(QMainWindow):
         self.bool_mask = None
         self.idx = None
         self.vector_array = None
+        self.main_params = {
+            'time_step': 1.000,
+            'space_step': 1.000,
+            'region_size': 5,
+            'bg_nums': 360
+        }
         self.plot_params = {
             'current_mode': 'heatmap',  # 'heatmap' 或 'curve'
             'line_style': '--',
@@ -66,7 +67,7 @@ class MainWindow(QMainWindow):
             'show_grid': False,
             'heatmap_cmap': 'jet',
             'contour_levels': 10,
-            'set_axis':True,
+            'set_axis': True,
             '_from_start_cal': False
         }
         self.cal_set_params = {
@@ -79,15 +80,25 @@ class MainWindow(QMainWindow):
         }
         self.EM_params = {
             'EM_fs': 360,
-            'target_freq' : 30.0,
+            'target_freq': 30.0,
             'type': None,
             'stft_window_size': 128,
-            'stft_noverlap':120,
-            'custom_nfft':256,
-            'cwt_type':'morl',
-            'cwt_total_scales':256, # 频率分辨率
-            'cwt_scale_range':10.0,# 取频率范围（以target frequency为中心）
+            'stft_noverlap': 120,
+            'stft_window_type': 'hann',
+            'custom_nfft': 256,
+            'cwt_type': 'morl',
+            'cwt_total_scales': 256,  # 频率分辨率
+            'cwt_scale_range': 10.0,  # 取频率范围（以target frequency为中心）
         }
+
+        # 界面加载
+        self.init_ui()
+        self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carrier_lifetime.log")
+        self.setup_menus()
+        self.setup_logging()
+        self.log_startup_message()
+
+
         # 状态控制
         self._is_calculating = False
         self._is_quality = False
@@ -233,7 +244,7 @@ class MainWindow(QMainWindow):
         self.folder_path_label = QLabel("未选择文件夹")
         self.folder_path_label.setMaximumWidth(300)
         self.folder_path_label.setWordWrap(True)
-        self.folder_path_label.setStyleSheet("font-size: 14px;")  # 后续还要改
+        # self.folder_path_label.setStyleSheet("font-size: 14px;")  # 后续还要改
 
         left_layout0.addWidget(self.funtion_stack)
         left_layout0.addSpacing(3)
@@ -250,7 +261,7 @@ class MainWindow(QMainWindow):
         self.time_step_input = QDoubleSpinBox()
         self.time_step_input.setMinimum(0.001)
         self.time_step_input.setMaximum(10000)
-        self.time_step_input.setValue(1.0)
+        self.time_step_input.setValue(self.main_params['time_step'])
         self.time_step_input.setDecimals(3)
         time_step_layout.addWidget(self.time_step_input)
         self.time_unit_combo = QComboBox()
@@ -265,7 +276,7 @@ class MainWindow(QMainWindow):
         space_step_layout.addWidget(QLabel("空间单位:"))
         self.space_step_input = QDoubleSpinBox()
         self.space_step_input.setMinimum(0.001)
-        self.space_step_input.setValue(1.0)
+        self.space_step_input.setValue(self.main_params['space_step'])
         self.space_step_input.setDecimals(3)
         space_step_layout.addWidget(self.space_step_input)
         self.space_unit_combo = QComboBox()
@@ -322,7 +333,7 @@ class MainWindow(QMainWindow):
         self.region_size_input = QSpinBox()
         self.region_size_input.setMinimum(1)
         self.region_size_input.setMaximum(50)
-        self.region_size_input.setValue(5)
+        self.region_size_input.setValue(self.main_params['region_size'])
         self.analyze_region_btn = QPushButton("分析选定区域")
             # 区域坐标输入
         self.region_x_input = QSpinBox()
@@ -389,13 +400,21 @@ class MainWindow(QMainWindow):
         self.bg_nums_input = QSpinBox()
         self.bg_nums_input.setMinimum(1)
         self.bg_nums_input.setMaximum(9999)
-        self.bg_nums_input.setValue(360)
+        self.bg_nums_input.setValue(self.main_params['bg_nums'])
         preprocess_set_layout.addWidget(self.bg_nums_input)
         self.preprocess_data_btn = QPushButton("数据预处理")
+        preprocess_set_layout2 = QHBoxLayout()
+        preprocess_set_layout2.addWidget(QLabel("是否显示结果"))
+        self.show_stft_check = QCheckBox()
+        self.show_stft_check.setChecked(False)
+        preprocess_set_layout2.addWidget(self.show_stft_check,alignment=Qt.AlignRight)
         EM_iSCAT_layout1.addLayout(preprocess_set_layout)
         EM_iSCAT_layout1.addWidget(self.preprocess_data_btn)
+        EM_iSCAT_layout1.addSpacing(4)
+        EM_iSCAT_layout1.addLayout(preprocess_set_layout2)
+        EM_iSCAT_layout1.addSpacing(4)
         self.EM_mode_combo = QComboBox()
-        self.EM_mode_combo.addItems(["stft短时傅里叶","cwt连续小波变换"])
+        self.EM_mode_combo.addItems(["stft短时傅里叶","cwt连续小波变换","WVD维格纳-维尔分布（test)","SPWVD(test)"])
         EM_iSCAT_layout1.addWidget(self.EM_mode_combo)
         self.EM_mode_stack = QStackedWidget()
         # stft 短时傅里叶变换
@@ -407,14 +426,13 @@ class MainWindow(QMainWindow):
         self.stft_program_select = QComboBox()
         self.stft_program_select.addItems(["python", "julia"])
         process_set_layout1.addWidget(self.stft_program_select)
+        self.stft_window_select = QComboBox()
+        self.stft_window_select.addItems(["汉宁窗(hann)", "汉明窗(hanming)","gabor变换(gaussian)","矩形窗"])
         process_set_layout2 = QHBoxLayout()
-        process_set_layout2.addWidget(QLabel("是否显示结果"))
-        self.show_stft_check = QCheckBox()
-        self.show_stft_check.setChecked(False)
-        process_set_layout2.addWidget(self.show_stft_check)
+        process_set_layout2.addWidget(QLabel("窗选择"))
+        process_set_layout2.addWidget(self.stft_window_select)
         self.stft_quality_btn = QPushButton("stft质量评价")
         self.stft_process_btn = QPushButton("执行短时傅里叶变换")
-
         stft_layout.addLayout(process_set_layout1)
         stft_layout.addLayout(process_set_layout2)
         stft_layout.addWidget(self.stft_quality_btn)
@@ -435,6 +453,29 @@ class MainWindow(QMainWindow):
         cwt_layout.addWidget(self.cwt_quality_btn)
         cwt_layout.addWidget(self.cwt_process_btn)
         self.EM_mode_stack.addWidget(cwt_GROUP)
+        # WVD 维格纳-维尔分布
+        wvd_GROUP = self.QGroupBoxCreator(style='inner')
+        wvd_layout = QVBoxLayout()
+        wvd_GROUP.setLayout(wvd_layout)
+        wvd_set_layout1 = QHBoxLayout()
+        self.wvd_quality_btn = QPushButton("质量检验")
+        self.wvd_process_btn = QPushButton("执行WVD 不可用")
+        wvd_layout.addLayout(wvd_set_layout1)
+        wvd_layout.addWidget(self.wvd_quality_btn)
+        wvd_layout.addWidget(self.wvd_process_btn)
+        self.EM_mode_stack.addWidget(wvd_GROUP)
+
+        # SPWVD 维格纳-维尔分布
+        spwvd_GROUP = self.QGroupBoxCreator(style='inner')
+        spwvd_layout = QVBoxLayout()
+        spwvd_GROUP.setLayout(spwvd_layout)
+        spwvd_set_layout1 = QHBoxLayout()
+        self.spwvd_quality_btn = QPushButton("质量检验")
+        self.spwvd_process_btn = QPushButton("执行spwvd 不可用")
+        spwvd_layout.addLayout(spwvd_set_layout1)
+        spwvd_layout.addWidget(self.spwvd_quality_btn)
+        spwvd_layout.addWidget(self.spwvd_process_btn)
+        self.EM_mode_stack.addWidget(spwvd_GROUP)
 
         EM_iSCAT_layout2 = QHBoxLayout()
         self.EM_output_btn = QPushButton("时频变换结果导出")
@@ -1221,6 +1262,9 @@ class MainWindow(QMainWindow):
             logging.warning("没有数据可以计算，请先加载数据")
             return
         if "unfolded_data" in self.data:
+            # 窗函数选择转义
+            window_dict = ['hann', 'hamming', 'gabor', 'boxcar']
+            self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
             dialog = STFTComputePop(self.EM_params,'quality')
             self.update_status("STFT计算ing", True)
             if dialog.exec_():
@@ -1232,7 +1276,8 @@ class MainWindow(QMainWindow):
                 self.stft_quality_signal.emit(self.EM_params['target_freq'],self.EM_fs,
                                              self.EM_params['stft_window_size'],
                                              self.EM_params['stft_noverlap'],
-                                             self.EM_params['custom_nfft'])
+                                             self.EM_params['custom_nfft'],
+                                             self.EM_params['stft_window_type'])
                 self.EM_params['EM_fs']=self.EM_fs
                 self._is_quality = True
         else:
@@ -1250,7 +1295,10 @@ class MainWindow(QMainWindow):
             logging.warning("没有数据可以计算，请先加载数据")
             return
         if "unfolded_data" in self.data:
-            if not self._is_quality:
+            # 窗函数选择转义
+            window_dict = ['hann','hamming','gabor','boxcar']
+            self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
+            if not self._is_quality: # 未质量评价
                 dialog = STFTComputePop(self.EM_params,'signal')
                 self.update_status("STFT计算ing", True)
                 if dialog.exec_():
@@ -1262,13 +1310,15 @@ class MainWindow(QMainWindow):
                     self.stft_python_signal.emit(self.EM_params['target_freq'],self.EM_fs,
                                                  self.EM_params['stft_window_size'],
                                                  self.EM_params['stft_noverlap'],
-                                                 self.EM_params['custom_nfft'])
+                                                 self.EM_params['custom_nfft'],
+                                                 self.EM_params['stft_window_type'])
                     self.EM_params['EM_fs']=self.EM_fs
             else:
                 self.stft_python_signal.emit(self.EM_params['target_freq'], self.EM_fs,
                                              self.EM_params['stft_window_size'],
                                              self.EM_params['stft_noverlap'],
-                                             self.EM_params['custom_nfft'])
+                                             self.EM_params['custom_nfft'],
+                                             self.EM_params['stft_window_type'])
                 self._is_quality = False
         else:
             logging.warning("请先对数据进行预处理")

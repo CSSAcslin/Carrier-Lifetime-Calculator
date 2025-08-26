@@ -501,9 +501,9 @@ class MassDataProcessor(QObject):
         except Exception as e:
             logging.error(f"预处理错误: {str(e)}")
 
-    @pyqtSlot(float,int,int,int,int)
+    @pyqtSlot(float,int,int,int,int,str)
     def quality_stft(self,target_freq: float,fs:int, window_size: int, noverlap: int,
-                    custom_nfft: int):
+                    custom_nfft: int, window_type: str):
         """STFT质量分析"""
         if not self.data:
             raise ValueError("请先进行预处理")
@@ -515,11 +515,23 @@ class MassDataProcessor(QObject):
         unfolded_data = self.data['unfolded_data']  # [像素数 x 帧数]
         frame_size = self.data['frame_size']  # (宽度, 高度)
 
+        # 窗函数的选择和生成
+        if window_type == 'hann':
+            window = signal.windows.hann(window_size)
+        elif window_type == 'hamming':
+            window = signal.windows.hamming(window_size)
+        elif window_type == 'gabor':
+            window = signal.windows.gaussian(window_size,std =window_size/8,sym=True)
+        elif window_type == 'boxcar':
+            window = signal.windows.boxcar(window_size)
+        else:
+            return logging.error('impossible fault')
+
         mean_signal = np.mean(unfolded_data, axis=0)
         f, t, Zxx = signal.stft(
             mean_signal,
             fs=fs,
-            window=signal.windows.hann(window_size),
+            window=window,
             nperseg=window_size,
             noverlap=noverlap,
             nfft=custom_nfft,
@@ -531,9 +543,9 @@ class MassDataProcessor(QObject):
         self.target_idx = np.argmin(np.abs(f - target_freq))
         self.time_series = t
 
-    @pyqtSlot(float,int,int,int,int)
+    @pyqtSlot(float,int,int,int,int,str)
     def python_stft(self, target_freq: float,fs:int, window_size: int, noverlap: int,
-                    custom_nfft: int):
+                    custom_nfft: int, window_type: str):
         """
         执行逐像素STFT分析
         参数:
@@ -583,6 +595,18 @@ class MassDataProcessor(QObject):
             width, height = frame_size
             stft_py_out = np.zeros((self.out_length, height, width), dtype=np.float32)
 
+            # 窗函数的选择和生成
+            if window_type == 'hann':
+                window = signal.windows.hann(window_size)
+            elif window_type == 'hamming':
+                window = signal.windows.hamming(window_size)
+            elif window_type == 'gabor':
+                window = signal.windows.gaussian(window_size, std=window_size / 8, sym=True)
+            elif window_type == 'boxcar':
+                window = signal.windows.boxcar(window_size)
+            else:
+                return logging.error('impossible fault')
+
             # 5. 逐像素STFT处理
             self.processing_progress_signal.emit(0, total_pixels)
 
@@ -600,7 +624,7 @@ class MassDataProcessor(QObject):
                 _, _, Zxx = signal.stft(
                     pixel_signal,
                     fs=fs,
-                    window=signal.windows.hann(window_size),
+                    window=window,
                     nperseg=window_size,
                     noverlap=noverlap,
                     nfft=nfft,
