@@ -11,6 +11,8 @@ from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
 from scipy import signal
+from tftb.processing import WignerVilleDistribution
+from scipy.signal import hilbert
 
 
 class DataProcessor:
@@ -516,18 +518,17 @@ class MassDataProcessor(QObject):
         frame_size = self.data['frame_size']  # (宽度, 高度)
 
         # 窗函数的选择和生成
-        if window_type == 'hann':
-            window = signal.windows.hann(window_size)
-        elif window_type == 'hamming':
-            window = signal.windows.hamming(window_size)
-        elif window_type == 'gabor':
-            window = signal.windows.gaussian(window_size,std =window_size/8,sym=True)
-        elif window_type == 'boxcar':
-            window = signal.windows.boxcar(window_size)
-        else:
-            return logging.error('impossible fault')
+        window = self.get_window(window_type, window_size)
 
         mean_signal = np.mean(unfolded_data, axis=0)
+        # if len(mean_signal) % 2 == 1:
+        #     mean_signal = mean_signal[:-1]
+        # mean_signal = hilbert(mean_signal)
+        # wvd = WignerVilleDistribution(mean_signal)
+        # wvd.run()
+        # wvd.plot(kind='contour', extent=[0, 1000, 0, 60])
+        # wvd.plot(kind='contour', sqmod= True,extent=[0, len(mean_signal), 0, 60])
+
         f, t, Zxx = signal.stft(
             mean_signal,
             fs=fs,
@@ -596,23 +597,13 @@ class MassDataProcessor(QObject):
             stft_py_out = np.zeros((self.out_length, height, width), dtype=np.float32)
 
             # 窗函数的选择和生成
-            if window_type == 'hann':
-                window = signal.windows.hann(window_size)
-            elif window_type == 'hamming':
-                window = signal.windows.hamming(window_size)
-            elif window_type == 'gabor':
-                window = signal.windows.gaussian(window_size, std=window_size / 8, sym=True)
-            elif window_type == 'boxcar':
-                window = signal.windows.boxcar(window_size)
-            else:
-                return logging.error('impossible fault')
+            window = self.get_window(window_type, window_size)
 
             # 5. 逐像素STFT处理
             self.processing_progress_signal.emit(0, total_pixels)
 
             # 找到目标频率最近的索引
             # target_idx = np.argmin(np.abs(f - target_freq))
-
             # 对每个像素执行STFT
             for i in range(total_pixels):
                 if self.abortion:
@@ -792,6 +783,18 @@ class MassDataProcessor(QObject):
             self.processing_progress_signal.emit(frame_idx+1, num_frames)
         logging.info(f'完成导出，目标文件夹{output_dir},总数{num_frames}张')
         return
+
+    def get_window(self,window_type, window_size):
+        try:
+            if window_type == 'gaussian':
+                window = signal.get_window((window_type, window_size / 6), window_size, fftbins=False)
+            elif window_type == 'general_gaussian':
+                window = signal.get_window((window_type, 1.5, window_size / 6), window_size, fftbins=False)
+            else:
+                window = signal.get_window(window_type, window_size, fftbins=False)
+            return window
+        except Exception as e:
+            logging.error(f'Window Fault:{e}')
 
 
     def stop(self):

@@ -427,7 +427,7 @@ class MainWindow(QMainWindow):
         self.stft_program_select.addItems(["python", "julia"])
         process_set_layout1.addWidget(self.stft_program_select)
         self.stft_window_select = QComboBox()
-        self.stft_window_select.addItems(["汉宁窗(hann)", "汉明窗(hanming)","gabor变换(gaussian)","矩形窗"])
+        self.stft_window_select.addItems(["汉宁窗(hann)", "汉明窗(hanming)","gabor变换(gaussian)","矩形窗","blackman",'blackman-harris'])
         process_set_layout2 = QHBoxLayout()
         process_set_layout2.addWidget(QLabel("窗选择"))
         process_set_layout2.addWidget(self.stft_window_select)
@@ -1263,7 +1263,7 @@ class MainWindow(QMainWindow):
             return
         if "unfolded_data" in self.data:
             # 窗函数选择转义
-            window_dict = ['hann', 'hamming', 'gabor', 'boxcar']
+            window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
             dialog = STFTComputePop(self.EM_params,'quality')
             self.update_status("STFT计算ing", True)
@@ -1296,7 +1296,7 @@ class MainWindow(QMainWindow):
             return
         if "unfolded_data" in self.data:
             # 窗函数选择转义
-            window_dict = ['hann','hamming','gabor','boxcar']
+            window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
             if not self._is_quality: # 未质量评价
                 dialog = STFTComputePop(self.EM_params,'signal')
