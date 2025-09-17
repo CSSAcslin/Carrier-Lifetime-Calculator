@@ -4,6 +4,7 @@ import os
 import re
 
 import numpy as np
+from PyQt5.QtWidgets import QMessageBox
 from scipy.ndimage import convolve
 from scipy.optimize import curve_fit
 from scipy.stats import pearsonr
@@ -87,10 +88,15 @@ class LifetimeCalculator:
             else:
                 decay_signal = phy_signal
                 decay_time = time_points
-        else: # 不可能走到这里，我只是觉得代码高亮不舒服 所以加的
-            decay_signal =None
-            decay_time = None
-            return
+        else: # 不可能走到这里，我只是觉得代码高亮不舒服 所以加的 (在alpha 1.10.0时遇到了这个问题，于是乎打脸了）
+            phy_signal = time_series
+            max_idx = np.argmax(phy_signal)
+            if not from_start_cal:
+                decay_signal = phy_signal[max_idx:]  # 全部正置 且从最大值之后开始拟合
+                decay_time = time_points[max_idx:] - time_points[max_idx]
+            else:
+                decay_signal = phy_signal
+                decay_time = time_points
 
         # 初始猜测
         A_guess = np.max(decay_signal) - np.min(decay_signal)
@@ -275,6 +281,7 @@ class CalculationThread(QObject):
     calculating_progress_signal = pyqtSignal(int, int)
     stop_thread_signal = pyqtSignal()
     cal_time = pyqtSignal(float)
+    update_status = pyqtSignal(str,str)
 
 
     def __init__(self):
@@ -288,80 +295,93 @@ class CalculationThread(QObject):
         logging.info("开始计算选区载流子寿命...")
         self.calculating_progress_signal.emit(1, 3)
         self.cal_running_status.emit(True)
-        # 计时器
-        timer = QElapsedTimer()
-        timer.start()
-        # 获取参数
-        time_points = data['time_points'] * time_unit
-        self.calculating_progress_signal.emit(2, 3)
-        # 执行区域分析
-        lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
-            data, time_points, center, shape, size, model_type)
+        try:
+            # 计时器
+            timer = QElapsedTimer()
+            timer.start()
+            # 获取参数
+            time_points = data['time_points'] * time_unit
+            self.calculating_progress_signal.emit(2, 3)
+            # 执行区域分析
+            lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
+                data, time_points, center, shape, size, model_type)
 
-        self.result_data_signal.emit(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'], model_type)
-        self.cal_time.emit(timer.elapsed())
-        logging.info("计算完成!")
-        self.calculating_progress_signal.emit(3, 3)
-        self.cal_running_status.emit(False)
-        self.stop_thread_signal.emit()
+            self.result_data_signal.emit(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'], model_type)
+            self.cal_time.emit(timer.elapsed())
+            logging.info("计算完成!")
+            self.calculating_progress_signal.emit(3, 3)
+            self.cal_running_status.emit(False)
+            self.stop_thread_signal.emit()
+        except Exception as e:
+            self.update_status.emit(f'区域数据拟合出错:{e}','error')
+            self._is_calculating = False
+            self.cal_running_status.emit(False)
+            self.stop_thread_signal.emit()
 
     @pyqtSlot(dict, float, str)
     def distribution_analyze(self,data,time_unit,model_type):
         """分析全图载流子寿命"""
         self._is_calculating = True
         self.cal_running_status.emit(True)
+        try:
 
-        # 计时器
-        timer = QElapsedTimer()
-        timer.start()
-        time_points = data['time_points'] * time_unit
-        data_type = data['data_type']
+            # 计时器
+            timer = QElapsedTimer()
+            timer.start()
+            time_points = data['time_points'] * time_unit
+            data_type = data['data_type']
 
-        # 计算每个像素的寿命
-        height, width = data['data_origin'].shape[1], data['data_origin'].shape[2]
-        lifetime_map = np.zeros((height, width))
-        logging.info("开始计算载流子寿命...")
+            # 计算每个像素的寿命
+            height, width = data['data_origin'].shape[1], data['data_origin'].shape[2]
+            lifetime_map = np.zeros((height, width))
+            logging.info("开始计算载流子寿命...")
 
-        loading_bar_value =0 #进度条
-        total_l = height * width
-        for i in range(height):
-            if self._is_calculating :# 线程关闭控制（目前仅针对长时计算）
-                for j in range(width):
-                    time_series = data['data_origin'][:, i, j]
-                    # 用皮尔逊系数判断噪音(滑动窗口法)
-                    window_size = min(10, len(time_points) // 2)
-                    pr = []
-                    for k in range(len(time_series) - window_size):
-                        window = time_series[k:k + window_size]
-                        time_window = time_points[k:k + window_size]
-                        r, _ = pearsonr(time_window, window)
-                        pr.append(r)
-                        if abs(r) >= 0.8:
-                            _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(data_type, time_series, time_points, model_type)
-                            continue
+            loading_bar_value =0 #进度条
+            total_l = height * width
+            for i in range(height):
+                if self._is_calculating :# 线程关闭控制（目前仅针对长时计算）
+                    for j in range(width):
+                        time_series = data['data_origin'][:, i, j]
+                        # 用皮尔逊系数判断噪音(滑动窗口法)
+                        window_size = min(10, len(time_points) // 2)
+                        pr = []
+                        for k in range(len(time_series) - window_size):
+                            window = time_series[k:k + window_size]
+                            time_window = time_points[k:k + window_size]
+                            r, _ = pearsonr(time_window, window)
+                            pr.append(r)
+                            if abs(r) >= 0.8:
+                                _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(data_type, time_series, time_points, model_type)
+                                continue
+                            else:
+                                pass
+                        if np.all(np.abs(pr) < 0.8):
+                            lifetime = np.nan
                         else:
                             pass
-                    if np.all(np.abs(pr) < 0.8):
-                        lifetime = np.nan
-                    else:
-                        pass
-                    lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
-                    loading_bar_value += 1
-                    self.calculating_progress_signal.emit(loading_bar_value, total_l)
-            else:
-                logging.info("计算终止")
-                self.calculating_progress_signal.emit(total_l, total_l) # 进度条更新
-                self.cal_running_status.emit(False)
-                self.stop_thread_signal.emit() # 目前来说，计算终止也会关闭线程，后续可考虑分开命令
-                return
-        logging.info("计算完成!")
-        # 显示结果
-        smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
-        self.result_map_signal.emit(smoothed_map)
-        self.cal_time.emit(timer.elapsed())
-        self._is_calculating = False
-        self.cal_running_status.emit(False)
-        self.stop_thread_signal.emit()
+                        lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
+                        loading_bar_value += 1
+                        self.calculating_progress_signal.emit(loading_bar_value, total_l)
+                else:
+                    logging.info("计算终止")
+                    self.calculating_progress_signal.emit(total_l, total_l) # 进度条更新
+                    self.cal_running_status.emit(False)
+                    self.stop_thread_signal.emit() # 目前来说，计算终止也会关闭线程，后续可考虑分开命令
+                    return
+            logging.info("计算完成!")
+            # 显示结果
+            smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
+            self.result_map_signal.emit(smoothed_map)
+            self.cal_time.emit(timer.elapsed())
+            self._is_calculating = False
+            self.cal_running_status.emit(False)
+            self.stop_thread_signal.emit()
+        except Exception as e:
+            self.update_status.emit(f'区域数据拟合出错:{e}','error')
+            self._is_calculating = False
+            self.cal_running_status.emit(False)
+            self.stop_thread_signal.emit()
+
 
     def diffusion_calculation(self,frame_data,time_unit,space_unit):
         # 存储拟合方差结果 [时间, 方差]
@@ -394,6 +414,8 @@ class CalculationThread(QObject):
                     signal_series.append(np.stack((positions,intensities),axis=0))
                 except Exception as e:
                     logging.error(f"拟合失败,报错{e}")
+                    self.update_status.emit(f'扩散拟合失败:{e}', 'error')
+                    self.stop_thread_signal.emit()
                 loading_bar_value += 1
                 self.calculating_progress_signal.emit(loading_bar_value, total_l)
         else:
@@ -414,6 +436,11 @@ class CalculationThread(QObject):
         self._is_calculating = False
         self.cal_running_status.emit(False)
         self.stop_thread_signal.emit()
+
+    def heat_transfer_calculation(self,origin_data):
+        """计算传热系数"""
+        self._is_calculating = True
+        pass
 
     def stop(self):
         self._is_calculating = False

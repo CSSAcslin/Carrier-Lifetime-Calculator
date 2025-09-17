@@ -7,6 +7,7 @@ import tifffile as tiff
 import sif_parser
 import cv2
 import pywt
+from PIL import Image
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
@@ -20,16 +21,41 @@ class DataProcessor:
     def __init__(self,path,normalize_type='linear',**kwargs):
         self.path = path
         self.normalize_type = normalize_type
+        self.tiff_type = 'np'
 
     """tiff"""
     def load_and_sort_tiff(self, current_group):
         # 因为tiff存在两种格式，n,p
         files = []
         find = self.path + '/*.tiff'
-        for f in glob.glob(find):
-            match = re.search(r'(\d+)([a-zA-Z]+)\.tiff', f)
-            if match and match.group(2) == current_group:
-                files.append((int(match.group(1)), f))
+        if current_group != '不区分':
+            self.tiff_type = current_group
+            for f in glob.glob(find):
+                match = re.search(r'(\d+)([a-zA-Z]+)\.tiff', f)
+                if match and match.group(2) == current_group:
+                    files.append((int(match.group(1)), f))
+            if not files: # 当找不到任何tiff时，使其能够寻找tif结尾的文件
+                find_tif = self.path + '/*.tif'
+                for f in glob.glob(find_tif):
+                    match = re.search(r'(\d+)([a-zA-Z]+)\.tif', f)
+                    if match and match.group(2) == current_group:
+                        files.append((int(match.group(1)), f))
+        if current_group == '不区分':
+            self.tiff_type = 'np'
+            find_tif =  self.path + '/*.tiff'
+            for f in glob.glob(find_tif):
+                # 提取数字并排序
+                num_groups = re.findall(r'\d+', f)
+                last_num = int(num_groups[-1]) if num_groups else 0
+                files.append((last_num, f))
+            if not files:  # 当找不到任何tiff时，使其能够寻找tif结尾的文件
+                find_tif = self.path + '/*.tif'
+                for f in glob.glob(find_tif):
+                    # 提取数字并排序
+                    num_groups = re.findall(r'\d+', f)
+                    last_num = int(num_groups[-1]) if num_groups else 0
+                    files.append((last_num, f))
+
         return sorted(files, key=lambda x: x[0])
 
     @staticmethod
@@ -442,6 +468,7 @@ class MassDataProcessor(QObject):
 
         except Exception as e:
             logging.error(f"处理TIFF序列时出错: {str(e)}")
+            self.processing_progress_signal.emit(1, 1)
 
     @pyqtSlot(dict,int,bool)
     def pre_process(self,data_dict:dict,bg_num = 360,unfold=True):
@@ -504,7 +531,7 @@ class MassDataProcessor(QObject):
             logging.error(f"预处理错误: {str(e)}")
 
     @pyqtSlot(float,int,int,int,int,str)
-    def quality_stft(self,target_freq: float,fs:int, window_size: int, noverlap: int,
+    def quality_stft(self,target_freq: float,fps:int, window_size: int, noverlap: int,
                     custom_nfft: int, window_type: str):
         """STFT质量分析"""
         if not self.data:
@@ -531,7 +558,7 @@ class MassDataProcessor(QObject):
 
         f, t, Zxx = signal.stft(
             mean_signal,
-            fs=fs,
+            fs=fps,
             window=window,
             nperseg=window_size,
             noverlap=noverlap,
@@ -545,7 +572,7 @@ class MassDataProcessor(QObject):
         self.time_series = t
 
     @pyqtSlot(float,int,int,int,int,str)
-    def python_stft(self, target_freq: float,fs:int, window_size: int, noverlap: int,
+    def python_stft(self, target_freq: float,fps:int, window_size: int, noverlap: int,
                     custom_nfft: int, window_type: str):
         """
         执行逐像素STFT分析
@@ -576,12 +603,14 @@ class MassDataProcessor(QObject):
             total_frames = unfolded_data.shape[1]
             total_pixels = unfolded_data.shape[0]
             nfft = custom_nfft
+            if nfft < window_size: # 确保nfft大于等于窗长度
+                nfft = window_size
 
             # # 3. 计算平均信号的STFT (用于质量评估)
             # mean_signal = np.mean(unfolded_data, axis=0)
             # f, t, Zxx = signal.stft(
             #     mean_signal,
-            #     fs=fs,
+            #     fps=fps,
             #     window=signal.windows.hann(window_size),
             #     nperseg=window_size,
             #     noverlap=noverlap,
@@ -614,7 +643,7 @@ class MassDataProcessor(QObject):
                 # 计算当前像素的STFT
                 _, _, Zxx = signal.stft(
                     pixel_signal,
-                    fs=fs,
+                    fs=fps,
                     window=window,
                     nperseg=window_size,
                     noverlap=noverlap,
@@ -643,12 +672,12 @@ class MassDataProcessor(QObject):
             logging.error(f"STFT计算错误: {str(e)}")
 
     @pyqtSlot(float,int,int,str)
-    def quality_cwt(self, target_freq: float, fs: int, totalscales: int, wavelet: str = 'morl'):
+    def quality_cwt(self, target_freq: float, fps: int, totalscales: int, wavelet: str = 'morl'):
         """
         CWT(连续小波变换)分析信号评估
         参数:
             target_freq: 目标分析频率(Hz)
-            EM_fs: 采样频率
+            EM_fps: 采样频率
             scales: 尺度数组，控制小波变换的频率分辨率
             wavelet: 使用的小波类型(默认为'morl'墨西哥帽小波)
         """
@@ -668,7 +697,7 @@ class MassDataProcessor(QObject):
             cparam = 2 * pywt.central_frequency(wavelet) * totalscales
             scales = cparam/np.arange(totalscales,1,-1)
             # target_freqs = np.linspace(int(target_freq-5), int(target_freq+5), totalscales//4)
-            # scales = pywt.frequency2scale(wavelet, target_freqs * 1.0 / EM_fs)
+            # scales = pywt.frequency2scale(wavelet, target_freqs * 1.0 / EM_fps)
             self.processing_progress_signal.emit(20, 100)
             # 计算参数
             total_frames = unfolded_data.shape[1]
@@ -677,22 +706,22 @@ class MassDataProcessor(QObject):
             self.processing_progress_signal.emit(40, 100)
             # 计算平均信号的CWT (用于质量评估)
             mean_signal = np.mean(unfolded_data, axis=0)
-            self.coefficients, self.frequencies = pywt.cwt(mean_signal, scales, wavelet, sampling_period=1.0 / fs)
+            self.coefficients, self.frequencies = pywt.cwt(mean_signal, scales, wavelet, sampling_period=1.0 / fps)
             self.processing_progress_signal.emit(70, 100)
             # 发送平均信号CWT结果
-            self.avg_cwt_result.emit(self.frequencies, np.arange(total_frames) / fs, np.abs(self.coefficients), target_freq)
+            self.avg_cwt_result.emit(self.frequencies, np.arange(total_frames) / fps, np.abs(self.coefficients), target_freq)
             self.processing_progress_signal.emit(100, 100)
         except Exception as e:
             logging.error(e)
 
     @pyqtSlot(float, int, int,str, float)
-    def python_cwt(self, target_freq: float, fs: int, totalscales: int, wavelet: str, cwt_scale_range: float):
+    def python_cwt(self, target_freq: float, fps: int, totalscales: int, wavelet: str, cwt_scale_range: float):
         """
         执行逐像素CWT分析
         参数:
         参数:
             target_freq: 目标分析频率(Hz)
-            EM_fs: 采样频率
+            EM_fps: 采样频率
             scales: 尺度数组，控制小波变换的频率分辨率
             wavelet: 使用的小波类型(默认为'morl'墨西哥帽小波)
         """
@@ -712,7 +741,7 @@ class MassDataProcessor(QObject):
             # cparam = 2 * pywt.central_frequency(wavelet) * totalscales
             # scales = cparam / np.arange(totalscales, 1, -1)
             target_freqs = np.linspace(target_freq-cwt_scale_range//2, target_freq+cwt_scale_range//2, totalscales)#totalscales//4
-            scales = pywt.frequency2scale(wavelet, target_freqs * 1.0 / fs)
+            scales = pywt.frequency2scale(wavelet, target_freqs * 1.0 / fps)
             total_frames = unfolded_data.shape[1]
             total_pixels = unfolded_data.shape[0]
             self.processing_progress_signal.emit(0, total_pixels)
@@ -735,7 +764,7 @@ class MassDataProcessor(QObject):
                 pixel_signal = unfolded_data[i, :]
 
                 # 计算当前像素的STFT
-                coefficients, _ = pywt.cwt(pixel_signal, scales, wavelet, sampling_period=1.0 / fs)
+                coefficients, _ = pywt.cwt(pixel_signal, scales, wavelet, sampling_period=1.0 / fps)
 
                 # 提取目标频率处（中间32个值）的幅度
                 # aim_coefficients = coefficients[mid_idx-16:mid_idx+16,:]
@@ -752,7 +781,7 @@ class MassDataProcessor(QObject):
                     self.processing_progress_signal.emit(i, total_pixels)
 
             # 发送完整结果
-            times = np.arange(cwt_py_out.shape[0]) / fs
+            times = np.arange(cwt_py_out.shape[0]) / fps
             self.cwt_completed.emit(cwt_py_out,times)
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             logging.info(f"计算完成，总耗时{timer.elapsed()}ms")
@@ -763,26 +792,141 @@ class MassDataProcessor(QObject):
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
 
-    @pyqtSlot(np.ndarray,str,str)
-    def export_EM_data(self,result,output_dir,prefix):
-        """时频变换后目标频率下的结果导出"""
+    @pyqtSlot(np.ndarray,str,str,str)
+    def export_EM_data(self, result, output_dir, prefix, format_type='tif'):
+        """
+        时频变换后目标频率下的结果导出
+        支持多种格式: tif, avi, png, gif
+
+        参数:
+            result: 输入数据数组
+            output_dir: 输出目录路径
+            prefix: 文件前缀
+            format_type: 导出格式 ('tif', 'avi', 'png', 'gif')
+        """
+        format_type = format_type.lower()
+
+        # 根据格式类型调用不同的导出函数
+        if format_type == 'tif':
+            return self.export_as_tif(result, output_dir, prefix)
+        elif format_type == 'avi':
+            return self.export_as_avi(result, output_dir, prefix)
+        elif format_type == 'png':
+            return self.export_as_png(result, output_dir, prefix)
+        elif format_type == 'gif':
+            return self.export_as_gif(result, output_dir, prefix)
+        else:
+            logging.error(f"不支持的格式类型: {format_type}")
+            raise ValueError(f"不支持格式: {format_type}。请使用 'tif', 'avi', 'png' 或 'gif'")
+
+    def export_as_tif(self, result, output_dir, prefix):
+        """导出为TIFF格式序列"""
         num_frames = result.shape[0]
         num_digits = len(str(num_frames))
         self.processing_progress_signal.emit(0, num_frames)
         created_files = []
 
-        # 遍历所有帧
-        for frame_idx in range(num_frames):
-            # 生成带序号的完整文件路径
+        for frame_idx in range(num_frames): # 生成带序号的完整文件路径
             frame_name = f"{prefix}-{frame_idx:0{num_digits+1}d}.tif"
             output_path = os.path.join(output_dir, frame_name)
 
-            # 保存单帧TIFF
-            tiff.imwrite(output_path, result[frame_idx],photometric='minisblack')
+            tiff.imwrite(output_path, result[frame_idx], photometric='minisblack')
             created_files.append(output_path)
-            self.processing_progress_signal.emit(frame_idx+1, num_frames)
-        logging.info(f'完成导出，目标文件夹{output_dir},总数{num_frames}张')
+            self.processing_progress_signal.emit(frame_idx + 1, num_frames)
+
+        logging.info(f'完成TIFF导出，目标文件夹{output_dir}, 总数{num_frames}张')
         return
+
+    def export_as_avi(self, result, output_dir, prefix):
+        """导出为AVI视频格式"""
+        num_frames = result.shape[0]
+        self.processing_progress_signal.emit(0, num_frames)
+
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 规范化数据到0-255范围 (假设输入是浮点数)
+        normalized = np.zeros_like(result, dtype=np.uint8)
+        if result.dtype != np.uint8:
+            normalized = ((result - result.min()) / (result.max() - result.min()) * 255).astype(np.uint8)
+        else:
+            normalized = result
+
+        # 创建视频编写器
+        output_path = os.path.join(output_dir, f"{prefix}.avi")
+        height, width = result.shape[1], result.shape[2]
+
+        # 根据帧数调整FPS
+        fps = max(10, min(30, num_frames // 10))
+
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height), isColor=False)
+
+        for frame_idx in range(num_frames):
+            out.write(normalized[frame_idx])
+            self.processing_progress_signal.emit(frame_idx + 1, num_frames)
+
+        out.release()
+        logging.info(f'完成AVI导出: {output_path}, 总数{num_frames}帧')
+        return [output_path]
+
+    def export_as_png(self, result, output_dir, prefix):
+        """导出为PNG格式序列"""
+        num_frames = result.shape[0]
+        num_digits = len(str(num_frames))
+        self.processing_progress_signal.emit(0, num_frames)
+        created_files = []
+
+        # 规范化数据
+        normalized = np.zeros_like(result, dtype=np.uint8)
+        if result.dtype != np.uint8:
+            normalized = ((result - result.min()) / (result.max() - result.min()) * 255).astype(np.uint8)
+        else:
+            normalized = result
+
+        for frame_idx in range(num_frames):
+            frame_name = f"{prefix}-{frame_idx:0{num_digits+1}d}.png"
+            output_path = os.path.join(output_dir, frame_name)
+
+            # 使用PIL保存PNG
+            img = Image.fromarray(normalized[frame_idx])
+            img.save(output_path)
+            created_files.append(output_path)
+            self.processing_progress_signal.emit(frame_idx + 1, num_frames)
+
+        logging.info(f'完成PNG导出，目标文件夹{output_dir}, 总数{num_frames}张')
+        return created_files
+
+    def export_as_gif(self, result, output_dir, prefix):
+        """导出为GIF动画"""
+        num_frames = result.shape[0]
+        self.processing_progress_signal.emit(0, num_frames)
+
+        # 规范化数据
+        normalized = np.zeros_like(result, dtype=np.uint8)
+        if result.dtype != np.uint8:
+            normalized = ((result - result.min()) / (result.max() - result.min()) * 255).astype(np.uint8)
+        else:
+            normalized = result
+
+        # 创建PIL图像列表
+        images = []
+        for frame_idx in range(num_frames):
+            images.append(Image.fromarray(normalized[frame_idx]))
+            self.processing_progress_signal.emit(frame_idx + 1, num_frames)
+
+        # 保存GIF
+        output_path = os.path.join(output_dir, f"{prefix}.gif")
+        images[0].save(
+            output_path,
+            save_all=True,
+            append_images=images[1:],
+            duration=100,  # 每帧持续时间(毫秒)
+            loop=0  # 无限循环
+        )
+
+        logging.info(f'完成GIF导出: {output_path}, 总数{num_frames}帧')
+        return [output_path]
 
     def get_window(self,window_type, window_size):
         try:

@@ -1,14 +1,16 @@
+import logging
+
 import numpy as np
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QWheelEvent, QTransform
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QWheelEvent, QTransform, QIcon
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
-                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QToolBar, QAction, QDockWidget
                              )
 from PyQt5.QtCore import Qt, pyqtSignal
 
 
-class ImageDisplayWidget(QWidget):
+class ImageDisplayWidget(QMainWindow):
     """图像显示部件 (使用QPixmap实现)"""
     mouse_position_signal = pyqtSignal(int, int, int, float)
     mouse_clicked_signal = pyqtSignal(int, int)
@@ -21,17 +23,22 @@ class ImageDisplayWidget(QWidget):
         self.initial_scale = None
         self.min_scale = 0.1
         self.max_scale = 15.0
+        self.draw_layer_opacity = 0.8
         self.init_ui()
+        self.init_tool_bars()
 
     def init_ui(self):
+        self.main_widget = QDockWidget('',self)
         self.layout = QVBoxLayout(self)
 
         # 创建图形视图和场景
         self.graphics_view = QGraphicsView()
         self.scene = QGraphicsScene()
         self.graphics_view.setScene(self.scene)
-        self.pixmap_item = QGraphicsPixmapItem()
-        self.scene.addItem(self.pixmap_item)
+        self.data_layer = QGraphicsPixmapItem()
+        self.draw_layer = QGraphicsPixmapItem()
+        self.scene.addItem(self.data_layer)
+        self.scene.addItem(self.draw_layer)
 
         self.layout.addWidget(self.graphics_view)
 
@@ -48,6 +55,140 @@ class ImageDisplayWidget(QWidget):
         self.graphics_view.mouseMoveEvent = self.mouse_move_event
         self.graphics_view.mousePressEvent = self.mouse_press_event
         self.graphics_view.mouseReleaseEvent = self.mouse_release_event
+
+        self.graph_widget = QWidget(self)
+        self.graph_widget.setLayout(self.layout)
+        self.main_widget.setWidget(self.graph_widget)
+        # self.main_widget.setFeatures(QDockWidget::NoDockWidgetFeatures)
+        self.main_widget.setTitleBarWidget(QWidget())
+        self.addDockWidget(Qt.LeftDockWidgetArea,self.main_widget)
+
+    def init_tool_bars(self):
+        Canvas_bar = QToolBar('Canvas')
+        add_canvas = QAction('add', self)
+        add_canvas.setStatusTip("Add new canvas")
+        add_canvas.triggered.connect(self.add_canvas)
+        Canvas_bar.addAction(add_canvas)
+
+        del_canvas = QAction('del', self)
+        del_canvas.setStatusTip("Delete the latest canvas")
+        del_canvas.triggered.connect(self.del_canvas)
+        Canvas_bar.addAction(del_canvas)
+
+        cursor = QAction('cursor', self)
+        cursor.setStatusTip("cursor")
+        # cursor.triggered.connect(self.cursor)
+        Canvas_bar.addAction(cursor)
+
+        self.addToolBar(Canvas_bar)
+
+        Drawing_bar = QToolBar('Drawing')
+        draw_pen = QAction('Pen', self)
+        draw_pen.setStatusTip("Draw the pen")
+        # draw_pen.triggered.connect(self.draw_pen)
+        Drawing_bar.addAction(draw_pen)
+
+        draw_line = QAction('Line', self)
+        draw_line.setStatusTip("Draw the line")
+        # draw_line.triggered.connect(self.draw_line)
+        Drawing_bar.addAction(draw_line)
+
+        draw_rect = QAction('Rect', self)
+        draw_rect.setStatusTip("Draw the rect")
+        draw_rect.setToolTip("Draw the rect")
+        # draw_rect.triggered.connect(self.draw_rect)
+        Drawing_bar.addAction(draw_rect)
+        Drawing_bar.addSeparator()
+
+        draw_ellipse = QAction('Ellipse', self)
+        draw_ellipse.setStatusTip("Draw the ellipse")
+        draw_ellipse.setToolTip("Draw the ellipse")
+        # draw_ellipse.triggered.connect(self.draw_ellipse)
+        Drawing_bar.addAction(draw_ellipse)
+
+        draw_eraser = QAction('Eraser', self)
+        draw_eraser.setStatusTip("Draw the eraser")
+        draw_eraser.setToolTip("Draw the eraser")
+        # draw_eraser.triggered.connect(self.draw_eraser)
+        Drawing_bar.addAction(draw_eraser)
+
+        draw_fill = QAction('Fill', self)
+        draw_fill.setStatusTip("Draw the fill")
+        draw_fill.setToolTip("Draw the fill")
+        # draw_fill.triggered.connect(self.draw_fill)
+        Drawing_bar.addAction(draw_fill)
+
+        self.addToolBar(Drawing_bar)
+
+
+    def add_canvas(self):
+        logging.info("add_canvas test works")
+
+    def del_canvas(self):
+        logging.info("del_canvas test works")
+
+    # def add_display_region(self, data=None, is_temporal=False, sync_with_primary=False):
+    #     """添加一个新的显示区域"""
+    #     # if len(self.display_regions) >= 4:
+    #     #     logging.warning("已达到最大显示区域数量 (4)")
+    #     #     return False
+    #
+    #     region_id = len(self.display_regions)
+    #     # new_region = ImageDisplayWidget(region_id)
+    #
+    #     # 设置数据和同步属性
+    #     if data is not None:
+    #         new_region.set_data(data, is_temporal, sync_with_primary)
+    #
+    #     self.display_regions.append(new_region)
+    #     self._update_layout()
+    #     return True
+    #
+    # def remove_display_region(self, region_id=None):
+    #     """移除指定显示区域（默认移除最后一个）"""
+    #     if not self.display_regions:
+    #         return False
+    #
+    #     if region_id is None:
+    #         region_id = len(self.display_regions) - 1
+    #
+    #     if 0 <= region_id < len(self.display_regions):
+    #         region = self.display_regions.pop(region_id)
+    #         region.setParent(None)
+    #         region.deleteLater()
+    #
+    #         # 更新剩余区域的ID
+    #         for idx, region in enumerate(self.display_regions):
+    #             region.region_id = idx
+    #
+    #         # 重新布局
+    #         self._update_layout()
+    #         return True
+    #     return False
+    #
+    # def _update_layout(self):
+    #     """根据区域数量更新布局"""
+    #     # 清除当前布局
+    #     for i in reversed(range(self.layout.count())):
+    #         widget = self.layout.itemAt(i).widget()
+    #         if widget:
+    #             widget.setParent(None)
+    #
+    #     # 根据区域数量设置布局
+    #     num_regions = len(self.display_regions)
+    #
+    #     if num_regions == 1:
+    #         self.layout.addWidget(self.display_regions[0], 0, 0)
+    #     elif num_regions == 2:
+    #         self.layout.addWidget(self.display_regions[0], 0, 0)
+    #         self.layout.addWidget(self.display_regions[1], 0, 1)
+    #     elif num_regions >= 3:
+    #         self.layout.addWidget(self.display_regions[0], 0, 0)
+    #         self.layout.addWidget(self.display_regions[1], 0, 1)
+    #         self.layout.addWidget(self.display_regions[2], 1, 0)
+    #
+    #         if num_regions == 4:
+    #             self.layout.addWidget(self.display_regions[3], 1, 1)
 
     def wheel_event(self, event: QWheelEvent):
         """滚轮缩放实现"""
@@ -148,11 +289,17 @@ class ImageDisplayWidget(QWidget):
         qimage = QImage(image_to_show.data, image_to_show.shape[1], image_to_show.shape[0],
                         image_to_show.shape[1], QImage.Format_Grayscale8)
         pixmap = QPixmap.fromImage(qimage)
-
         # 显示图像
-        self.pixmap_item = self.scene.addPixmap(pixmap)
+        self.data_layer = self.scene.addPixmap(pixmap)
+
         self.graphics_view.resetTransform()
-        self.graphics_view.fitInView(self.pixmap_item, Qt.KeepAspectRatio) # 实现适合尺寸的放大
+        self.graphics_view.fitInView(self.data_layer, Qt.KeepAspectRatio) # 实现适合尺寸的放大
+        # 绘制层
+        height, width = image_to_show.shape
+        self.top_pixmap = QPixmap(width, height)
+        self.top_pixmap.fill(Qt.transparent)
+        self.draw_layer= self.scene.addPixmap(self.top_pixmap)
+        self.draw_layer.setOpacity(self.draw_layer_opacity)
         # 获取缩放因子
         self.last_scale = self.graphics_view.transform().m11()  # 实时更新
         self.initial_scale = self.graphics_view.transform().m11()  # 只获取一次
@@ -167,8 +314,8 @@ class ImageDisplayWidget(QWidget):
         qimage = QImage(image_to_show.data, image_to_show.shape[1], image_to_show.shape[0],
                         image_to_show.shape[1], QImage.Format_Grayscale8)
         pixmap = QPixmap.fromImage(qimage)
-        # 直接更新现有pixmap，避免重置场景
-        self.pixmap_item.setPixmap(pixmap)
+        # 直接更新现有pixmap，避免重置场景，其它层保持不变
+        self.data_layer.setPixmap(pixmap)
 
     def reset_view(self):
         """手动重置视图（缩放和平移）"""

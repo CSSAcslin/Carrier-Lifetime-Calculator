@@ -3,7 +3,7 @@ from logging.handlers import RotatingFileHandler
 
 import numpy as np
 from PyQt5 import sip
-from PyQt5.QtGui import QPixmap, QIcon
+from PyQt5.QtGui import QPixmap, QIcon, QFontDatabase
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
     stft_python_signal = pyqtSignal(float, int, int, int, int, str)
     cwt_quality_signal = pyqtSignal(float, int, int, str)
     cwt_python_signal = pyqtSignal(float, int, int, str, float)
-    mass_export_signal = pyqtSignal(np.ndarray,str,str)
+    mass_export_signal = pyqtSignal(np.ndarray,str,str,str)
 
     def __init__(self):
         super().__init__()
@@ -79,13 +79,15 @@ class MainWindow(QMainWindow):
             'tau_max': 1e3
         }
         self.EM_params = {
-            'EM_fs': 360,
+            'EM_fps': 360,
             'target_freq': 30.0,
             'type': None,
-            'stft_window_size': 128,
-            'stft_noverlap': 120,
+            'stft_window_size': 128, # 加窗大小
+            'stft_noverlap': 120, # 重叠点数
             'stft_window_type': 'hann',
-            'custom_nfft': 256,
+            'stft_total_scales': 10, # 频率分辨率
+            'stft_scale_range':5, # 取频率范围（以target frequency为中心）
+            'custom_nfft': 128, # 变换长度，默认为窗长度
             'cwt_type': 'morl',
             'cwt_total_scales': 256,  # 频率分辨率
             'cwt_scale_range': 10.0,  # 取频率范围（以target frequency为中心）
@@ -107,7 +109,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("成像数据分析工具箱")
-        self.setGeometry(100, 50, 1600, 850)
+        self.setGeometry(100, 50, 1700, 900)
 
         # 主部件和布局
         # main_widget = QWidget()
@@ -119,6 +121,7 @@ class MainWindow(QMainWindow):
         self.param_dock.setWidget(self.left_panel)
         self.param_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.param_dock.setMinimumSize(300, 700)
+        self.param_dock.setMaximumWidth(350)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.param_dock) # 加到左侧
 
         # 右侧图像区域
@@ -139,7 +142,7 @@ class MainWindow(QMainWindow):
         image_layout.addLayout(slider_layout)
         self.image_dock = QDockWidget("图像显示", self)
         self.image_dock.setWidget(image_widget)
-        self.image_dock.setMinimumSize(350, 350)
+        self.image_dock.setMinimumSize(700, 600)
         self.image_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.RightDockWidgetArea, self.image_dock)
 
@@ -162,7 +165,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.result_dock)
         self.splitDockWidget(self.param_dock, self.image_dock, Qt.Horizontal)
         self.splitDockWidget(self.image_dock, self.result_dock, Qt.Horizontal)
-        self.resizeDocks([self.image_dock, self.result_dock], [650, 650], Qt.Horizontal)
+        self.resizeDocks([self.image_dock, self.result_dock], [800, 600], Qt.Horizontal)
         self.setup_status_bar()
 
         # 设置控制台
@@ -170,6 +173,36 @@ class MainWindow(QMainWindow):
 
     def setup_left_panel(self):
         """设置左侧面板"""
+        button_style_sheet = """
+        QPushButton {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-weight: 500;
+            min-width: 100px;
+        }
+        
+        QPushButton:hover {
+            background-color: #388E3C;
+        }
+        
+        QPushButton:pressed {
+            background-color: #2E7D32;
+        }
+        
+        QPushButton:disabled {
+            background-color: #A5D6A7;
+            color: #E8F5E9;
+        }
+        
+        QPushButton:focus {
+            outline: 1px solid #81C784;
+            border-radius: 4px;
+            padding: 5px 10px;
+            outline-offset: 1px;
+        }"""
         self.left_panel = QWidget()
         self.left_panel_layout = QVBoxLayout()
         self.left_panel_layout.setContentsMargins(15,15,15,15)
@@ -181,7 +214,7 @@ class MainWindow(QMainWindow):
 
         # 模式选择
         self.fuction_select = QComboBox()
-        self.fuction_select.addItems(['请选择分析模式','FS-iSCAT','光热信号处理','EM-iSCAT'])
+        self.fuction_select.addItems(['请选择分析模式','FS-iSCAT','光热信号处理','EM-iSCAT','科学分析（Simulation）'])
         left_layout0.addWidget(self.fuction_select)
         self.funtion_stack = QStackedWidget()
         nothing_group = self.QGroupBoxCreator(style="inner")
@@ -194,7 +227,7 @@ class MainWindow(QMainWindow):
         fs_iSCAT_group = self.QGroupBoxCreator(style="inner")
         tiff_layout = QHBoxLayout()
         self.group_selector = QComboBox()
-        self.group_selector.addItems(['n', 'p'])
+        self.group_selector.addItems(['n', 'p', '不区分'])
         self.tiff_folder_btn = QPushButton("选择TIFF文件夹")
         tiff_layout.addWidget(self.group_selector)
         tiff_layout.addWidget(self.tiff_folder_btn)
@@ -240,15 +273,29 @@ class MainWindow(QMainWindow):
         type_choose.addWidget(self.file_type_stack)
         EM_iSCAT_group.setLayout(type_choose)
         self.funtion_stack.addWidget(EM_iSCAT_group)
+
+        # 科学分析模块
+        Sim_group = self.QGroupBoxCreator(style="inner")
+        sim_layout = QVBoxLayout()
+        self.text_box = QTextEdit()
+        self.text_box.setPlaceholderText("输入Python代码或拖入.py文件")
+        self.text_box.setMaximumHeight(40)
+        self.text_box.setMinimumHeight(20)
+        sim_layout.addWidget(self.text_box)
+        self.code_button = QPushButton('执行代码')
+        sim_layout.addWidget(self.code_button)
+        Sim_group.setLayout(sim_layout)
+        self.funtion_stack.addWidget(Sim_group)
+
         # 总提示
-        self.folder_path_label = QLabel("未选择文件夹")
-        self.folder_path_label.setMaximumWidth(300)
-        self.folder_path_label.setWordWrap(True)
-        # self.folder_path_label.setStyleSheet("font-size: 14px;")  # 后续还要改
+        # self.folder_path_label = QLabel("未选择文件夹")
+        # self.folder_path_label.setMaximumWidth(300)
+        # self.folder_path_label.setWordWrap(True)
+        # # self.folder_path_label.setStyleSheet("font-size: 14px;")  # 后续还要改
 
         left_layout0.addWidget(self.funtion_stack)
-        left_layout0.addSpacing(3)
-        left_layout0.addWidget(self.folder_path_label)
+        # left_layout0.addSpacing(3)
+        # left_layout0.addWidget(self.folder_path_label)
         self.data_import.setLayout(left_layout0)
 
     # 参数设置
@@ -289,7 +336,7 @@ class MainWindow(QMainWindow):
         self.parameter_panel.setLayout(left_layout)
 
     # 分析总体设置
-        self.modes_panel = self.QGroupBoxCreator("分析设置:")
+        self.modes_panel = self.QGroupBoxCreator("分析设置")
         left_layout1 = QVBoxLayout()
         left_layout1.setContentsMargins(1, 0, 1, 0)
         self.between_stack = QStackedWidget()
@@ -300,7 +347,7 @@ class MainWindow(QMainWindow):
         nothing_GROUP.setLayout(nothing_layout1)
         self.between_stack.addWidget(nothing_GROUP)
 
-        # fs_iSCAT下的功能选择
+    # fs_iSCAT下的功能选择
         fs_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
         operation_layout = QVBoxLayout()
         # 寿命模型选择
@@ -385,14 +432,14 @@ class MainWindow(QMainWindow):
         fs_iSCAT_GROUP.setLayout(operation_layout)
         self.between_stack.addWidget(fs_iSCAT_GROUP)
 
-        # 光热信号处理下的功能选择（因为功能冲突，此板块暂不启用，通过between_stack_change覆盖选取）
+    # 光热信号处理下的功能选择（因为功能冲突，此板块暂不启用，通过between_stack_change覆盖选取）
         PA_GROUP = self.QGroupBoxCreator(style="noborder")
         PA_layout1 = QVBoxLayout()
         # 重复代码已删除
         PA_GROUP.setLayout(PA_layout1)
         self.between_stack.addWidget(PA_GROUP)
 
-        # EM_iSCAT下的功能选择
+    # EM_iSCAT下的功能选择
         EM_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
         EM_iSCAT_layout1 = QVBoxLayout()
         preprocess_set_layout = QHBoxLayout()
@@ -414,7 +461,7 @@ class MainWindow(QMainWindow):
         EM_iSCAT_layout1.addLayout(preprocess_set_layout2)
         EM_iSCAT_layout1.addSpacing(4)
         self.EM_mode_combo = QComboBox()
-        self.EM_mode_combo.addItems(["stft短时傅里叶","cwt连续小波变换","WVD维格纳-维尔分布（test)","SPWVD(test)"])
+        self.EM_mode_combo.addItems(["stft短时傅里叶","cwt连续小波变换"])
         EM_iSCAT_layout1.addWidget(self.EM_mode_combo)
         self.EM_mode_stack = QStackedWidget()
         # stft 短时傅里叶变换
@@ -424,14 +471,14 @@ class MainWindow(QMainWindow):
         process_set_layout1 = QHBoxLayout()
         process_set_layout1.addWidget(QLabel("处理方法"))
         self.stft_program_select = QComboBox()
-        self.stft_program_select.addItems(["python", "julia"])
+        self.stft_program_select.addItems(["python", "julia（未实现）"])
         process_set_layout1.addWidget(self.stft_program_select)
         self.stft_window_select = QComboBox()
         self.stft_window_select.addItems(["汉宁窗(hann)", "汉明窗(hanming)","gabor变换(gaussian)","矩形窗","blackman",'blackman-harris'])
         process_set_layout2 = QHBoxLayout()
         process_set_layout2.addWidget(QLabel("窗选择"))
         process_set_layout2.addWidget(self.stft_window_select)
-        self.stft_quality_btn = QPushButton("stft质量评价")
+        self.stft_quality_btn = QPushButton("stft质量评价（功率谱）")
         self.stft_process_btn = QPushButton("执行短时傅里叶变换")
         stft_layout.addLayout(process_set_layout1)
         stft_layout.addLayout(process_set_layout2)
@@ -447,35 +494,12 @@ class MainWindow(QMainWindow):
         self.cwt_program_select = QComboBox()
         self.cwt_program_select.addItems(["python","julia"])
         cwt_set_layout1.addWidget(self.cwt_program_select)
-        self.cwt_quality_btn = QPushButton("质量检验")
+        self.cwt_quality_btn = QPushButton("cwt质量检验（功率谱）")
         self.cwt_process_btn = QPushButton("执行连续小波变换")
         cwt_layout.addLayout(cwt_set_layout1)
         cwt_layout.addWidget(self.cwt_quality_btn)
         cwt_layout.addWidget(self.cwt_process_btn)
         self.EM_mode_stack.addWidget(cwt_GROUP)
-        # WVD 维格纳-维尔分布
-        wvd_GROUP = self.QGroupBoxCreator(style='inner')
-        wvd_layout = QVBoxLayout()
-        wvd_GROUP.setLayout(wvd_layout)
-        wvd_set_layout1 = QHBoxLayout()
-        self.wvd_quality_btn = QPushButton("质量检验")
-        self.wvd_process_btn = QPushButton("执行WVD 不可用")
-        wvd_layout.addLayout(wvd_set_layout1)
-        wvd_layout.addWidget(self.wvd_quality_btn)
-        wvd_layout.addWidget(self.wvd_process_btn)
-        self.EM_mode_stack.addWidget(wvd_GROUP)
-
-        # SPWVD 维格纳-维尔分布
-        spwvd_GROUP = self.QGroupBoxCreator(style='inner')
-        spwvd_layout = QVBoxLayout()
-        spwvd_GROUP.setLayout(spwvd_layout)
-        spwvd_set_layout1 = QHBoxLayout()
-        self.spwvd_quality_btn = QPushButton("质量检验")
-        self.spwvd_process_btn = QPushButton("执行spwvd 不可用")
-        spwvd_layout.addLayout(spwvd_set_layout1)
-        spwvd_layout.addWidget(self.spwvd_quality_btn)
-        spwvd_layout.addWidget(self.spwvd_process_btn)
-        self.EM_mode_stack.addWidget(spwvd_GROUP)
 
         EM_iSCAT_layout2 = QHBoxLayout()
         self.EM_output_btn = QPushButton("时频变换结果导出")
@@ -495,6 +519,8 @@ class MainWindow(QMainWindow):
         data_save_layout = QHBoxLayout()
         self.export_image_btn = QPushButton("导出结果为图片")
         self.export_data_btn = QPushButton("导出结果为数据")
+        self.export_data_btn.setStyleSheet(button_style_sheet)
+        self.export_image_btn.setStyleSheet(button_style_sheet)
         data_save_layout.addWidget(self.export_image_btn)
         data_save_layout.addWidget(self.export_data_btn)
 
@@ -514,13 +540,13 @@ class MainWindow(QMainWindow):
             self.FS_mode_combo.setCurrentIndex(0)
             self.cal_thread_open()
             self.stop_thread(type=1)
-            self.folder_path_label = QLabel("未选择文件夹")
+            self.update_status('准备就绪')
         if self.fuction_select.currentIndex() == 2:  # PA
             self.between_stack.setCurrentIndex(1)
             self.FS_mode_combo.setCurrentIndex(1)
             self.cal_thread_open()
             self.stop_thread(type=1)
-            self.folder_path_label = QLabel("未选择文件夹")
+            self.update_status('准备就绪')
         if self.fuction_select.currentIndex() == 3:  # ES-iSCAT
             self.between_stack.setCurrentIndex(3)
             self.EM_thread_open()
@@ -562,7 +588,7 @@ class MainWindow(QMainWindow):
         styles = {
             "default": """
             QGroupBox{
-                border:1px solid gray;
+                border:1px solid #aaaaaa;
                 border-radius:5px;
                 margin-top:5px;
                 padding:15px;
@@ -573,12 +599,13 @@ class MainWindow(QMainWindow):
                 ubcontrol-origin: margin;
                 left: 10px;
                 padding: 0 3px;
-                color: #333333;
+                color: #2E7D32;
+                font-weight: 1000;
             }
             """,
             "inner":"""
             QGroupBox{
-                border: 1px solid gray;
+                border: 1px solid #aaaaaa;
                 border-radius: 5px;
                 margin-top: 5px;
                 padding: 5px;
@@ -612,22 +639,8 @@ class MainWindow(QMainWindow):
         # 进度条
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
-        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setTextVisible(True)
         self.progress_bar.setFixedWidth(650)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #CCCCCC;
-                border-radius: 3px;
-                background: white;
-                text-align: center;
-                min-height: 18px;
-                max-height: 18px;
-            }
-            QProgressBar::chunk {
-                background-color: #4CAF50;
-                width: 10px;
-            }
-        """)
         self.status_bar.addWidget(self.progress_bar)
 
         # 状态指示灯 (红绿灯)
@@ -635,10 +648,22 @@ class MainWindow(QMainWindow):
         self.status_light.setPixmap(QPixmap(":/icons/green_light.png").scaled(16, 16))
         self.status_bar.addPermanentWidget(self.status_light)
 
-    def update_status(self, status, is_working=False):
+    def update_status(self, status, working_status='idle'):
         """更新状态条的显示"""
         self.status_label.setText(status)
-        light = "green_light.png" if not is_working else "yellow_light.png"
+        if working_status == 'idle' : # idle
+            light = "green_light.png"
+        elif working_status == 'working' :
+            light = "yellow_light.png"
+        elif working_status == 'warning':
+            light = "red_light.png"
+            logging.warning(status)
+        elif working_status == 'error':
+            QMessageBox.warning(self,'错误！',status)
+            logging.error(status)
+            light = "green_light.png"
+        else:
+            light = "red_light.png"
         self.status_light.setPixmap(QPixmap(f":/icons/{light}").scaled(16, 16))
 
     def setup_console(self):
@@ -725,6 +750,7 @@ class MainWindow(QMainWindow):
         self.cal_thread.stop_thread_signal.connect(self.stop_thread)
         self.cal_thread.cal_time.connect(lambda ms: logging.info(f"耗时: {ms}毫秒"))
         self.cal_thread.cal_running_status.connect(self.btn_safety)
+        self.cal_thread.update_status.connect(self.update_status)
 
     def signal_connect(self):
         # 连接参数区域按钮
@@ -774,21 +800,22 @@ class MainWindow(QMainWindow):
         self.data_processor = DataProcessor(folder_path)
         if folder_path:
             logging.info(folder_path)
-            self.folder_path_label.setText("已加载TIFF文件夹")
+            self.update_status("已加载TIFF文件夹",'idle')
             current_group = self.group_selector.currentText()
 
             # 读取文件夹中的所有tiff文件
             tiff_files = self.data_processor.load_and_sort_tiff(current_group)
 
-            if not tiff_files:
-                self.folder_path_label.setText("文件夹中没有目标TIFF文件")
+            if not tiff_files or tiff_files == []:
+                self.update_status("文件夹中没有目标TIFF文件",'warning')
+                QMessageBox.warning(self,"数据导入","文件夹中没有目标TIFF文件")
                 return
 
             # 读取所有图像
             self.data = self.data_processor.process_tiff(tiff_files)
 
             if not self.data:
-                self.folder_path_label.setText("无法读取TIFF文件")
+                self.update_status("无法读取TIFF文件",'warning')
                 return
 
             logging.info('成功加载TIFF数据')
@@ -810,21 +837,21 @@ class MainWindow(QMainWindow):
         self.data_processor = DataProcessor(folder_path,self.method_combo.currentText())
         if folder_path:
             logging.info(folder_path)
-            self.folder_path_label.setText("已加载SIF文件夹")
+            self.update_status("已加载SIF文件夹",'idle')
 
             # 读取文件夹中的所有sif文件
             check_sif = self.data_processor.load_and_sort_sif()
 
             if not check_sif:
-                self.folder_path_label.setText("文件夹中没有目标SIF文件")
-                logging.warning("请确认选择的文件格式是否匹配")
+                self.update_status("文件夹中没有目标SIF文件",'warning')
+                QMessageBox.warning(self,'数据导入',"文件夹中没有目标SIF文件,请确认选择的文件格式是否匹配")
                 return
 
             # 读取所有图像
             self.data = self.data_processor.process_sif()
 
             if not self.data:
-                self.folder_path_label.setText("无法读取sif文件")
+                self.update_status("无法读取sif文件",'warning')
                 return
 
             logging.info('成功加载SIF数据')
@@ -880,25 +907,48 @@ class MainWindow(QMainWindow):
         )
 
         if not file_path:
-            self.folder_path_label.setText("未选择文件")
+            # self.folder_path_label.setText("未选择文件")
             logging.info("用户取消选择")
             return
 
         logging.info(f"已选择AVI文件: {file_path}")
-        self.folder_path_label.setText("正在加载AVI文件...")
+        self.update_status("正在加载AVI文件...",'working')
 
         self.load_avi_EM_signal.emit(file_path)
+
+    def load_tiff_folder_EM(self):
+        """加载TIFF文件夹(FS-iSCAT)"""
+        self.status_label.setText("正在处理数据...")
+        self.avi_thread.start()
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "选择TIFF图像序列文件夹",
+            ""
+        )
+
+        if not folder_path:
+            # self.folder_path_label.setText("未选择文件夹")
+            logging.info("用户取消选择")
+            return
+
+        for f in os.listdir(folder_path):
+            if f.lower().endswith(('.tif', '.tiff')):
+                self.load_tif_EM_signal.emit(folder_path)
+                self.update_status("正在加载tiff文件...",'working')
+                return
+            else:
+                self.update_status("文件夹中没有TIFF文件",'warning')
+                return
 
     def loaded_EM(self, result):
         self.data = result
 
         if not self.data:
-            self.folder_path_label.setText("无法读取AVI文件")
-            logging.error("AVI文件读取失败")
+            self.update_status("无法读取文件",'warning')
             return
         else:
-            self.folder_path_label.setText("已加载AVI文件")
-            logging.info("AVI文件加载成功")
+            self.update_status("已加载文件",'idle')
+            logging.info("文件加载成功")
 
 
         # 设置时间滑块
@@ -912,28 +962,6 @@ class MainWindow(QMainWindow):
         # 根据图像大小调节region范围
         self.region_x_input.setMaximum(self.data['images'].shape[1])
         self.region_y_input.setMaximum(self.data['images'].shape[2])
-
-    def load_tiff_folder_EM(self):
-        """加载TIFF文件夹(FS-iSCAT)"""
-        folder_path = QFileDialog.getExistingDirectory(
-            self,
-            "选择TIFF图像序列文件夹",
-            ""
-        )
-
-        if not folder_path:
-            self.folder_path_label.setText("未选择文件夹")
-            logging.info("用户取消选择")
-            return
-
-        for f in os.listdir(folder_path):
-            if f.lower().endswith(('.tif', '.tiff')):
-                self.load_tif_EM_signal.emit(folder_path)
-                return
-            else:
-                self.folder_path_label.setText("文件夹中没有TIFF文件")
-                logging.warning("文件夹中没有TIFF文件")
-                return
 
     def make_hover_handler(self):
         args = {'x': None, 'y': None, 't': None, 'value': None}
@@ -980,20 +1008,20 @@ class MainWindow(QMainWindow):
             return
 
         dialog = BadFrameDialog(self)
-        self.update_status("坏点修复ing", True)
+        self.update_status("坏点修复ing", 'working')
         if dialog.exec_():
             # 更新图像显示
             self.update_time_slice(0)
             self.time_slider.setValue(0)
             logging.info(f"坏点处理完成，修复了 {len(dialog.bad_frames)} 个坏帧")
-        self.update_status("准备就绪", False)
+        self.update_status("准备就绪", 'idle')
 
     def calculation_set_edit_dialog(self):
         """计算设置调整"""
         if not hasattr(self, 'data') or self.data is None:
             logging.warning("无数据，请先加载数据文件")
             return
-        self.update_status("计算设置ing", True)
+        self.update_status("计算设置ing", 'working')
         dialog = CalculationSetDialog(self.cal_set_params)
         if dialog.exec_():
             self.update_time_slice(0)
@@ -1004,18 +1032,18 @@ class MainWindow(QMainWindow):
             self.plot_params['_from_start_cal'] = self.cal_set_params['from_start_cal']
             self.result_display.update_plot_settings(self.plot_params, update=False)
             logging.info("设置已更新，请重新绘图")
-        self.update_status("准备就绪", False)
+        self.update_status("准备就绪", 'idle')
 
     def plt_settings_edit_dialog(self):
         """绘图设置"""
         dialog = PltSettingsDialog(params=self.plot_params)
-        self.update_status("绘图设置ing", True)
+        self.update_status("绘图设置ing", 'working')
         if dialog.exec_():
             # 将参数传递给ResultDisplayWidget
             self.result_display.update_plot_settings(dialog.params)
             self.plot_params = dialog.params
             logging.info("绘图已更新")
-        self.update_status("准备就绪", False)
+        self.update_status("准备就绪", 'idle')
 
     def roi_select_dialog(self):
         """ROI选取功能"""
@@ -1023,7 +1051,7 @@ class MainWindow(QMainWindow):
             logging.warning("无数据，请先加载数据文件")
             return
         roi_dialog = ROIdrawDialog(base_layer_array=self.data['images'][self.idx],parent=self)
-        self.update_status("ROI绘制ing", True)
+        self.update_status("ROI绘制ing", 'working')
         if roi_dialog.exec_() == QDialog.Accepted:
             if roi_dialog.action_type == "mask":
                 self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
@@ -1039,7 +1067,7 @@ class MainWindow(QMainWindow):
                 logging.info(f'成功绘制ROI，大小{self.vector_array.shape}')
 
 
-        self.update_status("准备就绪", False)
+        self.update_status("准备就绪", 'idle')
 
     def update_time_slice(self, idx, first_create = False):
         """更新时间切片显示"""
@@ -1062,13 +1090,17 @@ class MainWindow(QMainWindow):
             self.progress_bar.setMaximum(total)
 
         self.progress_bar.setValue(current)
+        self.progress_bar.setFormat(
+            f"进度: {current}/{self.progress_bar.maximum()} ({current / self.progress_bar.maximum() * 100:.1f}%)")
         self.console_widget.update_progress(current, total)
 
         if current == 1:
             # self.update_status("计算中...", True)
             pass
         elif current >= self.progress_bar.maximum():
-            self.update_status("进程任务完成")
+            self.update_status("进程任务完成,准备就绪",'idle')
+            self.progress_bar.reset()
+        elif current == -1:
             self.progress_bar.reset()
 
     def vectorROI_signal_show(self):
@@ -1206,7 +1238,7 @@ class MainWindow(QMainWindow):
             return
 
         self.thread.start()
-        self.update_status('计算进行中...', True)
+        self.update_status('计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
         center = (self.region_y_input.value(), self.region_x_input.value())
         shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
@@ -1225,7 +1257,7 @@ class MainWindow(QMainWindow):
 
 
         self.thread.start()
-        self.update_status('长时计算进行中...', True)
+        self.update_status('长时计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type)
@@ -1242,7 +1274,7 @@ class MainWindow(QMainWindow):
             self.cal_thread_open()
 
         self.thread.start()
-        self.update_status('计算进行中...', True)
+        self.update_status('计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
         self.space_unit = float(self.space_step_input.value())
         self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_unit, self.space_unit)
@@ -1254,6 +1286,7 @@ class MainWindow(QMainWindow):
             return
         if 'data_origin' not in self.data:
             logging.error("数据加载有误，请重新加载数据")
+            QMessageBox.warning(self,'数据错误',"数据加载有误，请重新加载数据")
             return
         self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
 
@@ -1266,23 +1299,23 @@ class MainWindow(QMainWindow):
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
             dialog = STFTComputePop(self.EM_params,'quality')
-            self.update_status("STFT计算ing", True)
+            self.update_status("STFT计算ing", 'working')
             if dialog.exec_():
                 self.EM_params['target_freq'] = dialog.target_freq_input.value()
-                self.EM_fs = dialog.fs_input.value()
+                self.EM_fps = dialog.fps_input.value()
                 self.EM_params['stft_window_size'] = dialog.window_size_input.value()
                 self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
                 self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
-                self.stft_quality_signal.emit(self.EM_params['target_freq'],self.EM_fs,
+                self.stft_quality_signal.emit(self.EM_params['target_freq'],self.EM_fps,
                                              self.EM_params['stft_window_size'],
                                              self.EM_params['stft_noverlap'],
                                              self.EM_params['custom_nfft'],
                                              self.EM_params['stft_window_type'])
-                self.EM_params['EM_fs']=self.EM_fs
+                self.EM_params['EM_fps']=self.EM_fps
                 self._is_quality = True
         else:
             logging.warning("请先对数据进行预处理")
-            self.update_status("准备就绪", False)
+            self.update_status("准备就绪")
             return
 
     def process_EM_stft(self):
@@ -1300,21 +1333,21 @@ class MainWindow(QMainWindow):
             self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
             if not self._is_quality: # 未质量评价
                 dialog = STFTComputePop(self.EM_params,'signal')
-                self.update_status("STFT计算ing", True)
+                self.update_status("STFT计算ing", 'working')
                 if dialog.exec_():
                     self.EM_params['target_freq'] = dialog.target_freq_input.value()
-                    self.EM_fs = dialog.fs_input.value()
+                    self.EM_fps = dialog.fps_input.value()
                     self.EM_params['stft_window_size'] = dialog.window_size_input.value()
                     self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
                     self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
-                    self.stft_python_signal.emit(self.EM_params['target_freq'],self.EM_fs,
+                    self.stft_python_signal.emit(self.EM_params['target_freq'],self.EM_fps,
                                                  self.EM_params['stft_window_size'],
                                                  self.EM_params['stft_noverlap'],
                                                  self.EM_params['custom_nfft'],
                                                  self.EM_params['stft_window_type'])
-                    self.EM_params['EM_fs']=self.EM_fs
+                    self.EM_params['EM_fps']=self.EM_fps
             else:
-                self.stft_python_signal.emit(self.EM_params['target_freq'], self.EM_fs,
+                self.stft_python_signal.emit(self.EM_params['target_freq'], self.EM_fps,
                                              self.EM_params['stft_window_size'],
                                              self.EM_params['stft_noverlap'],
                                              self.EM_params['custom_nfft'],
@@ -1322,7 +1355,7 @@ class MainWindow(QMainWindow):
                 self._is_quality = False
         else:
             logging.warning("请先对数据进行预处理")
-            self.update_status("准备就绪", False)
+            self.update_status("准备就绪")
             return
 
     def quality_EM_cwt(self):
@@ -1334,17 +1367,17 @@ class MainWindow(QMainWindow):
 
             if dialog.exec_():
                 self.EM_params['target_freq'] = dialog.target_freq_input.value()
-                self.EM_fs = dialog.fs_input.value()
+                self.EM_fps = dialog.fps_input.value()
                 self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
                 self.EM_params['cwt_type'] = dialog.wavelet.currentText()
                 self.cwt_quality_signal.emit(self.EM_params['target_freq'],
-                                             self.EM_fs,
+                                             self.EM_fps,
                                              self.EM_params['cwt_total_scales'],
                                              self.EM_params['cwt_type'])
-                self.EM_params['EM_fs'] = self.EM_fs
+                self.EM_params['EM_fps'] = self.EM_fps
         else:
             logging.warning("请先对数据进行预处理")
-            self.update_status("准备就绪", False)
+            self.update_status("准备就绪")
             return
 
     def process_EM_cwt(self):
@@ -1355,21 +1388,21 @@ class MainWindow(QMainWindow):
         if "unfolded_data" in self.data :
             dialog = CWTComputePop(self.EM_params, 'signal')
             if dialog.exec_():
-                self.update_status("CWT计算ing", True)
-                self.EM_params['EM_fs'] = dialog.fs_input.value()
-                self.EM_fs = self.EM_params['EM_fs']
+                self.update_status("CWT计算ing", 'working')
+                self.EM_params['EM_fps'] = dialog.fps_input.value()
+                self.EM_fps = self.EM_params['EM_fps']
                 self.EM_params['target_freq'] = dialog.target_freq_input.value()
                 self.EM_params['cwt_type'] = dialog.wavelet.currentText()
                 self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
                 self.EM_params['cwt_scale_range'] = dialog.cwt_scale_range.value()
                 self.cwt_python_signal.emit(self.EM_params['target_freq'],
-                                            self.EM_fs,
+                                            self.EM_fps,
                                             self.EM_params['cwt_total_scales'],
                                             self.EM_params['cwt_type'],
                                             self.EM_params['cwt_scale_range'])
         else:
             logging.warning("请先对数据进行预处理")
-            self.update_status("准备就绪", False)
+            self.update_status("准备就绪", 'idle')
             return
 
     def EM_result(self, result, times):
@@ -1495,7 +1528,7 @@ class MainWindow(QMainWindow):
         if self.result_display.current_dataframe is not None:
             dialog = DataSavingPop(self)
             file_path = None
-            self.update_status("数据导出ing", True)
+            self.update_status("数据导出ing", 'working')
             if dialog.exec_():
                 isfiting = dialog.fitting_check.isChecked()
                 hasheader = dialog.index_check.isChecked()
@@ -1504,7 +1537,7 @@ class MainWindow(QMainWindow):
                     self, "保存数据", "", "CSV文件 (*.csv);;文本文件 (*.txt)")
         else:
             logging.warning("没有数据可以导出")
-            self.update_status("准备就绪", False)
+            self.update_status("准备就绪")
             return
 
         if file_path:
@@ -1535,10 +1568,10 @@ class MainWindow(QMainWindow):
                     logging.info("数据已保存")
                 except:
                     logging.info("数据未保存")
-            self.update_status("准备就绪", False)
+            self.update_status("准备就绪", 'idle')
         else:
             logging.info("数据未保存")
-            self.update_status("准备就绪", False)
+            self.update_status("准备就绪", 'idle')
             return
 
     def export_EM_data(self,result):
@@ -1549,7 +1582,8 @@ class MainWindow(QMainWindow):
                 if dialog.exec_():
                     directory = dialog.directory
                     prefix = dialog.text_edit.text().strip()
-                    self.mass_export_signal.emit(self.data['EM_result'],directory,prefix)
+                    filetype = dialog.type_combo.currentText()
+                    self.mass_export_signal.emit(self.data['EM_result'],directory,prefix,filetype)
 
                 return
             else:
@@ -1603,7 +1637,310 @@ class StreamLogger(object):
 
 if __name__ == "__main__":
     app = QApplication([])
-    app.setStyle("Fusion")
+    QFontDatabase.addApplicationFont("C:/Windows/Fonts/NotoSansSC-VF.ttf")  # 如：思源黑体、阿里巴巴普惠体
+    QFontDatabase.addApplicationFont("C:/Windows/Fonts/calibril.ttf")  # 如：Roboto、Fira Code
+    QSS = """
+    QWidget {
+        background-color: #0a192f;  /* 深蓝背景 */
+        color: #e6f1ff;             /* 浅蓝文字 */
+        font-family: "Fira Code", "Microsoft YaHei"; /* 优先使用科技感英文字体 */
+        font-size: 12px;
+        border: none;
+    }
+
+    /* 按钮样式 */
+    QPushButton {
+        background-color: #112240;   /* 深蓝按钮 */
+        border: 1px solid #64ffda;   /* 科技感青色边框 */
+        border-radius: 4px;          /* 圆角 */
+        padding: 8px 16px;
+        color: #64ffda;              /* 青色文字 */
+        font-weight: bold;
+    }
+    QPushButton:hover {
+        background-color: #0c2a4d;   /* 悬停加深 */
+        border-color: #00ffcc;       /* 悬停高亮 */
+    }
+    QPushButton:pressed {
+        background-color: #020c1b;   /* 按下效果 */
+    }
+
+    /* 输入框样式 */
+    QLineEdit, QTextEdit {
+        background-color: #0a192f;
+        border: 1px solid #233554;   /* 深蓝边框 */
+        border-radius: 3px;
+        padding: 6px;
+        color: #a8b2d1;              /* 灰蓝文字 */
+        selection-background-color: #64ffda; /* 选中文本背景 */
+    }
+    QLineEdit:focus, QTextEdit:focus {
+        border-color: #64ffda;       /* 聚焦高亮 */
+    }
+
+    /* 标签与标题 */
+    QLabel {
+        color: #ccd6f6;              /* 亮蓝文字 */
+        font-size: 14px;
+    }
+    QLabel#title {                   /* 通过 objectName 定制 */
+        font-size: 18px;
+        font-weight: bold;
+        color: #64ffda;
+    }
+
+    /* 复选框/单选框 */
+    QCheckBox, QRadioButton {
+        color: #ccd6f6;
+        spacing: 5px;                /* 图标与文字间距 */
+    }
+    QCheckBox::indicator, QRadioButton::indicator {
+        width: 16px;
+        height: 16px;
+        border: 1px solid #64ffda;
+        border-radius: 3px;
+    }
+    QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+        background-color: #64ffda;   /* 选中状态 */
+    }
+
+    /* 进度条 */
+    QProgressBar {
+        border: 1px solid #233554;
+        border-radius: 3px;
+        text-align: center;
+    }
+    QProgressBar::chunk {
+        background-color: #64ffda;   /* 进度填充色 */
+    }
+    """
+    QSS1 ="""
+    /* ========== QMenuBar 样式 ========== */
+QMenuBar {
+    background-color: #ffffff;
+    border-top: 3px solid #4CAF50;
+    padding: 6px;
+    margin-bottom: 3px;
+    font-weight: 475;
+}
+
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 8px;
+    border-radius: 2px;
+    color: #2E7D32;
+    margin: 0px 2px 4px 2px;
+}
+
+QMenuBar::item:selected {
+    background-color: #E8F5E9;
+}
+
+QMenuBar::item:pressed {
+    background-color: #C8E6C9;
+}
+QDockWidget {
+    border: 1px solid #388E3C;
+    border-radius: 4px;
+}
+
+/* 标题栏样式 */
+QDockWidget::title {
+    background-color: #C8E6C9;
+    text-align: center;
+    padding: 2px;
+}
+
+QDockWidget::title:hover {
+    background-color: #4CAF50;
+    color: white;
+}
+
+
+/* 内容区域样式 */
+QDockWidget > QWidget {
+    background-color: #fefefe;
+    border: 2px solid #C8E6C9;
+    border-top: none;
+
+}
+
+/* 分隔线样式 */
+QDockWidget::separator {
+    background-color: #C8E6C9;
+    width: 1px;
+    height: 1px;
+}
+
+/* 当停靠窗口浮动时的样式 */
+QDockWidget[floating="true"] {
+    border: 2px solid #C8E6C9;
+}
+/* ========== 状态栏渐变 ========== */
+QStatusBar {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #C8E6C9, stop:1 #fefefe);
+}
+/* ========== 进度条 ========== */
+QProgressBar {
+                border: 1px solid #C8E6C9;
+                border-radius: 3px;
+                background: white;
+                text-align: center;
+                min-height: 18px;
+                max-height: 18px;
+            }
+            QProgressBar::chunk {
+                background-color: #C8E6C9;
+                width: 10px;
+            }
+/* ========== 工具栏 ========== */
+QToolBar {
+    background-color: white;
+    border: 2px outset #C8E6C9;
+    padding: 2px;
+    spacing: 6px; /* 工具按钮间距 */
+}
+QToolBox::tab:selected { /* italicize selected tabs */
+    font: italic;
+    color: white;
+}
+QToolBar::separator {
+    background-color: #C8E6C9;
+    width: 1px;
+    margin: 4px 2px;
+}
+
+QToolBar QToolButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 3px;
+    min-width: 20px;
+}
+
+QToolBar QToolButton:hover {
+    background-color: #E8F5E9;
+    border-color: #C8E6C9;
+}
+
+QToolBar QToolButton:checked {
+    background-color: #C8E6C9;
+    border-color: #4CAF50;
+}
+
+QToolBar QToolButton:pressed {
+    background-color: #A5D6A7;
+}
+
+/* ========== QToolBox 样式 ========== */
+QToolBox {
+    background-color: white;
+}
+
+QToolBox::tab {
+    background-color: #E8F5E9;
+    color: #2E7D32;
+    border: 1px solid #C8E6C9;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    padding: 8px;
+    font-weight: 500;
+}
+
+QToolBox::tab:selected {
+    background-color: #4CAF50;
+    color: white;
+}
+
+QToolBox::tab:hover {
+    background-color: #C8E6C9;
+}
+
+QToolBox > QWidget {
+    background-color: white;
+    border: 1px solid #C8E6C9;
+    border-radius: 4px;
+}
+/* ========== QButton 样式 ========== */
+QPushButton {
+    background-color: white;
+    border: 1px solid #9ad19a;
+    border-radius: 4px;
+    padding: 3px 4px 3px 4px;
+}
+QPushButton:hover {
+    border-color: #4CAF50;
+}
+QPushButton:pressed {
+    border: 2px solid #4CAF50;
+    background-color: #F1F8E9;
+}
+
+QPushButton:disabled {
+    background-color: #F5F5F5;
+    color: #BDBDBD;
+}
+
+/* ========== QComboBox 样式 ========== */
+QComboBox {
+    background-color: white;
+    border: 1px solid #9ad19a;
+    border-radius: 4px;
+    padding: 2px 2px 2px 4px; 
+
+    min-width: 50px;
+    selection-background-color: #E8F5E9;
+}
+
+QComboBox:hover {
+    border-color: #4CAF50;
+}
+
+QComboBox:focus {
+    border: 2px solid #4CAF50;
+    background-color: #F1F8E9;
+}
+
+QComboBox:disabled {
+    background-color: #F5F5F5;
+    color: #BDBDBD;
+}
+
+/* 下拉箭头样式 */
+QComboBox::drop-down {
+    width: 24px;
+    border-left: 1px solid #C8E6C9;
+    border-radius: 0 2px 2px 0;
+}
+
+QComboBox::down-arrow {
+}
+
+
+/* 下拉菜单样式 */
+QComboBox QAbstractItemView {
+    background-color: white;
+    border: 1px solid #C8E6C9;
+    selection-background-color: #E8F5E9;
+    selection-color: #2E7D32;
+    outline: 0;  /* 移除选中项的虚线框 */
+    padding: 4px;
+}
+
+QComboBox QAbstractItemView::item {
+    height: 28px;
+    padding: 0 8px;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #C8E6C9;
+}
+    """
+    # 应用全局样式
+    app.setStyle('Fusion')
+    app.setStyleSheet(QSS1)
+    # app.setFont(QFont("Noto Sans"))
     app.setWindowIcon(QIcon(':/LifeCalor.ico'))
     window = MainWindow()
     window.setWindowIcon(QIcon(':/LifeCalor.ico'))

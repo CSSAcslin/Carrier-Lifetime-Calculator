@@ -7,8 +7,9 @@ from PyQt5.QtGui import QColor, QIntValidator, QFont
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QRadioButton, QSpinBox, QLineEdit, QPushButton,
                              QLabel, QMessageBox, QFormLayout, QDoubleSpinBox, QColorDialog, QComboBox, QCheckBox,
-                             QFileDialog)
-from PyQt5.QtCore import Qt
+                             QFileDialog, QWhatsThis, QTextBrowser)
+from PyQt5.QtCore import Qt, QEvent
+
 
 # 坏帧处理对话框
 class BadFrameDialog(QDialog):
@@ -98,6 +99,30 @@ class BadFrameDialog(QDialog):
         # 初始状态
         self.auto_radio.toggled.connect(self.update_ui_state)
         self.update_ui_state()
+
+    def event(self, event):
+        if event.type() == QEvent.EnterWhatsThisMode:
+            QWhatsThis.leaveWhatsThisMode()
+            self.show_custom_help()  # 调用自定义弹窗方法
+            return True
+        return super().event(event)
+
+    def show_custom_help(self):
+        """显示自定义非模态帮助对话框"""
+        help_title = "功能帮助说明"
+        help_content = """
+        <h3>主要功能说明</h3>
+        <ul>
+            <li><b>功能1</b>: 描述内容...</li>
+            <li><b>功能2</b>: 描述内容...</li>
+            <li><b>高级选项</b>: 点击<a href="https://example.com">这里</a>查看详情</li>
+        </ul>
+        <p><i>注：本帮助窗口不会阻塞主界面操作</i></p>
+        """
+
+        # 创建并显示自定义对话框
+        help_dialog = CustomHelpDialog(help_title, help_content, self)
+        help_dialog.show()  # 非阻塞显示
 
     def update_ui_state(self):
         """根据选择的方法更新UI状态"""
@@ -450,16 +475,16 @@ class STFTComputePop(QDialog):
         layout = QFormLayout()
 
         self.target_freq_input = QDoubleSpinBox()
-        self.target_freq_input.setRange(0.1, 100)
+        self.target_freq_input.setRange(0.1, 1000)
         self.target_freq_input.setValue(self.params['target_freq'])
         self.target_freq_input.setSuffix(" Hz")
 
-        self.fs_input = QSpinBox()
-        self.fs_input.setRange(100,9999)
-        self.fs_input.setValue(self.params['EM_fs'])
+        self.fps_input = QSpinBox()
+        self.fps_input.setRange(10,9999)
+        self.fps_input.setValue(self.params['EM_fps'])
 
         self.window_size_input = QSpinBox()
-        self.window_size_input.setRange(16, 2048)
+        self.window_size_input.setRange(1, 2048)
         self.window_size_input.setValue(self.params['stft_window_size'])
 
         self.noverlap_input = QSpinBox()
@@ -471,7 +496,7 @@ class STFTComputePop(QDialog):
         self.custom_nfft_input.setValue(self.params['custom_nfft'])
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
-        layout.addRow(QLabel("采样频率"),self.fs_input)
+        layout.addRow(QLabel("采样帧率"),self.fps_input)
         layout.addRow(QLabel("窗口大小"),self.window_size_input)
         layout.addRow(QLabel("窗口重叠"),self.noverlap_input)
         layout.addRow(QLabel("变换长度"),self.custom_nfft_input)
@@ -507,9 +532,9 @@ class CWTComputePop(QDialog):
         self.target_freq_input.setValue(self.params['target_freq'])
         self.target_freq_input.setSuffix(" Hz")
 
-        self.fs_input = QSpinBox()
-        self.fs_input.setRange(100,9999)
-        self.fs_input.setValue(self.params['EM_fs'])
+        self.fps_input = QSpinBox()
+        self.fps_input.setRange(100,9999)
+        self.fps_input.setValue(self.params['EM_fps'])
 
         self.cwt_size_input = QSpinBox()
         self.cwt_size_input.setRange(1, 2048)
@@ -521,7 +546,7 @@ class CWTComputePop(QDialog):
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
         layout.addRow(QLabel("小波类型"),self.wavelet)
-        layout.addRow(QLabel("采样频率"),self.fs_input)
+        layout.addRow(QLabel("采样帧率"),self.fps_input)
         layout.addRow(QLabel("计算尺度"),self.cwt_size_input)
 
         if self.case == 'signal':
@@ -548,13 +573,14 @@ class MassDataSavingPop(QDialog):
         super().__init__(parent)
         self.directory = None
         self.setWindowTitle("数据导出")
-        self.setMinimumWidth(400)  # 加宽以适应新控件
-        self.setMinimumHeight(450)
-        self.datatypes = datatypes if datatypes else []
+        self.setMinimumWidth(360)  # 加宽以适应新控件
+        self.setMinimumHeight(260)
+        # self.datatypes = datatypes if datatypes else []
+        self.datatypes = ['tif','avi','gif','png']
 
         # 创建字体对象
-        font = QFont("Segoe UI", 10)  # 使用更现代化的字体
-        self.setFont(font)
+        # font = QFont("Segoe UI", 10)  # 使用更现代化的字体
+        # self.setFont(font)
 
         self.init_ui()
         self.setStyleSheet(self.style_sheet())  # 设置样式表
@@ -562,28 +588,20 @@ class MassDataSavingPop(QDialog):
     def style_sheet(self):
         """返回美化界面的样式表"""
         return """
-            QDialog {
-                background-color: #f8f9fa;
-                border-radius: 8px;
-            }
-            QLabel {
-                color: #495057;
-                font-weight: 500;
-            }
             QLineEdit, QComboBox {
                 background-color: white;
                 border: 1px solid #ced4da;
                 border-radius: 4px;
                 padding: 5px;
-                min-height: 20px;
+                min-height: 25px;
             }
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: 250;
-                min-width: 40px;
+                border-radius: 3px;
+                padding: 4px 6px;
+                font-weight: 450;
+                min-width: 50px;
             }
             QPushButton#cancel {
                 background-color: #6c757d;
@@ -602,41 +620,34 @@ class MassDataSavingPop(QDialog):
         main_layout.setContentsMargins(20, 20, 20, 20)
 
         # 1. 路径选择组件
-        path_layout = QVBoxLayout()
+        path_layout = QFormLayout()
         path_label = QLabel("保存路径:")
-        path_label.setMinimumHeight(20)
         self.path_edit = QLineEdit()
-        self.path_edit.setMinimumHeight(35)
+        path_layout.addRow(path_label,self.path_edit)
         self.path_edit.setPlaceholderText("选择或输入文件保存路径")
-
         browse_btn = QPushButton("浏览文件夹")
         browse_btn.clicked.connect(self.browse_directory)
-        browse_btn.setMinimumHeight(35)
-
-        path_layout.addWidget(path_label)
-        path_layout.addWidget(self.path_edit)
-        path_layout.addWidget(browse_btn)
+        path_layout.addRow(QLabel(""),browse_btn)
 
         # 2. 文本输入框
-        text_layout = QVBoxLayout()
+        text_layout = QHBoxLayout()
         text_label = QLabel("文件名称:")
         self.text_edit = QLineEdit()
-        self.text_edit.setMinimumHeight(35)
         self.text_edit.setPlaceholderText("请输入文件名（前缀）")
         text_layout.addWidget(text_label)
         text_layout.addWidget(self.text_edit)
 
         # 3. 动态数据类型选择器
-        type_layout = QVBoxLayout()
+        type_layout = QHBoxLayout()
         type_label = QLabel("数据类型:")
         self.type_combo = QComboBox()
-        self.type_combo.setMinimumHeight(35)
         self.update_datatype(self.datatypes)  # 初始化下拉菜单
         type_layout.addWidget(type_label)
         type_layout.addWidget(self.type_combo)
 
         # 将三个部分添加到主布局
         main_layout.addLayout(type_layout)
+        main_layout.addWidget(QLabel('注意：使用avi/gif/png，会对数据有压缩！'))
         main_layout.addLayout(path_layout)
         main_layout.addLayout(text_layout)
 
@@ -681,3 +692,38 @@ class MassDataSavingPop(QDialog):
             'filename': self.text_edit.text().strip(),
             'filetype': self.type_combo.currentText()
         }
+
+# 帮助dialog
+class CustomHelpDialog(QDialog):
+    """自定义非模态帮助对话框"""
+
+    def __init__(self, title, content, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        self.setAttribute(Qt.WA_DeleteOnClose)  # 关闭时自动释放
+
+        # 创建布局和控件
+        layout = QVBoxLayout()
+
+        # 标题标签
+        title_label = QLabel(title)
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(12)
+        title_label.setFont(title_font)
+        layout.addWidget(title_label)
+
+        # 富文本内容区域（支持HTML格式）
+        content_browser = QTextBrowser()
+        content_browser.setHtml(content)
+        content_browser.setOpenExternalLinks(True)  # 允许打开外部链接
+        layout.addWidget(content_browser)
+
+        # 关闭按钮
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+        self.setLayout(layout)
+        self.resize(250, 500)  # 设置初始大小
