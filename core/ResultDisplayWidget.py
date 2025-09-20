@@ -1,20 +1,13 @@
 import logging
-
 import numpy as np
 import matplotlib as plt
 import matplotlib.font_manager as fm
 import pandas as pd
 from PyQt5.QtCore import pyqtSignal
-from fontTools.misc.cython import returns
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
-                             QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
-                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QTabWidget
-                             )
-from numpy.ma.core import shape
-from pandas.core.interchange.dataframe_protocol import DataFrame
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QTabWidget)
+from DataManager import *
 
 
 class ResultDisplayWidget(QTabWidget):
@@ -179,18 +172,12 @@ class ResultDisplayWidget(QTabWidget):
         # 根据标签页类型调用对应的绘图方法
         if tab_type == 'heatmap':
             self.display_distribution_map(
-                raw_data['lifetime_map'],
+                raw_data['data'],
                 reuse_current=True
             )
         elif tab_type == 'curve':
             self.display_lifetime_curve(
-                raw_data['phy_signal'],
-                raw_data['lifetime'],
-                raw_data['r_squared'],
-                raw_data['fit_curve'],
-                raw_data['time_points'],
-                raw_data['boundary'],
-                raw_data['model_type'],
+                raw_data['data'],
                 reuse_current=True
             )
         elif tab_type == 'roi':
@@ -202,12 +189,18 @@ class ResultDisplayWidget(QTabWidget):
             )
         elif tab_type == 'diff':
             self.display_diffusion_coefficient(
-                raw_data['frame_data_dict'],
+                raw_data['data'],
                 reuse_current=True
             )
         elif tab_type == 'var':
             self.plot_variance_evolution(
                 reuse_current=True)
+
+        elif tab_type == 'quality':
+            self.display_quality(
+                raw_data['data'],
+                reuse_current=True
+            )
 
         elif tab_type == 'series':
             self.plot_time_series(
@@ -216,9 +209,10 @@ class ResultDisplayWidget(QTabWidget):
                 reuse_current=True)
 
 
-    def display_distribution_map(self, lifetime_map, reuse_current=False):
+    def display_distribution_map(self, data, reuse_current=False):
         """显示寿命热图"""
         self.current_mode = "heatmap"
+        lifetime_map = data.data_processed
         figure, canvas, index, title, tab = self.create_tab(self.current_mode, '热', reuse_current)
 
         cmap = self.plot_settings['heatmap_cmap']
@@ -237,11 +231,18 @@ class ResultDisplayWidget(QTabWidget):
         self.current_dataframe = pd.DataFrame(lifetime_map)
         self.store_tab_data(tab, self.current_mode, lifetime_map=lifetime_map)
 
-    def display_lifetime_curve(self, phy_signal, lifetime, r_squared, fit_curve,time_points,boundary, model_type, reuse_current=False):
+    def display_lifetime_curve(self,data,reuse_current=False):
         """显示区域分析结果"""
         # 使用原来的结果显示区域
         self.current_mode = "curve"
         figure, canvas, index, title, tab = self.create_tab(self.current_mode, '寿', reuse_current)
+        phy_signal = data.out_processed['phy_signal']
+        lifetime = data.out_processed['lifetime']
+        r_squared = data.out_processed['r_squared']
+        fit_curve = data.out_processed['fit_curve']
+        boundary = data.out_processed['boundary']
+        model_type = data.out_processed['model_type']
+        time_point = data.time_point
 
         line_style = self.plot_settings['line_style']
         line_width = self.plot_settings['line_width']
@@ -259,7 +260,7 @@ class ResultDisplayWidget(QTabWidget):
 
         # 绘制原始曲线
         # time_points = time_points - time_points[0]  # 从0开始
-        ax.plot(time_points, phy_signal,
+        ax.plot(time_point, phy_signal,
                 markeredgecolor=color, # 点边缘色
                 markeredgewidth=line_width,
                 label='原始数据',
@@ -270,13 +271,13 @@ class ResultDisplayWidget(QTabWidget):
         if not self.plot_settings['_from_start_cal']:
             # 这是从最大值算的绘制拟合曲线
             max_idx = np.argmax(phy_signal)
-            fit_time = time_points[max_idx:]
+            fit_time = time_point[max_idx:]
             ax.plot(fit_time, fit_curve, 'r', linestyle=line_style, label='拟合曲线')
             # 标记最大值
-            ax.axvline(time_points[max_idx], color='g', linestyle=':', label='峰值位置')
-        elif self.plot_settings['_from_start_cal'] and np.shape(time_points)==np.shape(fit_curve):
+            ax.axvline(time_point[max_idx], color='g', linestyle=':', label='峰值位置')
+        elif self.plot_settings['_from_start_cal'] and np.shape(time_point)==np.shape(fit_curve):
             # 这是从头算的拟合曲线绘制
-            fit_time = time_points
+            fit_time = time_point
             ax.plot(fit_time, fit_curve, 'r', linestyle=line_style, label='拟合曲线')
 
         # 标记r^2和τ
@@ -304,19 +305,12 @@ class ResultDisplayWidget(QTabWidget):
 
         canvas.draw()
         self.current_dataframe = pd.DataFrame({
-                                'time': pd.Series(time_points),
+                                'time': pd.Series(time_point),
                                 'signal': pd.Series(phy_signal),
                                 'fit_time': pd.Series(fit_time),
                                 'fit_curve':pd.Series(fit_curve)
                             })
-        self.store_tab_data(tab, self.current_mode,
-                           phy_signal=phy_signal,
-                           lifetime=lifetime,
-                           r_squared=r_squared,
-                           fit_curve=fit_curve,
-                           time_points=time_points,
-                           boundary=boundary,
-                           model_type=model_type)
+        self.store_tab_data(tab, self.current_mode, data = data)
 
     def display_roi_series(self, positions, intensities, fig_title="", reuse_current=False):
         """绘制向量ROI信号强度曲线"""
@@ -355,7 +349,7 @@ class ResultDisplayWidget(QTabWidget):
                                     })
         self.store_tab_data(tab, self.current_mode, fig_title=fig_title , positions=positions, intensities=intensities)
 
-    def display_diffusion_coefficient(self, frame_data_dict, reuse_current=False):
+    def display_diffusion_coefficient(self, data, reuse_current=False):
         """绘制多帧信号及高斯拟合"""
         # if frame_data_dict is None:
         #     logging.warning('缺数据或数据有问题无法绘图')
@@ -363,7 +357,8 @@ class ResultDisplayWidget(QTabWidget):
         self.current_mode = "diff"
         figure, canvas, index, title, tab = self.create_tab(self.current_mode, '扩', reuse_current)
         ax = figure.add_subplot(111)
-        self.dif_result = frame_data_dict
+        self.data = data
+        self.dif_result = data.out_processed
         marker_style = self.plot_settings['marker_style']
         marker_size = self.plot_settings['marker_size']
         color = self.plot_settings['color']
@@ -413,7 +408,7 @@ class ResultDisplayWidget(QTabWidget):
                 outcome.extend([signal,fitting])
             columns = pd.MultiIndex.from_arrays([layer1,layer2])
             self.current_dataframe = pd.DataFrame(np.array(outcome).T, columns = columns)
-            self.store_tab_data(tab, self.current_mode, frame_data_dict=frame_data_dict)
+            self.store_tab_data(tab, self.current_mode, data = data)
         except Exception as e:
             logging.error(f'数据打包出现问题：{e}')
 
@@ -452,11 +447,15 @@ class ResultDisplayWidget(QTabWidget):
                                         'time': self.dif_result['time_series'],
                                         'sigma': sigma_trim[1],
         })
-        self.store_tab_data(tab, self.current_mode, dif_result=self.dif_result)
+        self.store_tab_data(tab, self.current_mode, data = self.data)
 
-    def quality_avg(self, f, t, Zxx, target_freq):
+    def quality_avg(self,data,reuse_current=False):
         """绘制平均信号STFT结果（信号质量评估）"""
         # 提取目标频率附近的区域
+        f = data.out_processed['frequencies']
+        t = data.out_processed['time_series']
+        coefficients = data.data_processed
+        target_freq = data.out_processed['target_freq']
         freq_range = [target_freq - 1, target_freq + 1]
 
         self.current_mode = "quality"
@@ -464,7 +463,7 @@ class ResultDisplayWidget(QTabWidget):
 
         ax = figure.add_subplot(111)
 
-        spec = ax.pcolormesh(t, f, 10 * np.log10(np.abs(Zxx)),
+        spec = ax.pcolormesh(t, f, 10 * np.log10(np.abs(coefficients)),
                              shading='gouraud', cmap='viridis')
         ax.set_ylabel('频率 [Hz]')
         ax.set_xlabel('时间 [秒]')
@@ -476,10 +475,7 @@ class ResultDisplayWidget(QTabWidget):
 
         # self.current_dataframe = pd.DataFrame({"Zxx":Zxx}) 目前有问题
         self.current_dataframe = None
-        self.store_tab_data(tab, self.current_mode, freq = f,
-            time = t,
-            Zxx = Zxx,
-            target_freq = target_freq)
+        self.store_tab_data(tab, self.current_mode, data = data)
 
     def plot_time_series(self,time, series,reuse_current=False):
         """信号处理结果"""

@@ -593,10 +593,10 @@ class VectorLineROI(QGraphicsLineItem):
         返回: [t, x, 2] 数组，其中最后一维是[位置, 平均值]
         """
         line = self.line()
-        if line.isNull() or data['data_origin'] is None:
+        if line.isNull() :
             return None
 
-        data_origin = data['data_origin']
+        data_origin = data.data_origin
         # 计算直线参数
         x0, y0 = line.x1(), line.y1()
         x1, y1 = line.x2(), line.y2()
@@ -619,7 +619,7 @@ class VectorLineROI(QGraphicsLineItem):
         half_width = self.width / 2
 
         # 准备输出数组
-        t_dim = data_origin.shape[0]
+        t_dim = data.timelength
         result = np.zeros((t_dim, num_samples, 2))
 
         for i in range(num_samples):

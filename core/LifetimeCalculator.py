@@ -9,6 +9,7 @@ from scipy.ndimage import convolve
 from scipy.optimize import curve_fit
 from scipy.stats import pearsonr
 from PyQt5.QtCore import Qt, QObject, pyqtSignal, pyqtSlot, QElapsedTimer
+from DataManager import *
 
 
 
@@ -143,7 +144,7 @@ class LifetimeCalculator:
                         decay_time,
                         decay_signal,
                         p0=[A_guess, tau_guess, A2_guess, tau2_guess, C_guess],
-                        bounds=([0, 0, 0, 0, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf]))
+                        bounds=([0, 0, 10, 10, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf]))
 
                     # 计算平均寿命
                     A1, tau1, A2, tau2, C = popt
@@ -193,8 +194,8 @@ class LifetimeCalculator:
         """
         global lifetime, fit_curve, phy_signal, r_squared
         y, x = center
-        h, w = data['data_origin'].shape[1], data['data_origin'].shape[2]
-        data_type = data['data_type']
+        h, w = data.framesize
+        data_type = data.parameters['data_type'] if 'data_type' in data.parameters else None
 
         # 创建区域掩模
         if shape == 'square':
@@ -211,7 +212,7 @@ class LifetimeCalculator:
             pass
 
         # 计算区域平均时间曲线
-        region_data = data['data_origin'][:, mask]
+        region_data = data.data_origin[:, mask]
         avg_curve = np.mean(region_data, axis=1)
 
         # 计算寿命
@@ -275,9 +276,9 @@ class LifetimeCalculator:
 class CalculationThread(QObject):
     """仅在线程中使用，目前未加锁（仍无必要）"""
     cal_running_status = pyqtSignal(bool)
-    result_data_signal = pyqtSignal(np.ndarray, object, float, np.ndarray, np.ndarray, dict, str )
-    result_map_signal = pyqtSignal(object)
-    diffusion_coefficient_signal = pyqtSignal(dict)
+    processed_result = pyqtSignal(ProcessedData)
+    processed_result = pyqtSignal(ProcessedData)
+    processed_result = pyqtSignal(ProcessedData)
     calculating_progress_signal = pyqtSignal(int, int)
     stop_thread_signal = pyqtSignal()
     cal_time = pyqtSignal(float)
@@ -300,13 +301,22 @@ class CalculationThread(QObject):
             timer = QElapsedTimer()
             timer.start()
             # 获取参数
-            time_points = data['time_points'] * time_unit
+            time_points = data.time_point * time_unit
             self.calculating_progress_signal.emit(2, 3)
             # 执行区域分析
             lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
                 data, time_points, center, shape, size, model_type)
 
-            self.result_data_signal.emit(phy_signal, lifetime, r_squared, fit_curve,time_points, data['boundary'], model_type)
+            self.processed_result.emit(ProcessedData(data.timestamp,
+                                                       f'{data.name}@r-lft',
+                                                       'ROI_lifetime',
+                                                       time_point=time_points,
+                                                       out_processed={'phy_signal': phy_signal,
+                                                                      'lifetime': lifetime,
+                                                                      'fit_curve': fit_curve,
+                                                                      'r_squared': r_squared,
+                                                                      'model_type': model_type,
+                                                                      'boundary': {'min':data.datamin, 'max':data.datamax}}))
             self.cal_time.emit(timer.elapsed())
             logging.info("计算完成!")
             self.calculating_progress_signal.emit(3, 3)
@@ -328,11 +338,11 @@ class CalculationThread(QObject):
             # 计时器
             timer = QElapsedTimer()
             timer.start()
-            time_points = data['time_points'] * time_unit
-            data_type = data['data_type']
+            time_points = data.time_point * time_unit
+            data_type = data.parameters['data_type'] if 'data_type' in data.parameters else None
 
             # 计算每个像素的寿命
-            height, width = data['data_origin'].shape[1], data['data_origin'].shape[2]
+            height, width = data.framesize
             lifetime_map = np.zeros((height, width))
             logging.info("开始计算载流子寿命...")
 
@@ -341,7 +351,7 @@ class CalculationThread(QObject):
             for i in range(height):
                 if self._is_calculating :# 线程关闭控制（目前仅针对长时计算）
                     for j in range(width):
-                        time_series = data['data_origin'][:, i, j]
+                        time_series = data.data_origin[:, i, j]
                         # 用皮尔逊系数判断噪音(滑动窗口法)
                         window_size = min(10, len(time_points) // 2)
                         pr = []
@@ -371,7 +381,10 @@ class CalculationThread(QObject):
             logging.info("计算完成!")
             # 显示结果
             smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
-            self.result_map_signal.emit(smoothed_map)
+            self.processed_result.emit(ProcessedData(data.timestamp,
+                                                      f'{data.name}@d-lft',
+                                                      'lifetime_distribution',
+                                                      data_processed=smoothed_map))
             self.cal_time.emit(timer.elapsed())
             self._is_calculating = False
             self.cal_running_status.emit(False)
@@ -383,7 +396,7 @@ class CalculationThread(QObject):
             self.stop_thread_signal.emit()
 
 
-    def diffusion_calculation(self,frame_data,time_unit,space_unit):
+    def diffusion_calculation(self,frame_data,time_unit,space_unit,timestamp,name):
         # 存储拟合方差结果 [时间, 方差]
         self._is_calculating = True
         self.cal_running_status.emit(True)
@@ -431,7 +444,10 @@ class CalculationThread(QObject):
             'fitting': np.stack(fitting_result, axis=0),
             'time_series': np.stack(time_series, axis=0)
         }
-        self.diffusion_coefficient_signal.emit(dif_data_dict)
+        self.processed_result.emit(ProcessedData(timestamp,
+                                                 f'{name}@dif',
+                                                 'diffusion',
+                                                 out_processed=dif_data_dict))
         self.cal_time.emit(timer.elapsed())
         self._is_calculating = False
         self.cal_running_status.emit(False)

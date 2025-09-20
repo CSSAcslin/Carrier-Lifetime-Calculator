@@ -134,7 +134,7 @@ class BadFrameDialog(QDialog):
         """获取用户选择的坏帧列表"""
         if self.auto_radio.isChecked():
             return self.parent().data_processor.detect_bad_frames_auto(
-                self.parent().data['data_origin'],
+                self.parent().data.origin,
                 self.threshold_spin.value()
             )
         else:
@@ -155,7 +155,7 @@ class BadFrameDialog(QDialog):
 
         # 修复数据
         fixed_data = self.parent().data_processor.fix_bad_frames(
-            self.parent().data['data_origin'],
+            self.parent().data.data_origin,
             self.bad_frames,
             n_frames
         )

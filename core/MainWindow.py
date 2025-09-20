@@ -1,5 +1,6 @@
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from unittest import case
 
 import numpy as np
 from PyQt5 import sip
@@ -11,6 +12,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QStatusBar, QScrollBar
                              )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject
+from astropy.utils.console import ProgressBar
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from DataProcessor import DataProcessor, MassDataProcessor
@@ -22,22 +24,24 @@ from ExtraDialog import *
 import logging
 from ROIdrawDialog import ROIdrawDialog
 import resources_rc
+from DataManager import *
 
 class MainWindow(QMainWindow):
     """主窗口"""
     # 线程激活信号
+    # data
     # cal
-    start_reg_cal_signal = pyqtSignal(dict, float, tuple, str, int, str)
-    start_dis_cal_signal = pyqtSignal(dict, float, str)
-    start_dif_cal_signal = pyqtSignal(dict, float, float)
+    start_reg_cal_signal = pyqtSignal(Data, float, tuple, str, int, str)
+    start_dis_cal_signal = pyqtSignal(Data, float, str)
+    start_dif_cal_signal = pyqtSignal(dict, float, float,float,str)
     # mass
     load_avi_EM_signal = pyqtSignal(str)
     load_tif_EM_signal = pyqtSignal(str)
-    pre_process_signal = pyqtSignal(dict,int,bool)
-    stft_quality_signal = pyqtSignal(float, int, int, int, int, str)
-    stft_python_signal = pyqtSignal(float, int, int, int, int, str)
-    cwt_quality_signal = pyqtSignal(float, int, int, str)
-    cwt_python_signal = pyqtSignal(float, int, int, str, float)
+    pre_process_signal = pyqtSignal(Data,int,bool)
+    stft_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, int, str)
+    stft_python_signal = pyqtSignal(ProcessedData,float, int, int, int, int, str)
+    cwt_quality_signal = pyqtSignal(ProcessedData,float, int, int, str)
+    cwt_python_signal = pyqtSignal(ProcessedData,float, int, int, str, float)
     mass_export_signal = pyqtSignal(np.ndarray,str,str,str)
 
     def __init__(self):
@@ -45,12 +49,37 @@ class MainWindow(QMainWindow):
 
         # 参数初始化
         self.data = None
+        self.processed_data = None
         self.time_points = None
         self.time_unit = 1.0
         self.space_unit = 1.0
         self.bool_mask = None
         self.idx = None
         self.vector_array = None
+
+        # 参数和数据管理
+        self.init_params()
+        # self.data_thread = QThread()
+        # self.data_manager = DataManager()
+        # self.data_thread.moveToThread(self.data_thread)
+        # self.data_thread.start()
+
+        # 界面加载
+        self.init_ui()
+        self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carrier_lifetime.log")
+        self.setup_menus()
+        self.setup_logging()
+        self.log_startup_message()
+
+
+        # 状态控制
+        self._is_calculating = False
+        self._is_quality = False
+        # 信号连接
+        self.signal_connect()
+
+    def init_params(self):
+        """初始化参数库"""
         self.main_params = {
             'time_step': 1.000,
             'space_step': 1.000,
@@ -82,30 +111,16 @@ class MainWindow(QMainWindow):
             'EM_fps': 360,
             'target_freq': 30.0,
             'type': None,
-            'stft_window_size': 128, # 加窗大小
-            'stft_noverlap': 120, # 重叠点数
+            'stft_window_size': 128,  # 加窗大小
+            'stft_noverlap': 120,  # 重叠点数
             'stft_window_type': 'hann',
-            'stft_total_scales': 10, # 频率分辨率
-            'stft_scale_range':5, # 取频率范围（以target frequency为中心）
-            'custom_nfft': 128, # 变换长度，默认为窗长度
+            'stft_total_scales': 10,  # 频率分辨率
+            'stft_scale_range': 5,  # 取频率范围（以target frequency为中心）
+            'custom_nfft': 128,  # 变换长度，默认为窗长度
             'cwt_type': 'morl',
             'cwt_total_scales': 256,  # 频率分辨率
             'cwt_scale_range': 10.0,  # 取频率范围（以target frequency为中心）
         }
-
-        # 界面加载
-        self.init_ui()
-        self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carrier_lifetime.log")
-        self.setup_menus()
-        self.setup_logging()
-        self.log_startup_message()
-
-
-        # 状态控制
-        self._is_calculating = False
-        self._is_quality = False
-        # 信号连接
-        self.signal_connect()
 
     def init_ui(self):
         self.setWindowTitle("成像数据分析工具箱")
@@ -551,6 +566,7 @@ class MainWindow(QMainWindow):
             self.between_stack.setCurrentIndex(3)
             self.EM_thread_open()
             self.stop_thread(type=0)
+            self.update_status('准备就绪')
 
     def setup_menus(self):
         """加入菜单栏"""
@@ -565,21 +581,32 @@ class MainWindow(QMainWindow):
         # 编辑菜单
         edit_menu = self.menu.addMenu("编辑")
 
-        # 坏点处理功能
+        # 编辑菜单-坏点处理功能
         bad_frame_edit = edit_menu.addAction("坏点处理")
         bad_frame_edit.triggered.connect(self.bad_frame_edit_dialog)
 
-        # 计算设置功能
+        # 编辑菜单-计算设置功能
         data_select_edit = edit_menu.addAction("计算设置")
         data_select_edit.triggered.connect(self.calculation_set_edit_dialog)
 
-        # 绘图设置调整
+        # 编辑菜单-绘图设置调整
         plt_settings_edit = edit_menu.addAction("绘图设置")
         plt_settings_edit.triggered.connect(self.plt_settings_edit_dialog)
 
         # ROI绘图
         ROI_function = self.menu.addAction("ROI选取")
         ROI_function.triggered.connect(self.roi_select_dialog)
+
+        # 历史数据管理
+        data_menu = self.menu.addMenu('历史数据')
+        # 清除历史
+        data_history_clear = data_menu.addAction('历史清除')
+        data_history_clear.triggered.connect(self.data_history_clear)
+        # 数据导入历史查看
+        data_history_view = data_menu.addAction('历史导入查看')
+        # 数据处理历史查看
+        process_history_view = data_menu.addAction('历史处理查看')
+
 
     @staticmethod
     def QGroupBoxCreator(title="",style="default"):
@@ -736,17 +763,15 @@ class MainWindow(QMainWindow):
 
     def cal_thread_open(self):
         """计算线程相关 以及信号槽连接都放在这里了"""
-        self.thread = QThread()
+        self.calc_thread = QThread()
         self.cal_thread = CalculationThread()
-        self.cal_thread.moveToThread(self.thread)
+        self.cal_thread.moveToThread(self.calc_thread)
         # 计算状态更新
         self.start_reg_cal_signal.connect(self.cal_thread.region_analyze)
         self.start_dis_cal_signal.connect(self.cal_thread.distribution_analyze)
         self.start_dif_cal_signal.connect(self.cal_thread.diffusion_calculation)
         self.cal_thread.calculating_progress_signal.connect(self.update_progress)
-        self.cal_thread.result_data_signal.connect(self.result_display.display_lifetime_curve)
-        self.cal_thread.result_map_signal.connect(self.result_display.display_distribution_map)
-        self.cal_thread.diffusion_coefficient_signal.connect(self.result_display.display_diffusion_coefficient)
+        self.cal_thread.processed_result.connect(self.processed_result)
         self.cal_thread.stop_thread_signal.connect(self.stop_thread)
         self.cal_thread.cal_time.connect(lambda ms: logging.info(f"耗时: {ms}毫秒"))
         self.cal_thread.cal_running_status.connect(self.btn_safety)
@@ -793,6 +818,19 @@ class MainWindow(QMainWindow):
         self.result_display.tab_type_changed.connect(self._handle_result_tab)
 
     '''上面是初始化预设，下面是功能响应'''
+    def load_image(self):
+        """图像加载，后面会进一步修改"""
+        self.time_slider.setMaximum(len(self.data.image_import) - 1)
+        self.time_label.setText(f"时间点: 0/{len(self.data.image_import) - 1}")
+
+        # 显示第一张图像
+        self.update_time_slice(0, True)
+        self.time_slider.setValue(0)
+
+        # 根据图像大小调节region范围
+        self.region_x_input.setMaximum(self.data.datashape[1])
+        self.region_y_input.setMaximum(self.data.datashape[2])
+
     def load_tiff_folder(self):
         """加载TIFF文件夹(FS-iSCAT)"""
         self.time_unit = float(self.time_step_input.value())
@@ -814,22 +852,13 @@ class MainWindow(QMainWindow):
             # 读取所有图像
             self.data = self.data_processor.process_tiff(tiff_files)
 
-            if not self.data:
+            if not self.data or (self.data.format_import != 'tif' and self.data.format_import != 'tiff'):
                 self.update_status("无法读取TIFF文件",'warning')
                 return
 
             logging.info('成功加载TIFF数据')
             # 设置时间滑块
-            self.time_slider.setMaximum(len(self.data['images']) - 1)
-            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
-
-            # 显示第一张图像
-            self.update_time_slice(0,True)
-            self.time_slider.setValue(0)
-
-            # 根据图像大小调节region范围
-            self.region_x_input.setMaximum(self.data['images'].shape[1])
-            self.region_y_input.setMaximum(self.data['images'].shape[2])
+            self.load_image()
 
     def load_sif_folder(self):
         '''加载SIF文件夹'''
@@ -850,22 +879,13 @@ class MainWindow(QMainWindow):
             # 读取所有图像
             self.data = self.data_processor.process_sif()
 
-            if not self.data:
+            if not self.data or self.data.format_import != 'sif':
                 self.update_status("无法读取sif文件",'warning')
                 return
 
             logging.info('成功加载SIF数据')
             # 设置时间滑块
-            self.time_slider.setMaximum(len(self.data['images']) - 1)
-            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
-
-            # 显示第一张图像
-            self.update_time_slice(0,True)
-            self.time_slider.setValue(0)
-
-            # 根据图像大小调节region范围
-            self.region_x_input.setMaximum(self.data['images'].shape[1])
-            self.region_y_input.setMaximum(self.data['images'].shape[2])
+            self.load_image()
         pass
 
 
@@ -879,10 +899,7 @@ class MainWindow(QMainWindow):
 
         self.mass_data_processor.mass_finished.connect(self.loaded_EM)
         self.mass_data_processor.processing_progress_signal.connect(self.update_progress)
-        self.mass_data_processor.avg_stft_result.connect(self.result_display.quality_avg)
-        self.mass_data_processor.stft_completed.connect(self.EM_result)
-        self.mass_data_processor.cwt_completed.connect(self.EM_result)
-        self.mass_data_processor.avg_cwt_result.connect(self.result_display.quality_avg)
+        self.mass_data_processor.processed_result.connect(self.processed_result)
         self.load_avi_EM_signal.connect(self.mass_data_processor.load_avi)
         self.load_tif_EM_signal.connect(self.mass_data_processor.load_tiff)
         self.pre_process_signal.connect(self.mass_data_processor.pre_process)
@@ -891,6 +908,8 @@ class MainWindow(QMainWindow):
         self.cwt_quality_signal.connect(self.mass_data_processor.quality_cwt)
         self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
         self.mass_export_signal.connect(self.mass_data_processor.export_EM_data)
+
+        # self.avi_thread.start()
 
     def load_avi(self):
         """加载avi读取线程传递函数"""
@@ -943,25 +962,14 @@ class MainWindow(QMainWindow):
     def loaded_EM(self, result):
         self.data = result
 
-        if not self.data:
+        if not self.data or not (self.data.format_import != 'avi' or self.data.format_import != 'tiff'):
             self.update_status("无法读取文件",'warning')
             return
         else:
             self.update_status("已加载文件",'idle')
             logging.info("文件加载成功")
-
-
         # 设置时间滑块
-        self.time_slider.setMaximum(len(self.data['images']) - 1)
-        self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
-
-        # 显示第一张图像
-        self.update_time_slice(0, True)
-        self.time_slider.setValue(0)
-
-        # 根据图像大小调节region范围
-        self.region_x_input.setMaximum(self.data['images'].shape[1])
-        self.region_y_input.setMaximum(self.data['images'].shape[2])
+        self.load_image()
 
     def make_hover_handler(self):
         args = {'x': None, 'y': None, 't': None, 'value': None}
@@ -974,13 +982,13 @@ class MainWindow(QMainWindow):
             if value is not None:
                 args['value'] = value
             else:
-                args['value'] = self.data['images'][args['t'], args['y'], args['x']]
+                args['value'] = self.data.image_import[args['t'], args['y'], args['x']]
             if args['x'] is None or args['y'] is None:
                 return
 
             # 更新显示
             self.mouse_pos_label.setText(
-                f"鼠标位置: x={args['x']}, y={args['y']}, t={args['t']}; 归一值: {args['value']:.2f}, 原始值：{self.data['data_origin'][args['t'], args['y'], args['x']]:.6e}")
+                f"鼠标位置: x={args['x']}, y={args['y']}, t={args['t']}; 归一值: {args['value']:.2f}, 原始值：{self.data.data_origin[args['t'], args['y'], args['x']]:.6e}")
 
         return _handle_hover
 
@@ -995,7 +1003,7 @@ class MainWindow(QMainWindow):
         if tab_type == 'roi':
             # 如果是roi结果
             self.time_slider_vertical.setVisible(True)
-            self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
+            self.time_slider_vertical.setMaximum(self.data.timelength - 1)
             self.time_slider_vertical.setValue(0)
         else:
             if self.time_slider_vertical.isVisible():
@@ -1003,7 +1011,7 @@ class MainWindow(QMainWindow):
 
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
-        if not hasattr(self, 'data') or self.data is None:
+        if self.data is None:
             logging.warning("无数据，请先加载数据文件")
             return
 
@@ -1018,7 +1026,7 @@ class MainWindow(QMainWindow):
 
     def calculation_set_edit_dialog(self):
         """计算设置调整"""
-        if not hasattr(self, 'data') or self.data is None:
+        if self.data is None:
             logging.warning("无数据，请先加载数据文件")
             return
         self.update_status("计算设置ing", 'working')
@@ -1047,10 +1055,10 @@ class MainWindow(QMainWindow):
 
     def roi_select_dialog(self):
         """ROI选取功能"""
-        if not hasattr(self, 'data') or self.data is None:
+        if self.data is None:
             logging.warning("无数据，请先加载数据文件")
             return
-        roi_dialog = ROIdrawDialog(base_layer_array=self.data['images'][self.idx],parent=self)
+        roi_dialog = ROIdrawDialog(base_layer_array=self.data.image_import[self.idx],parent=self)
         self.update_status("ROI绘制ing", 'working')
         if roi_dialog.exec_() == QDialog.Accepted:
             if roi_dialog.action_type == "mask":
@@ -1075,13 +1083,13 @@ class MainWindow(QMainWindow):
             logging.warning("无数据可显示")
             return
         self.idx = idx
-        if self.data is not None and 0 <= idx < len(self.data['images']):
-            self.time_label.setText(f"时间点: {idx}/{len(self.data['images']) - 1}")
-            self.image_display.current_image = self.data['images'][idx]
+        if self.data is not None and 0 <= idx < len(self.data.image_import):
+            self.time_label.setText(f"时间点: {idx}/{len(self.data.image_import) - 1}")
+            self.image_display.current_image = self.data.image_import[idx]
             if first_create:
-                self.image_display.display_image(self.data['images'][idx],idx)
+                self.image_display.display_image(self.data.image_import[idx],idx)
             else:
-                self.image_display.update_display_idx(self.data['images'][idx],idx)
+                self.image_display.update_display_idx(self.data.image_import[idx],idx)
                 self._handle_hover(t = idx)
 
     def update_progress(self, current, total=None):
@@ -1111,7 +1119,7 @@ class MainWindow(QMainWindow):
         if self.vector_array is None :
             logging.warning("未选取向量直线ROI")
             return
-        elif self.data['data_origin'].shape[0] == self.vector_array.shape[0]:
+        elif self.data.timelength == self.vector_array.shape[0]:
             # self.time_slider_vertical.setVisible(True)
             # self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
             # self.time_slider_vertical.setValue(0)
@@ -1230,14 +1238,14 @@ class MainWindow(QMainWindow):
             return logging.warning('无数据载入')
         # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要开启
-        if not self.is_thread_active("thread"):
+        if not self.is_thread_active("calc_thread"):
             self.cal_thread_open()
         # 如果有线程在运算，要提示（不过目前不需要，保留语句）
-        if self.cal_thread and self.thread.isRunning():
+        if self.cal_thread and self.calc_thread.isRunning():
             logging.warning("已有计算任务正在运行")
             return
 
-        self.thread.start()
+        self.calc_thread.start()
         self.update_status('计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
         center = (self.region_y_input.value(), self.region_x_input.value())
@@ -1245,6 +1253,7 @@ class MainWindow(QMainWindow):
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         self.start_reg_cal_signal.emit(self.data,self.time_unit,center,shape,size,model_type)
+        return None
 
     def distribution_analyze_start(self):
         """分析载流子寿命"""
@@ -1252,15 +1261,16 @@ class MainWindow(QMainWindow):
             return logging.warning('无数据载入')
         # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
-        if not self.is_thread_active("thread"):
+        if not self.is_thread_active("calc_thread"):
             self.cal_thread_open()
 
 
-        self.thread.start()
+        self.calc_thread.start()
         self.update_status('长时计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type)
+        return None
 
     def diffusion_calculation_start(self):
         """扩散系数计算"""
@@ -1270,23 +1280,31 @@ class MainWindow(QMainWindow):
             return  logging.warning("无有效ROI数据")
         # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
-        if not self.is_thread_active("thread"):
+        if not self.is_thread_active("calc_thread"):
             self.cal_thread_open()
 
-        self.thread.start()
+        self.calc_thread.start()
         self.update_status('计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
         self.space_unit = float(self.space_step_input.value())
-        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_unit, self.space_unit)
+        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_unit, self.space_unit, self.data.timestamp,self.data.name)
+        return None
 
     def pre_process_EM(self):
         """EM的数据预处理"""
         if self.data is None:
             logging.warning("请先加载数据")
             return
-        if 'data_origin' not in self.data:
+        if not hasattr(self.data, 'data_origin'):
             logging.error("数据加载有误，请重新加载数据")
             QMessageBox.warning(self,'数据错误',"数据加载有误，请重新加载数据")
+            return
+        if not self.is_thread_active("avi_thread"):
+            # self.EM_thread_open()
+            pass
+        # 如果有线程在运算，要提示（不过目前不需要，保留语句）
+        if not self.avi_thread.isRunning():
+            self.avi_thread.start()
             return
         self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
 
@@ -1294,7 +1312,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("没有数据可以计算，请先加载数据")
             return
-        if "unfolded_data" in self.data:
+        if "unfolded_data" in self.data.parameters:
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
@@ -1306,7 +1324,10 @@ class MainWindow(QMainWindow):
                 self.EM_params['stft_window_size'] = dialog.window_size_input.value()
                 self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
                 self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
-                self.stft_quality_signal.emit(self.EM_params['target_freq'],self.EM_fps,
+                if not self.avi_thread.isRunning():
+                    self.EM_thread_open()
+                self.stft_quality_signal.emit(self.processed_data,
+                                              self.EM_params['target_freq'],self.EM_fps,
                                              self.EM_params['stft_window_size'],
                                              self.EM_params['stft_noverlap'],
                                              self.EM_params['custom_nfft'],
@@ -1327,7 +1348,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("没有数据可以计算，请先加载数据")
             return
-        if "unfolded_data" in self.data:
+        if "unfolded_data" in self.data.parameters:
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
@@ -1340,14 +1361,18 @@ class MainWindow(QMainWindow):
                     self.EM_params['stft_window_size'] = dialog.window_size_input.value()
                     self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
                     self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
-                    self.stft_python_signal.emit(self.EM_params['target_freq'],self.EM_fps,
+                    if not self.avi_thread.isRunning():
+                        self.EM_thread_open()
+                    self.stft_python_signal.emit(self.processed_data,
+                                                 self.EM_params['target_freq'],self.EM_fps,
                                                  self.EM_params['stft_window_size'],
                                                  self.EM_params['stft_noverlap'],
                                                  self.EM_params['custom_nfft'],
                                                  self.EM_params['stft_window_type'])
                     self.EM_params['EM_fps']=self.EM_fps
             else:
-                self.stft_python_signal.emit(self.EM_params['target_freq'], self.EM_fps,
+                self.stft_python_signal.emit(self.processed_data,
+                                             self.EM_params['target_freq'], self.EM_fps,
                                              self.EM_params['stft_window_size'],
                                              self.EM_params['stft_noverlap'],
                                              self.EM_params['custom_nfft'],
@@ -1362,7 +1387,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("没有数据可以计算，请先加载数据")
             return
-        if "unfolded_data" in self.data:
+        if "unfolded_data" in self.data.parameters:
             dialog = CWTComputePop(self.EM_params,'quality')
 
             if dialog.exec_():
@@ -1370,7 +1395,10 @@ class MainWindow(QMainWindow):
                 self.EM_fps = dialog.fps_input.value()
                 self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
                 self.EM_params['cwt_type'] = dialog.wavelet.currentText()
-                self.cwt_quality_signal.emit(self.EM_params['target_freq'],
+                if not self.avi_thread.isRunning():
+                    self.EM_thread_open()
+                self.cwt_quality_signal.emit(self.processed_data,
+                                             self.EM_params['target_freq'],
                                              self.EM_fps,
                                              self.EM_params['cwt_total_scales'],
                                              self.EM_params['cwt_type'])
@@ -1385,7 +1413,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("没有数据可以计算，请先加载数据")
             return
-        if "unfolded_data" in self.data :
+        if "unfolded_data" in self.data.parameters :
             dialog = CWTComputePop(self.EM_params, 'signal')
             if dialog.exec_():
                 self.update_status("CWT计算ing", 'working')
@@ -1395,7 +1423,10 @@ class MainWindow(QMainWindow):
                 self.EM_params['cwt_type'] = dialog.wavelet.currentText()
                 self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
                 self.EM_params['cwt_scale_range'] = dialog.cwt_scale_range.value()
-                self.cwt_python_signal.emit(self.EM_params['target_freq'],
+                if not self.avi_thread.isRunning():
+                    self.EM_thread_open()
+                self.cwt_python_signal.emit(self.processed_data,
+                                            self.EM_params['target_freq'],
                                             self.EM_fps,
                                             self.EM_params['cwt_total_scales'],
                                             self.EM_params['cwt_type'],
@@ -1405,35 +1436,57 @@ class MainWindow(QMainWindow):
             self.update_status("准备就绪", 'idle')
             return
 
-    def EM_result(self, result, times):
-        """stft结果处理"""
-        if self.show_stft_check.isChecked():
-            self.data['images'] = (result - np.min(result)) / (np.max(result) - np.min(result))
-            self.time_slider.setMaximum(len(self.data['images']) - 1)
-            self.time_label.setText(f"时间点: 0/{len(self.data['images']) - 1}")
-
-            # 显示第一张图像
-            self.update_time_slice(0, True)
-            self.time_slider.setValue(0)
-
-            # 根据图像大小调节region范围
-            self.region_x_input.setMaximum(self.data['images'].shape[1])
-            self.region_y_input.setMaximum(self.data['images'].shape[2])
-
-        self.data['EM_result'] = result
-        self.data['time_series'] = times
+    def processed_result(self, data:ProcessedData):
+        """处理过后的数据都来这里重整再分配"""
+        self.processed_data = data
+        # 各处理后响应
+        process_type = self.processed_data.type_processed
+        match process_type:
+            case "ROI_lifetime":
+                self.result_display.display_lifetime_curve(self.processed_data)
+                pass
+            case 'lifetime_distribution':
+                self.result_display.display_distribution_map(self.processed_data)
+                pass
+            # 中间还有一个取向量ROI的，先不管他
+            case 'diffusion':
+                self.result_display.display_diffusion_coefficient(self.processed_data)
+                pass
+            case 'heat_transfer':
+                pass
+            case 'EM_pre_processed':
+                pass
+            case 'stft_quality':
+                self.result_display.quality_avg(self.processed_data)
+                pass
+            case 'cwt_quality':
+                self.result_display.quality_avg(self.processed_data)
+                pass
+            case 'ROI_stft':
+                result = self.processed_data.data_processed
+                if self.show_stft_check.isChecked():
+                    self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result)) # 要改
+                self.load_image()
+                pass
+            case 'ROI_cwt':
+                result = self.processed_data.data_processed
+                if self.show_stft_check.isChecked():
+                    self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result))  # 要改
+                self.load_image()
+                pass
 
     def roi_signal_avg(self):
         """计算选区信号平均值并显示"""
         if not hasattr(self,"bool_mask") or self.bool_mask is None:
             QMessageBox.warning(self,"警告","请先绘制ROI")
             return
-        if 'EM_result' not in self.data:
+        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
             logging.warning("请先处理数据")
+            return
 
         mask = self.bool_mask
         if mask.dtype == bool:
-            EM_masked = np.where(mask[np.newaxis,:,:],self.data['EM_result'],0)
+            EM_masked = np.where(mask[np.newaxis,:,:],self.processed_data.data_processed,0)
 
             total_valid_pixels = np.sum(mask)
             if total_valid_pixels == 0:
@@ -1444,8 +1497,8 @@ class MainWindow(QMainWindow):
         else:
             raise TypeError(f"不支持的蒙版类型: {mask.dtype}")
 
-        self.data['EM_masked'] = EM_masked
-        self.result_display.plot_time_series(self.data['time_series'] , average_series)
+        # self.data['EM_masked'] = EM_masked
+        self.result_display.plot_time_series(self.processed_data.out_processed['time_series'] , average_series)
 
     '''其他功能'''
     def is_thread_active(self, thread_name: str) -> bool:
@@ -1471,11 +1524,11 @@ class MainWindow(QMainWindow):
 
     def stop_thread(self,type = 0):
         """彻底删除线程（反正关闭也不能重启）后续线程多了加入选择关闭的能力"""
-        if type == 0 and self.is_thread_active("thread"):
+        if type == 0 and self.is_thread_active("calc_thread"):
             try:
-                self.thread.quit()  # 请求退出
-                self.thread.wait()  # 等待结束
-                self.thread.deleteLater()  # 标记删除
+                self.calc_thread.quit()  # 请求退出
+                self.calc_thread.wait()  # 等待结束
+                self.calc_thread.deleteLater()  # 标记删除
                 logging.info("计算线程关闭")
             except Exception as e:
                 logging.error(f"线程退出错误{e}")
@@ -1576,15 +1629,14 @@ class MainWindow(QMainWindow):
 
     def export_EM_data(self,result):
         """时频变换后目标频率下的结果导出"""
-        if self.data is not None:
-            if 'EM_result' in self.data:
+        if self.processed_data is not None:
+            if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
                 dialog = MassDataSavingPop()
                 if dialog.exec_():
                     directory = dialog.directory
                     prefix = dialog.text_edit.text().strip()
                     filetype = dialog.type_combo.currentText()
-                    self.mass_export_signal.emit(self.data['EM_result'],directory,prefix,filetype)
-
+                    self.mass_export_signal.emit(self.processed_data.data_processed,directory,prefix,filetype)
                 return
             else:
                 QMessageBox.warning(self,'提示','请先变换处理数据')
@@ -1592,6 +1644,15 @@ class MainWindow(QMainWindow):
             logging.warning('请先加载并处理数据')
             return
 
+    def data_history_clear(self):
+        if Data is not None:
+            Data.clear_history()
+            logging.info('导入数据已清除')
+        else:
+            logging.warning('没有数据可清除')
+        if ProcessedData is not None:
+            ProcessedData.clear_history()
+            logging.info('处理数据已清除')
 
 
     '''以下控制台命令更新'''
