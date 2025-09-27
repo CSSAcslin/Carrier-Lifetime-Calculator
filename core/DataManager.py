@@ -2,7 +2,7 @@ import time
 import copy
 import numpy as np
 from collections import deque
-from typing import ClassVar, Optional, List, Dict
+from typing import ClassVar, Optional, List, Dict, Any, Union
 from PyQt5.QtCore import QObject, pyqtSignal
 from dataclasses import dataclass, field, fields
 
@@ -233,7 +233,7 @@ class ProcessedData:
             self.datamean = self.data_processed.mean()
 
         # 添加到历史记录
-        ProcessedData._history[self.name] = self
+        ProcessedData._history[self.name] = copy.deepcopy(self)
 
     @classmethod
     def remove_from_history(cls, name: str):
@@ -283,18 +283,139 @@ class ImagingData:
     timestamp_inherited 原始数据来源\n
     """
     timestamp_inherited: float
-    image_data: np.ndarray
+    image_backup: np.ndarray = None
+    image_data: np.ndarray = None
+    image_ROI: np.ndarray = None
     image_type: str = None
     colormode: str = None
-    region_code: int = field(default=1)
-    _is_temporary: bool = field(init=False ,default=False)
+    canvas_num: int = field(default=0)
+    is_temporary: bool = field(init=False ,default=False)
 
     def __post_init__(self):
-        self.image_shape = self.image_data.shape
-        self.total_frames = self.image_shape[0] if self.image_data.ndim == 3 else 1
-        self.frame_size = (self.image_shape[1], self.image_shape[2]) if self.image_data.ndim == 3 else (self.image_shape[0], self.image_shape[1])
+        self.image_data = self.to_uint8(self.image_backup)
+        self.imageshape = self.image_data.shape
+        self.ndim = self.image_data.ndim
+        self.totalframes = self.imageshape[0] if self.ndim == 3 else 1
+        self.framesize = (self.imageshape[1], self.imageshape[2]) if self.ndim == 3 else (self.imageshape[0], self.imageshape[1])
         # 不考虑数据点只有一个的情况
-        self._is_temporary = True if self.image_data.ndim == 3 else False
+        self.is_temporary = True if self.ndim == 3 else False
+        self.imagemin = self.image_data.min()
+        self.imagemax = self.image_data.max()
+        self.ROI_mask = None
+        self.ROI_applied = False
+
+    @classmethod
+    def create_image(cls, data_obj: Union['Data', 'ProcessedData'],*arg:str) -> 'ImagingData':
+        """初始化ImagingData"""
+
+        instance = cls.__new__(cls)
+
+        # 设置图像数据
+        if isinstance(data_obj, Data):
+            # instance.image_data = data_obj.data_origin.copy()
+            instance.image_backup = data_obj.data_origin.copy()
+
+            instance.source_type = "Data"
+            instance.source_name = data_obj.name
+            instance.source_format = data_obj.format_import
+        elif isinstance(data_obj, ProcessedData):
+            if arg:
+                # instance.image_data = data_obj.out_processed[arg].copy()
+                instance.image_backup =  data_obj.out_processed[arg].copy()
+            else:
+                # instance.image_data = data_obj.data_processed.copy()
+                instance.image_backup = data_obj.data_processed.copy()
+            instance.source_type = "ProcessedData"
+            instance.source_name = data_obj.name
+            instance.source_format = data_obj.type_processed
+        else:
+            raise TypeError("不支持的输入类型")
+
+        # 调用后初始化
+        instance.__post_init__()
+        return instance
+
+    def set_ROI_mask(self, mask: np.ndarray):
+        """设置 ROI 蒙版"""
+        # 验证蒙版形状
+        if mask is None:
+            raise ValueError("无效蒙版")
+        if mask.shape != self.imageshape:
+            raise ValueError(f"蒙版形状 {mask.shape} 与图像形状 {self.imageshape} 不匹配")
+
+        self.ROI_mask = mask
+
+            # 根据蒙版类型应用不同的处理
+        if self.ROI_mask.dtype == bool:
+            # 布尔蒙版：将非 ROI 区域置零
+            if self.ndim == 3:
+                self.ROI_mask = copy.deepcopy(self.image_data)
+                for every_data in self.ROI_mask:
+                    every_data[~mask] = self.imagemin
+        else:
+            # 数值蒙版：应用乘法操作
+            self.image_ROI = self.image_data * self.ROI_mask
+
+        self.ROI_applied = True
+
+    @classmethod
+    def to_uint8(cls,data):
+        # 如果已经是uint8类型且值在0-255范围内，直接返回
+        if data.dtype == np.uint8 and data.min() >= 0 and 1 <= data.max() <= 255:
+            return data
+
+        # 计算数组的最小值和最大值
+        min_val = np.min(data)
+        max_val = np.max(data)
+
+        # 处理常数数组的特殊情况
+        if min_val == max_val:
+            # 根据常数值映射到0/128/255
+            if min_val <= 0:
+                return np.zeros_like(data, dtype=np.uint8)
+            elif min_val >= 255:
+                return np.full_like(data, 255, dtype=np.uint8)
+            else:
+                return np.full_like(data, round(min_val), dtype=np.uint8)
+
+        # 如果已经是整数类型且在0-255范围内，直接转换
+        if np.issubdtype(data.dtype, np.integer) and min_val >= 0 and max_val <= 255:
+            return data.astype(np.uint8)
+
+        # 通用线性变换公式
+        # 使用64位浮点保证精度，避免中间步骤溢出
+        scaled = (data.astype(np.float64) - min_val) * (255.0 / (max_val - min_val))
+
+        # 四舍五入并确保在[0,255]范围内
+        result = np.clip(np.round(scaled), 0, 255).astype(np.uint8)
+        return result
+
+    # @classmethod
+    # def from_array(cls, image_array: np.ndarray, **metadata) -> 'ImageData':
+    #     """从 NumPy 数组创建 ImageData"""
+    #     instance = cls.__new__(cls)
+    #     instance.image_data = image_array.copy()
+    #     instance.source_type = "RawArray"
+    #
+    #     # 设置可选元数据
+    #     instance.source_name = metadata.get('name')
+    #     instance.source_serial = metadata.get('serial')
+    #     instance.source_format = metadata.get('format', "Unknown")
+    #
+    #     # 初始化其他字段
+    #     instance.ROI_mask = None
+    #     instance.ROI_applied = False
+    #
+    #     # 调用后初始化
+    #     instance.__post_init__()
+    #     return instance
+
+    def __repr__(self):
+        return (
+            f"ImageData<Source: {self.source_type}:{self.source_name} "
+            f"| Shape: {self.imageshape} | "
+            f"Range: [{self.imagemin:.2f}, {self.imagemax:.2f}]>"
+        )
 
 
 

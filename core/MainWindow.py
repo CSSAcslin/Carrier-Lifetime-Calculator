@@ -1,8 +1,5 @@
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-from unittest import case
-
-import numpy as np
 from PyQt5 import sip
 from PyQt5.QtGui import QPixmap, QIcon, QFontDatabase
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -16,7 +13,7 @@ from astropy.utils.console import ProgressBar
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from DataProcessor import DataProcessor, MassDataProcessor
-from ImageDisplayWidget import ImageDisplayWidget
+from ImageDisplayWindow import *
 from LifetimeCalculator import LifetimeCalculator, CalculationThread
 from ResultDisplayWidget import ResultDisplayWidget
 from ConsoleUtils import *
@@ -140,21 +137,23 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, self.param_dock) # 加到左侧
 
         # 右侧图像区域
-        self.image_display = ImageDisplayWidget(self)
+        self.image_display = ImageDisplayWindow(self)
         image_widget = QWidget()
         image_layout = QVBoxLayout(image_widget)
+
+
         image_layout.addWidget(self.image_display)
 
         # 时间滑块
-        self.time_slider = QSlider(Qt.Horizontal)
-        self.time_slider.setMinimum(0)
-        self.time_slider.setMaximum(0)
-        self.time_label = QLabel("时间点: 0/0")
-        slider_layout = QHBoxLayout()
-        slider_layout.addWidget(QLabel("时间序列:"))
-        slider_layout.addWidget(self.time_slider)
-        slider_layout.addWidget(self.time_label)
-        image_layout.addLayout(slider_layout)
+        # self.time_slider = QSlider(Qt.Horizontal)
+        # self.time_slider.setMinimum(0)
+        # self.time_slider.setMaximum(0)
+        # self.time_label = QLabel("时间点: 0/0")
+        # slider_layout = QHBoxLayout()
+        # slider_layout.addWidget(QLabel("时间序列:"))
+        # slider_layout.addWidget(self.time_slider)
+        # slider_layout.addWidget(self.time_label)
+        # image_layout.addLayout(slider_layout)
         self.image_dock = QDockWidget("图像显示", self)
         self.image_dock.setWidget(image_widget)
         self.image_dock.setMinimumSize(700, 600)
@@ -604,6 +603,7 @@ class MainWindow(QMainWindow):
         data_history_clear.triggered.connect(self.data_history_clear)
         # 数据导入历史查看
         data_history_view = data_menu.addAction('历史导入查看')
+        data_history_view.triggered.connect(self.add_new_canvas) # 临时
         # 数据处理历史查看
         process_history_view = data_menu.addAction('历史处理查看')
 
@@ -804,10 +804,11 @@ class MainWindow(QMainWindow):
         self.export_image_btn.clicked.connect(self.export_image)
         self.export_data_btn.clicked.connect(self.export_data)
         # 鼠标移动
-        self.image_display.mouse_position_signal.connect(self._handle_hover)
-        self.image_display.mouse_clicked_signal.connect(self._handle_click)
+        # self.image_display.mouse_position_signal.connect(self._handle_hover)
+        # self.image_display.mouse_clicked_signal.connect(self._handle_click)
+        self.image_display.add_canvas_signal.connect(self.add_new_canvas)
         # 时间滑块
-        self.time_slider.valueChanged.connect(self.update_time_slice)
+        # self.time_slider.valueChanged.connect(self.image_display.update_time_slice)
         self.time_slider_vertical.valueChanged.connect(self.update_result_display)
         # 连接控制台信号
         self.command_processor.terminate_requested.connect(self.stop_calculation)
@@ -818,18 +819,167 @@ class MainWindow(QMainWindow):
         self.result_display.tab_type_changed.connect(self._handle_result_tab)
 
     '''上面是初始化预设，下面是功能响应'''
-    def load_image(self):
+    def add_new_canvas(self, assign_data = None):
+        """新建图像显示画布"""
+        if self.data is None and self.processed_data is None:
+            logging.warning('请先导入或处理数据')
+            return
+        # if self.image_display is []:  走不到这里
+        #     logging.warning("请先导入数据")
+
+        dialog = DataViewAndSelectPop(datadict=self.get_data_all())
+        if dialog.exec_():
+            data_index = dialog.get_selected_index()
+            selected_timestamp = dialog.get_selected_timestamp()
+            data_display = None
+            for data in self.data._history:
+                if data.timestamp == selected_timestamp:
+                    data_display = ImagingData.create_image(data)
+                    logging.info("数据选择成功")
+                    continue
+            if data_display is not None:
+                self.image_display.add_canvas(data_display)
+            else:
+                QMessageBox.warning(self,"数据错误","数据已经遗失（不可能错误）")
+                return
+
+        for canvas in self.image_display.display_canvas:
+            canvas.mouse_position_signal.connect(self._handle_hover)
+            canvas.mouse_clicked_signal.connect(self._handle_click)
+        # self.image_display.update_time_slice(0, True)
+
+        self.update_status("准备就绪", 'idle')
+
+    def get_data_all(self) ->  List[Dict[str, Any]]:
+        Data_list = []
+        Data_list.append({
+            "type": 'Data',
+            "name": self.data.name,
+            "序号": self.data.serial_number,
+            "导入格式": self.data.format_import,
+            "数据大小": self.data.datashape,
+            "timestamp": self.data.timestamp,
+        })
+
+        # 历史数据
+        for data in self.data._history:
+            if data.name != Data_list[-1]['name']:
+                Data_list.append({
+                    "type": 'Data',
+                    "name": data.name,
+                    "序号": data.serial_number,
+                    "导入格式": data.format_import,
+                    "数据大小": data.datashape,
+                    "timestamp": data.timestamp,
+                })
+        return Data_list
+
+    def get_processed_data_all(self) ->  List[Dict[str, Any]]:
+        ProcessedData_list = []
+        ProcessedData_list.append({
+            "type": "ProcessedData",
+            "name": self.processed_data.name,
+            "处理类型": self.processed_data.processing_type,
+            "数据大小": self.processed_data.datashape,
+            "数据源": self.processed_data.timestamp_inherited,
+            "timestamp": self.processed_data.timestamp,
+
+        })
+
+        # 历史数据
+        for processed in self.processed_data._history:
+            if processed.name != ProcessedData_list[-1]['name']:
+                ProcessedData_list.append({
+                    "type": "ProcessedData(history)",
+                    "name": processed.name,
+                    "处理类型": processed.processing_type,
+                    "数据大小": processed.datashape,
+                    "数据源": self._find_parent_name(processed.timestamp_inherited),
+                    "timestamp": processed.timestamp,
+                })
+        return ProcessedData_list
+
+    def _find_parent_name(self, timestamp: float) -> Optional[str]:
+        """通过时间戳查找父数据名称"""
+        # 首先在原始数据中查找
+        for data in list(self.data.history):
+            if data.timestamp == timestamp:
+                return data.name
+
+        # 然后在处理数据中查找
+        for processed in list(self.processed_data.history):
+            if processed.timestamp == timestamp:
+                return processed.name
+
+        return None
+
+    def load_image(self,data_type = 'original',other_params:str = None):
         """图像加载，后面会进一步修改"""
-        self.time_slider.setMaximum(len(self.data.image_import) - 1)
-        self.time_label.setText(f"时间点: 0/{len(self.data.image_import) - 1}")
+        if len(self.image_display.display_canvas) == 0 : # 初次创建
+            # self.add_new_canvas()
+            if data_type == 'original':
+                self.imaging_main = ImagingData.create_image(self.data)
+            self.image_display.add_canvas(self.imaging_main)
+            totalframes = self.imaging_main.totalframes
+            # self.time_slider.setMaximum(totalframes - 1)
+            # self.time_label.setText(f"时间点: 0/{totalframes - 1}")
+            for canvas in self.image_display.display_canvas:
+                canvas.mouse_position_signal.connect(self._handle_hover)
+                canvas.mouse_clicked_signal.connect(self._handle_click)
+        else:
+            if data_type == 'original':
+                # imports_done = self.other_imports
+                msg_box = QMessageBox()
+                msg_box.setWindowTitle("画布操作")
+                msg_box.setText("请选择是否要覆盖当前画布或新建画布")
+
+                # 添加标准按钮
+                overwrite_btn = msg_box.addButton("覆盖", QMessageBox.ActionRole)
+                new_btn = msg_box.addButton("新建", QMessageBox.ActionRole)
+                hide_btn = msg_box.addButton("隐藏", QMessageBox.ActionRole)
+                msg_box.exec_()
+
+                # 返回结果
+                if msg_box.clickedButton() == overwrite_btn:
+                    self.image_display.del_canvas(-1)
+                    self.imaging_main = ImagingData.create_image(self.data)
+                    totalframes = self.imaging_main.totalframes
+                    # self.time_slider.setMaximum(totalframes - 1)
+                    # self.time_label.setText(f"时间点: 0/{totalframes - 1}")
+                    self.add_new_canvas()
+                elif msg_box.clickedButton() == new_btn:
+                    self.add_new_canvas('latest')
+                elif msg_box.clickedButton() == hide_btn:
+                    return False
 
         # 显示第一张图像
-        self.update_time_slice(0, True)
-        self.time_slider.setValue(0)
+        # self.image_display.update_time_slice(0, True)
+        # self.time_slider.setValue(0)
 
         # 根据图像大小调节region范围
         self.region_x_input.setMaximum(self.data.datashape[1])
         self.region_y_input.setMaximum(self.data.datashape[2])
+
+    def other_imports(self):
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("画布操作")
+        msg_box.setText("请选择是否要覆盖当前画布或新建画布")
+
+        # 添加标准按钮
+        overwrite_btn = msg_box.addButton("覆盖", QMessageBox.ActionRole)
+        new_btn = msg_box.addButton("新建", QMessageBox.ActionRole)
+        hide_btn = msg_box.addButton("隐藏", QMessageBox.ActionRole)
+        msg_box.exec_()
+
+        # 返回结果
+        if msg_box.clickedButton() == overwrite_btn:
+            return "overwrite"
+        elif msg_box.clickedButton() == new_btn:
+            self.add_new_canvas('latest')
+            return "new"
+        elif msg_box.clickedButton() == hide_btn:
+            return "hide"
+        return None
 
     def load_tiff_folder(self):
         """加载TIFF文件夹(FS-iSCAT)"""
@@ -972,8 +1122,8 @@ class MainWindow(QMainWindow):
         self.load_image()
 
     def make_hover_handler(self):
-        args = {'x': None, 'y': None, 't': None, 'value': None}
-        def _handle_hover(x=None, y=None, t=None, value=None):
+        args = {'x': None, 'y': None, 't': None, 'value': None, 'origin': None}
+        def _handle_hover(x=None, y=None, t=None, value=None, origin=None):
             """鼠标位置显示"""
             # 更新传入的参数（未传入的保持原值）
             if x is not None: args['x'] = x
@@ -985,10 +1135,11 @@ class MainWindow(QMainWindow):
                 args['value'] = self.data.image_import[args['t'], args['y'], args['x']]
             if args['x'] is None or args['y'] is None:
                 return
+            if origin is not None: args['origin'] = origin
 
             # 更新显示
             self.mouse_pos_label.setText(
-                f"鼠标位置: x={args['x']}, y={args['y']}, t={args['t']}; 归一值: {args['value']:.2f}, 原始值：{self.data.data_origin[args['t'], args['y'], args['x']]:.6e}")
+                f"鼠标位置: x={args['x']}, y={args['y']}, t={args['t']}; 归一值: {args['value']}, 原始值：{args['origin']:.3f}")
 
         return _handle_hover
 
@@ -1019,8 +1170,8 @@ class MainWindow(QMainWindow):
         self.update_status("坏点修复ing", 'working')
         if dialog.exec_():
             # 更新图像显示
-            self.update_time_slice(0)
-            self.time_slider.setValue(0)
+            # self.time_label.setText(self.image_display.update_time_slice(0))
+            # self.time_slider.setValue(0)
             logging.info(f"坏点处理完成，修复了 {len(dialog.bad_frames)} 个坏帧")
         self.update_status("准备就绪", 'idle')
 
@@ -1032,8 +1183,8 @@ class MainWindow(QMainWindow):
         self.update_status("计算设置ing", 'working')
         dialog = CalculationSetDialog(self.cal_set_params)
         if dialog.exec_():
-            self.update_time_slice(0)
-            self.time_slider.setValue(0)
+            # self.time_label.setText(self.image_display.update_time_slice(0))
+            # self.time_slider.setValue(0)
             self.cal_set_params = dialog.params
             LifetimeCalculator.set_cal_parameters(self.cal_set_params)
             # 同步修改绘图设置并传参
@@ -1069,7 +1220,7 @@ class MainWindow(QMainWindow):
                 else:
                     data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
                     self.data.update(data_amend)
-                    self.update_time_slice(self.idx)
+                    # self.time_label.setText(self.image_display.update_time_slice(self.idx))
             elif roi_dialog.action_type == "vector":
                 self.vector_array = roi_dialog.vector_line.getPixelValues(self.data,self.space_unit,self.time_unit)
                 logging.info(f'成功绘制ROI，大小{self.vector_array.shape}')
@@ -1077,20 +1228,20 @@ class MainWindow(QMainWindow):
 
         self.update_status("准备就绪", 'idle')
 
-    def update_time_slice(self, idx, first_create = False):
-        """更新时间切片显示"""
-        if self.data is None:
-            logging.warning("无数据可显示")
-            return
-        self.idx = idx
-        if self.data is not None and 0 <= idx < len(self.data.image_import):
-            self.time_label.setText(f"时间点: {idx}/{len(self.data.image_import) - 1}")
-            self.image_display.current_image = self.data.image_import[idx]
-            if first_create:
-                self.image_display.display_image(self.data.image_import[idx],idx)
-            else:
-                self.image_display.update_display_idx(self.data.image_import[idx],idx)
-                self._handle_hover(t = idx)
+    # def update_time_slice(self, idx, first_create = False):
+    #     """更新时间切片显示"""
+    #     if self.data is None:
+    #         logging.warning("无数据可显示")
+    #         return
+    #     self.idx = idx
+    #     if self.data is not None and 0 <= idx < len(self.data.image_import):
+    #         self.time_label.setText(f"时间点: {idx}/{len(self.data.image_import) - 1}")
+    #         self.image_display.current_image = self.data.image_import[idx]
+    #         if first_create:
+    #             self.image_display.display_image(self.data.image_import[idx],idx)
+    #         else:
+    #             self.image_display.update_display_idx(self.data.image_import[idx],idx)
+    #             self._handle_hover(t = idx)
 
     def update_progress(self, current, total=None):
         """更新进度条"""
@@ -1305,7 +1456,6 @@ class MainWindow(QMainWindow):
         # 如果有线程在运算，要提示（不过目前不需要，保留语句）
         if not self.avi_thread.isRunning():
             self.avi_thread.start()
-            return
         self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
 
     def quality_EM_stft(self):
@@ -1325,7 +1475,7 @@ class MainWindow(QMainWindow):
                 self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
                 self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
                 if not self.avi_thread.isRunning():
-                    self.EM_thread_open()
+                    self.avi_thread.start()
                 self.stft_quality_signal.emit(self.processed_data,
                                               self.EM_params['target_freq'],self.EM_fps,
                                              self.EM_params['stft_window_size'],
@@ -1362,7 +1512,7 @@ class MainWindow(QMainWindow):
                     self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
                     self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
                     if not self.avi_thread.isRunning():
-                        self.EM_thread_open()
+                        self.avi_thread.start()
                     self.stft_python_signal.emit(self.processed_data,
                                                  self.EM_params['target_freq'],self.EM_fps,
                                                  self.EM_params['stft_window_size'],
@@ -1396,7 +1546,7 @@ class MainWindow(QMainWindow):
                 self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
                 self.EM_params['cwt_type'] = dialog.wavelet.currentText()
                 if not self.avi_thread.isRunning():
-                    self.EM_thread_open()
+                    self.avi_thread.start()
                 self.cwt_quality_signal.emit(self.processed_data,
                                              self.EM_params['target_freq'],
                                              self.EM_fps,
@@ -1424,7 +1574,7 @@ class MainWindow(QMainWindow):
                 self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
                 self.EM_params['cwt_scale_range'] = dialog.cwt_scale_range.value()
                 if not self.avi_thread.isRunning():
-                    self.EM_thread_open()
+                    self.avi_thread.start()
                 self.cwt_python_signal.emit(self.processed_data,
                                             self.EM_params['target_freq'],
                                             self.EM_fps,
@@ -1466,13 +1616,13 @@ class MainWindow(QMainWindow):
                 result = self.processed_data.data_processed
                 if self.show_stft_check.isChecked():
                     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result)) # 要改
-                self.load_image()
+                    self.load_image()
                 pass
             case 'ROI_cwt':
                 result = self.processed_data.data_processed
                 if self.show_stft_check.isChecked():
                     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result))  # 要改
-                self.load_image()
+                    self.load_image()
                 pass
 
     def roi_signal_avg(self):
@@ -1997,6 +2147,36 @@ QComboBox QAbstractItemView::item {
 QComboBox QAbstractItemView::item:hover {
     background-color: #C8E6C9;
 }
+    QTableWidget {
+        gridline-color: #d0d0d0; /* 网格线颜色 */
+        background-color: white; /* 背景色 */
+    }
+    /* 表头样式 */
+    QHeaderView::section {
+        background-color: #e0e0e0;
+        padding: 4px;
+        border: 1px solid #c0c0c0;
+        font-weight: bold;
+    }
+    /* 单元格样式 */
+    QTableWidget::item {
+        padding: 3px;
+        border: none; /* 去除默认边框，使用网格线 */
+    }
+    /* 选中单元格的样式 */
+    QTableWidget::item:focus {
+        background-color: #C8E6C9; /* 获得焦点时的背景色 */
+        color: black;
+    }
+    /* 另一种设置选中行样式的方法（如果设置了SelectionBehavior为SelectRows） */
+    QTableWidget::item:selected {
+        background-color: #4CAF50; /* 选中项背景色 */
+        color: white;
+    }
+    /* 鼠标悬停在单元格上的样式 */
+    QTableWidget::item:hover {
+        background-color: #C8E6C9; /* 悬停颜色 */
+    }
     """
     # 应用全局样式
     app.setStyle('Fusion')

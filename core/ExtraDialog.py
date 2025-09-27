@@ -7,7 +7,8 @@ from PyQt5.QtGui import QColor, QIntValidator, QFont
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QRadioButton, QSpinBox, QLineEdit, QPushButton,
                              QLabel, QMessageBox, QFormLayout, QDoubleSpinBox, QColorDialog, QComboBox, QCheckBox,
-                             QFileDialog, QWhatsThis, QTextBrowser)
+                             QFileDialog, QWhatsThis, QTextBrowser, QTableWidget, QDialogButtonBox, QTableWidgetItem,
+                             QHeaderView, QAbstractItemView)
 from PyQt5.QtCore import Qt, QEvent
 
 
@@ -692,6 +693,117 @@ class MassDataSavingPop(QDialog):
             'filename': self.text_edit.text().strip(),
             'filetype': self.type_combo.currentText()
         }
+
+# 历史数据查看与选择
+class DataViewAndSelectPop(QDialog):
+    def __init__(self, parent=None, datadict=None):
+        super().__init__(parent)
+        self.selected_timestamp = None
+        self.data_list = datadict
+        self.selected_index = -1  # 初始化为-1，表示未选择
+        self.selected_name = ""  # 存储选择的数据名称
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle('数据选择')
+        self.setMinimumSize(600, 400)  # 设置对话框最小尺寸
+
+        # 创建主布局
+        main_layout = QVBoxLayout(self)
+
+        # 创建表格部件
+        self.table_widget = QTableWidget()
+        main_layout.addWidget(self.table_widget, 3)  # 表格占据大部分空间
+
+        # 创建底部状态显示区域
+        bottom_layout = QHBoxLayout()
+        self.status_label = QLabel("目前选择的数据：")
+        self.selected_data_label = QLabel("暂无")  # 用于显示选择的数据名称
+        bottom_layout.addWidget(self.status_label)
+        bottom_layout.addWidget(self.selected_data_label)
+        bottom_layout.addStretch()  # 添加弹性空间
+
+        main_layout.addLayout(bottom_layout)
+
+        # 创建按钮框（确定和取消）
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self)
+        self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)  # 初始时确定按钮不可用
+        main_layout.addWidget(self.button_box)
+
+        # 连接按钮信号
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+
+        # 配置表格
+        self.setup_table()
+
+    def setup_table(self):
+        """设置表格内容和按钮"""
+        num_rows = len(self.data_list)
+        if num_rows > 0:
+            all_keys = list(self.data_list[0].keys())
+            keys = [key for key in all_keys if key not in ['timestamp']]
+            num_cols = len(keys) + 1  # 增加一列用于放置按钮
+        else:
+            keys = []
+            num_cols = 0
+
+        # 设置表格行数、列数和表头
+        self.table_widget.setRowCount(num_rows)
+        self.table_widget.setColumnCount(num_cols)
+        if num_rows > 0:
+            column_headers = keys + ['选择']  # 添加一个"操作"列
+            self.table_widget.setHorizontalHeaderLabels(column_headers)
+
+        # 填充数据并插入按钮
+        for row_idx, data_dict in enumerate(self.data_list):
+            for col_idx, key in enumerate(keys):
+                value = str(data_dict.get(key, ''))
+                item = QTableWidgetItem(value)
+                item.setTextAlignment(Qt.AlignCenter)
+                self.table_widget.setItem(row_idx, col_idx, item)
+                if row_idx == 0:
+                    item.setToolTip('当前数据（最新）')
+                    item.setBackground(QColor(212, 237, 205))
+                elif row_idx == num_rows - 1:
+                    item.setToolTip('最新数据')
+                else:
+                    item.setToolTip('历史数据')
+
+
+            # 在最后一列创建并设置按钮
+            button = QPushButton('显示选择')
+            # 使用lambda表达式捕获当前行索引
+            button.clicked.connect(lambda checked, r=row_idx: self.on_row_button_clicked(r))
+            self.table_widget.setCellWidget(row_idx, num_cols - 1, button)  # 按钮放在最后一列
+
+        # 调整列宽以自适应内容
+        self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table_widget.setSelectionBehavior(QTableWidget.SelectRows) # 单选整行
+        self.table_widget.cellClicked.connect(self.on_row_button_clicked)
+
+    def on_row_button_clicked(self, row_index,col_index = None):
+        """处理行按钮点击事件"""
+        self.selected_index = row_index
+        selected_data = self.data_list[row_index]
+
+        # 假设字典中有'name'键，如果没有，可以用其他键或方式显示
+        name = selected_data.get('name')
+        self.selected_name = str(name)
+        self.selected_timestamp = selected_data.get('timestamp')
+
+        # 更新状态显示
+        self.selected_data_label.setText(self.selected_name)
+
+        # 启用确定按钮
+        self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+
+    def get_selected_index(self):
+        """获取选择的数据索引"""
+        return self.selected_index,self.selected_name
+    def get_selected_timestamp(self):
+        return self.selected_timestamp
+
 
 # 帮助dialog
 class CustomHelpDialog(QDialog):
