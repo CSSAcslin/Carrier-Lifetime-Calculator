@@ -1,34 +1,26 @@
 import logging
 
 import numpy as np
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QWheelEvent, QTransform, QIcon
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QWheelEvent, QTransform, QIcon, QPen, QBrush, QColor
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
-                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QToolBar, QAction, QDockWidget, QStyle
+                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QToolBar, QAction, QDockWidget, QStyle,
+                             QGraphicsRectItem, QActionGroup
                              )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize
 
 from transient_data_processing.core.DataManager import ImagingData
 
 
 class ImageDisplayWindow(QMainWindow):
-    """图像显示部件 (使用QPixmap实现)"""
+    """图像显示管理"""
     add_canvas_signal = pyqtSignal()
-    # mouse_position_signal = pyqtSignal(int, int, int, float)
-    # mouse_clicked_signal = pyqtSignal(int, int)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.display_canvas = []
-        # self.display_data = []
-        # self.init_ui()
         self.init_tool_bars()
-
-    # def init_ui(self):
-    #     """此处目前要包含初次数据导入后的图像显示"""
-    #     self.main_widget = QDockWidget('',self)
-    #     self.layout = QVBoxLayout(self)
-
+        self.cursor_id = 0
 
     def init_tool_bars(self):
         Canvas_bar = QToolBar('Canvas')
@@ -50,43 +42,43 @@ class ImageDisplayWindow(QMainWindow):
         self.addToolBar(Canvas_bar)
 
         Drawing_bar = QToolBar('Drawing')
-        draw_pen = QAction('Pen', self)
-        draw_pen.setStatusTip("Draw the pen")
-        # draw_pen.triggered.connect(self.draw_pen)
-        Drawing_bar.addAction(draw_pen)
+        self.drawing_action_group = QActionGroup(self)
+        self.drawing_action_group.setExclusive(True)
 
-        draw_line = QAction('Line', self)
-        draw_line.setStatusTip("Draw the line")
-        # draw_line.triggered.connect(self.draw_line)
-        Drawing_bar.addAction(draw_line)
+        def create_drawing_action(name, tip, slot=None):
+            action = QAction(name, self)
+            action.setStatusTip(tip)
+            action.setToolTip(tip)
+            action.setCheckable(True)  # 允许选中状态
+            action.triggered.connect(lambda : self.set_tools(name))
+            self.drawing_action_group.addAction(action)  # 添加到互斥组
+            Drawing_bar.addAction(action)
+            return action
 
-        draw_rect = QAction('Rect', self)
-        draw_rect.setStatusTip("Draw the rect")
-        draw_rect.setToolTip("Draw the rect")
-        # draw_rect.triggered.connect(self.draw_rect)
-        Drawing_bar.addAction(draw_rect)
+        # 创建所有绘图工具
+        draw_pen = create_drawing_action('Pen', "Draw the pen")
+        draw_line = create_drawing_action('Line', "Draw the line")
+        draw_rect = create_drawing_action('Rect', "Draw the rect")
+        draw_ellipse = create_drawing_action('Ellipse', "Draw the ellipse")
+
         Drawing_bar.addSeparator()
 
-        draw_ellipse = QAction('Ellipse', self)
-        draw_ellipse.setStatusTip("Draw the ellipse")
-        draw_ellipse.setToolTip("Draw the ellipse")
-        # draw_ellipse.triggered.connect(self.draw_ellipse)
-        Drawing_bar.addAction(draw_ellipse)
+        draw_eraser = create_drawing_action('Eraser', "Draw the eraser")
+        draw_fill = create_drawing_action('Fill', "Draw the fill")
+        set_color = create_drawing_action('Color', "Set the color")
 
-        draw_eraser = QAction('Eraser', self)
-        draw_eraser.setStatusTip("Draw the eraser")
-        draw_eraser.setToolTip("Draw the eraser")
-        # draw_eraser.triggered.connect(self.draw_eraser)
-        Drawing_bar.addAction(draw_eraser)
+        Drawing_bar.addSeparator()
 
-        draw_fill = QAction('Fill', self)
-        draw_fill.setStatusTip("Draw the fill")
-        draw_fill.setToolTip("Draw the fill")
-        # draw_fill.triggered.connect(self.draw_fill)
-        Drawing_bar.addAction(draw_fill)
+        vector_line = create_drawing_action('V-line', "Draw the vector line")
+        vector_rect = create_drawing_action('V-rect', "Draw the vector rect")
+        #
+        # # 添加默认选中项（可选）
+        # draw_pen.setChecked(True)
 
         self.addToolBar(Drawing_bar)
 
+    def set_cursor_id(self,id):
+        self.cursor_id = id
 
     def add_canvas(self,data):
         """新增图像显示画布"""
@@ -101,38 +93,49 @@ class ImageDisplayWindow(QMainWindow):
         self.addDock(self.display_canvas[-1])
         # self.addDockWidget(Qt.LeftDockWidgetArea, self.display_canvas[-1])
 
+    def handle_dock_closed(self, top_level):
+        """当 Dock 关闭时触发"""
+        if not top_level:  # 当 Dock 不再是顶级窗口时（即被关闭）
+            self.parent().del_canvas(self.canvas_id)
+
+    def _remove_single_canvas(self, canvas_id):
+        """删除单个画布"""
+        # 从布局中移除并删除DockWidget
+        for dock in self.findChildren(QDockWidget):
+            if hasattr(dock, 'canvas_id') and dock.canvas_id == canvas_id:
+                self.removeDockWidget(dock)
+                dock.deleteLater()
+                break
+
+        # 从display_canvas列表中移除
+        for i, canvas in enumerate(self.display_canvas):
+            if canvas.canvas_id == canvas_id:
+                del self.display_canvas[i]
+                break
+
+        return True
+
     def del_canvas(self,canvas_id = None):
-        """删除画布"""
+        """删除画布
+             None - 删除最后一个画布
+              int - 删除指定ID的画布
+               -1 - 删除所有画布
+        """
         logging.info("del_canvas test works")
         if not self.display_canvas:
             return False
-
+        # 删除最后添加的画布
         if canvas_id is None:
-            canvas_id = len(self.display_canvas) - 1
-
-        elif 0 <= canvas_id < len(self.display_canvas):
-            del_canvas = self.display_canvas.pop(canvas_id)
-            del_canvas.setParent(None)
-            del_canvas.deleteLater()
-            for dock in self.findChildren(QDockWidget):
-                if hasattr(dock, 'id') and dock.id == canvas_id:
-                    self.removeDockWidget(dock)  # 从布局中移除
-                    dock.deleteLater()  # 安全删除对象
-            # 更新剩余区域的ID
-            for idx, canvas in enumerate(self.display_canvas):
-                canvas.canvas_id = idx
-
-            return True
+            canvas_id = self.display_canvas[-1].canvas_id
+        # 删除所有画布
         elif canvas_id == -1: # 全部清除
-            for idx in range(len(self.display_canvas)):
-                del_canvas = self.display_canvas.pop(idx)
-                del_canvas.setParent(None)
-                del_canvas.deleteLater()
-                for dock in self.findChildren(QDockWidget):
-                    if hasattr(dock, 'id') and dock.id == canvas_id:
-                        self.removeDockWidget(dock)  # 从布局中移除
-                        dock.deleteLater()  # 安全删除对象
-        return False
+            all_ids = [c.canvas_id for c in self.display_canvas]
+            for cid in all_ids:
+                self._remove_single_canvas(cid)
+            return True
+
+        # 删除单个canvas_id画布
+        return self._remove_single_canvas(canvas_id)
 
     def addDock(self, dock):
         """根据区域数量更新布局"""
@@ -151,7 +154,7 @@ class ImageDisplayWindow(QMainWindow):
             # 创建左侧区域
             self.addDockWidget(Qt.LeftDockWidgetArea, dock)
             # # 垂直分割左侧区域
-            # self.splitDockWidget(target_docks[0], target_docks[1], Qt.Vertical)
+            self.splitDockWidget(self.display_canvas[0], dock, Qt.Vertical)
             # # 添加右侧区域
             # self.addDockWidget(Qt.RightDockWidgetArea, target_docks[2])
 
@@ -167,49 +170,18 @@ class ImageDisplayWindow(QMainWindow):
             # # 垂直分割右侧区域
             # self.splitDockWidget(docks[2], docks[3], Qt.Vertical)
 
-    # def update_time_slice(self,idx,first_create = False):
-        '''新的时间序列显示更新'''
-        # max_frame = self.display_data[0].totalframes
-        # if not 0 <= idx < max_frame:
-        #     raise ValueError('idx out of range(impossible Fault)')
-        # label_text = f"时间点: {idx}/{max_frame - 1}"
-        # for i, data in enumerate(self.display_data):
-        #     self.display_canvas[i].current_time_idx = idx # 目前是否时序数据没有在序号上做区分
-        #     if data.ROI_applied: # 判断是否加了ROI
-        #         if data.is_temporary : # 判断是否是时序数据
-        #             self.display_canvas[i].current_image = data.image_ROI[idx]
-        #             if data.totalframes == max_frame: # 判断时序是否与主窗口尺度一致
-        #                 if first_create: # 判断是否为第一次创建
-        #                     self.display_canvas[i].display_image(data.image_ROI[idx], idx)
-        #                 else:
-        #                     self.display_canvas[i].update_display_idx(data.image_ROI[idx], idx)
-        #                     self._handle_hover(t=idx)
-        #             else:
-        #                 synco = data.totalframes // max_frame
-        #                 self.display_canvas[i].update_display_idx(data.image_ROI[int(idx*synco)], idx)
-        #         else:
-        #             self.display_canvas[i].update_display_idx(data.image_ROI)
-        #     else:
-        #         if data.is_temporary :
-        #             self.display_canvas[i].current_image = data.image_data[idx]
-        #             if data.totalframes == max_frame:
-        #                 if first_create:
-        #                     self.display_canvas[i].display_image(data.image_data[idx], idx)
-        #                 else:
-        #                     self.display_canvas[i].update_display_idx(data.image_data[idx], idx)
-        #             else:
-        #                 synco = data.totalframes // max_frame
-        #                 self.display_canvas[i].update_display_idx(data.image_data[int(idx*synco)], idx)
-        #         else:
-        #             self.display_canvas[i].update_display_idx(data.image_data)
-        # # self.parent().time_label.setText(label_text)
-        # # super().time_label.setText(label_text)
-        # return label_text
+    def set_tools(self,tool_name:str):
+        self.display_canvas[self.cursor_id].set_drawing_tool(tool_name)
+
+
+
 
 class SubImageDisplayWidget(QDockWidget):
-    """图像显示部件 (使用QPixmap实现)"""
+    """子图像显示部件"""
     mouse_position_signal = pyqtSignal(int, int, int, float,float)
     mouse_clicked_signal = pyqtSignal(int, int)
+    current_canvas_signal = pyqtSignal(int)
+    draw_result_signal = pyqtSignal(str,object)
     def __init__(self, parent=None,canvas_id = None,name = None, data :ImagingData = None):
         super().__init__(name, parent)
         self.id = canvas_id
@@ -224,6 +196,14 @@ class SubImageDisplayWidget(QDockWidget):
         self.max_scale = 30.0
         self.draw_layer_opacity = 0.8
         # self.setMinimumSize(300,300)
+        self.drawing_tool = None
+        self.drawing = False
+        self.start_pos = None
+        self.end_pos = None
+        self.temp_item = None # 临时画布
+        self.vector_rect_item = None # 矢量矩形绘制
+        self.v_rect_roi = None # 矢量矩形蒙版结果（左上角坐标（x,y), 宽度, 高度）
+
         self.init_ui()
         self.map_view = False
 
@@ -240,7 +220,7 @@ class SubImageDisplayWidget(QDockWidget):
         self.data_layer = QGraphicsPixmapItem()
         self.draw_layer = QGraphicsPixmapItem()
         self.scene.addItem(self.data_layer)
-        # self.scene.addItem(self.draw_layer)
+        self.scene.addItem(self.draw_layer)
 
         layout.addWidget(self.graphics_view)
 
@@ -260,10 +240,11 @@ class SubImageDisplayWidget(QDockWidget):
         slider_layout = QHBoxLayout()
         self.start_button = QPushButton()
         self.start_button.setIcon(QIcon(QApplication.style().standardIcon(QStyle.SP_MediaPlay)))
+        self.start_button.setIconSize(QSize(16,16))
         self.time_slider = QSlider(Qt.Horizontal)
         self.time_slider.setMinimum(0)
-        self.time_slider.setMaximum(self.max_time_idx)
-        self.time_label = QLabel(f"{self.current_time_idx}/{self.max_time_idx}")
+        self.time_slider.setMaximum(self.max_time_idx-1)
+        self.time_label = QLabel(f"{self.current_time_idx}/{self.max_time_idx-1}")
         slider_layout.addWidget(self.start_button)
         slider_layout.addWidget(self.time_slider)
         slider_layout.addWidget(self.time_label)
@@ -272,6 +253,29 @@ class SubImageDisplayWidget(QDockWidget):
             self.time_slider.valueChanged.connect(self.update_time_slice)
         widget.setLayout(layout)
         self.setWidget(widget)
+
+    def set_drawing_tool(self, tool):
+        """设置当前绘图工具"""
+        self.drawing_tool = tool
+        self.drawing = False
+        self.start_pos = None
+        self.end_pos = None
+
+        # 清除前序画板
+        self.clear_vector_rect()
+        if self.temp_item:
+            self.scene.removeItem(self.temp_item)
+            self.temp_item = None
+
+    def clear_vector_rect(self):
+        """清除之前绘制的矢量矩形"""
+        if self.vector_rect_item:
+            self.scene.removeItem(self.vector_rect_item)
+            self.vector_rect_item = None
+        if self.temp_item:
+            self.scene.removeItem(self.temp_item)
+            self.temp_item = None
+        self.current_roi_rect = None
 
     def wheel_event(self, event: QWheelEvent):
         """滚轮缩放实现"""
@@ -318,11 +322,25 @@ class SubImageDisplayWidget(QDockWidget):
             self.graphics_view.setCursor(Qt.ClosedHandCursor)
         elif event.button() == Qt.LeftButton:
             # 左键点击：发射坐标信号
-            pos = self.graphics_view.mapToScene(event.pos())
-            x, y = int(pos.x()), int(pos.y())
-            h, w = self.current_image.shape
-            if 0 <= x < w and 0 <= y < h:
-                self.mouse_clicked_signal.emit(x, y)
+            if self.drawing_tool == 'V-rect':
+                self.clear_vector_rect()
+                self.drawing = True
+                self.start_pos = self.graphics_view.mapToScene(event.pos())
+                self.end_pos = self.start_pos
+
+                # 创建临时绘图项
+                if self.temp_item:
+                    self.scene.removeItem(self.temp_item)
+                rect = QRectF(self.start_pos, self.end_pos)
+                self.temp_item = QGraphicsRectItem(rect)
+                self.temp_item.setPen(QPen(Qt.yellow, 0.2, Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
+                self.scene.addItem(self.temp_item)
+            else:
+                pos = self.graphics_view.mapToScene(event.pos())
+                x, y = int(pos.x()), int(pos.y())
+                h, w = self.current_image.shape
+                if 0 <= x < w and 0 <= y < h:
+                    self.mouse_clicked_signal.emit(x, y)
 
         super(QGraphicsView, self.graphics_view).mousePressEvent(event)
 
@@ -356,7 +374,13 @@ class SubImageDisplayWidget(QDockWidget):
                 original_value = self.data.image_backup[self.y_img, self.x_img]
             # 发射信号(需要主窗口连接此信号)
             self.mouse_position_signal.emit(self.x_img, self.y_img, self.current_time_idx, value,original_value)
+            self.current_canvas_signal.emit(self.id)
 
+        # 绘图模式
+        if self.drawing and self.drawing_tool == 'V-rect' and self.temp_item:
+            self.end_pos = self.graphics_view.mapToScene(event.pos())
+            rect = QRectF(self.start_pos, self.end_pos).normalized()
+            self.temp_item.setRect(rect)
         super().mouseMoveEvent(event)
 
     def mouse_release_event(self, event):
@@ -364,7 +388,55 @@ class SubImageDisplayWidget(QDockWidget):
         if event.button() == Qt.MidButton:
             self.drag_start_pos = None
             self.graphics_view.setCursor(Qt.ArrowCursor)
+
+        elif event.button() == Qt.LeftButton and self.drawing:
+            # 完成绘图
+            self.drawing = False
+
+            if self.drawing_tool == 'V-rect' and self.temp_item:
+                # 获取矩形坐标
+                rect = self.temp_item.rect()
+                x1 = int(rect.x())
+                y1 = int(rect.y())
+                width = int(rect.width())
+                height = int(rect.height())
+
+                # 确保坐标在图像范围内
+                h, w = self.current_image.shape
+                x1 = max(0, min(x1, w - 1))
+                y1 = max(0, min(y1, h - 1))
+                width = min(width, w - x1)
+                height = min(height, h - y1)
+
+                # 创建ROI信息
+                self.v_rect_roi = ((x1, y1), width, height)
+                self.draw_result_signal.emit('v_rect',self.v_rect_roi)
+
+                # 移除临时绘图项
+
+                self.vector_rect_item = QGraphicsRectItem(QRectF(x1, y1, width, height))
+                self.vector_rect_item.setPen(QPen(Qt.yellow, 1,Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
+                self.vector_rect_item.setBrush(QBrush(QColor(255,255, 0, 128)))
+                self.scene.addItem(self.vector_rect_item)
+
+                self.scene.removeItem(self.temp_item)
+                self.temp_item = None
+
+                # 可选：在绘图层显示ROI区域
+                if hasattr(self, 'top_pixmap'):
+                    painter = QPainter(self.top_pixmap)
+                    painter.setPen(QPen(Qt.red, 1,))
+                    painter.drawRect(x1, y1, width, height)
+                    painter.end()
+                    self.draw_layer.setPixmap(self.top_pixmap)
+
         super(QGraphicsView, self.graphics_view).mouseReleaseEvent(event)
+
+    def closeEvent(self, event):
+        """重写关闭事件"""
+        if self.parent() and hasattr(self.parent(), 'remove_canvas'):
+            self.parent().remove_canvas(self.canvas_id)
+        super().closeEvent(event)
 
     def update_time_slice(self,idx=0):
         if not 0 <= idx < self.max_time_idx:
@@ -405,18 +477,14 @@ class SubImageDisplayWidget(QDockWidget):
         self.last_scale = self.graphics_view.transform().m11()
         self.initial_scale = self.graphics_view.transform().m11()
         self.map_view = True
+        # 绘制层
+        height, width = image_data.shape
+        self.top_pixmap = QPixmap(width, height)
+        self.top_pixmap.fill(Qt.transparent)
+        self.draw_layer = self.scene.addPixmap(self.top_pixmap)
+        self.draw_layer.setOpacity(self.draw_layer_opacity)
+        self.draw_layer.setZValue(1)  # 确保绘图层在数据层之上
 
-        # self.graphics_view.resetTransform()
-        # self.graphics_view.fitInView(self.data_layer, Qt.KeepAspectRatio) # 实现适合尺寸的放大
-        # # 绘制层
-        # # height, width = image_data.shape
-        # # self.top_pixmap = QPixmap(width, height)
-        # # self.top_pixmap.fill(Qt.transparent)
-        # # self.draw_layer= self.scene.addPixmap(self.top_pixmap)
-        # # self.draw_layer.setOpacity(self.draw_layer_opacity)
-        # # 获取缩放因子
-        # self.last_scale = self.graphics_view.transform().m11()  # 实时更新
-        # self.initial_scale = self.graphics_view.transform().m11()  # 只获取一次
 
     def update_display_idx(self, image_data):
         """仅更新图像数据，不改变视图状态"""

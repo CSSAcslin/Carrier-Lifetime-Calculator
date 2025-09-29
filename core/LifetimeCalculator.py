@@ -195,7 +195,7 @@ class LifetimeCalculator:
         global lifetime, fit_curve, phy_signal, r_squared
         y, x = center
         h, w = data.framesize
-        data_type = data.parameters['data_type'] if 'data_type' in data.parameters else None
+        data_type = data.parameters['data_type'] if data.parameters is not None and 'data_type' in data.parameters else None
 
         # 创建区域掩模
         if shape == 'square':
@@ -277,8 +277,6 @@ class CalculationThread(QObject):
     """仅在线程中使用，目前未加锁（仍无必要）"""
     cal_running_status = pyqtSignal(bool)
     processed_result = pyqtSignal(ProcessedData)
-    processed_result = pyqtSignal(ProcessedData)
-    processed_result = pyqtSignal(ProcessedData)
     calculating_progress_signal = pyqtSignal(int, int)
     stop_thread_signal = pyqtSignal()
     cal_time = pyqtSignal(float)
@@ -311,6 +309,7 @@ class CalculationThread(QObject):
                                                        f'{data.name}@r-lft',
                                                        'ROI_lifetime',
                                                        time_point=time_points,
+                                                       data_processed=fit_curve,
                                                        out_processed={'phy_signal': phy_signal,
                                                                       'lifetime': lifetime,
                                                                       'fit_curve': fit_curve,
@@ -339,7 +338,7 @@ class CalculationThread(QObject):
             timer = QElapsedTimer()
             timer.start()
             time_points = data.time_point * time_unit
-            data_type = data.parameters['data_type'] if 'data_type' in data.parameters else None
+            data_type = data.parameters['data_type'] if data.parameters is not None and 'data_type' in data.parameters else None
 
             # 计算每个像素的寿命
             height, width = data.framesize
@@ -447,6 +446,8 @@ class CalculationThread(QObject):
         self.processed_result.emit(ProcessedData(timestamp,
                                                  f'{name}@dif',
                                                  'diffusion',
+                                                 time_point=dif_data_dict['time_series'],
+                                                 data_processed=dif_data_dict['signal'],
                                                  out_processed=dif_data_dict))
         self.cal_time.emit(timer.elapsed())
         self._is_calculating = False

@@ -9,12 +9,11 @@ import cv2
 import pywt
 from PIL import Image
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
-from astropy.wcs.docstrings import data
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
 from scipy import signal
-from tftb.processing import WignerVilleDistribution
-from scipy.signal import hilbert
+from scipy.optimize import curve_fit
+from scipy.ndimage import zoom
 import DataManager
 
 
@@ -499,8 +498,17 @@ class MassDataProcessor(QObject):
             if unfold:
                 T, H, W = processed_data.shape
                 unfolded_data = processed_data.reshape((T, H * W)).T
-                data.parameters['unfolded_data'] = unfolded_data
-                processed.out_processed['unfolded_data'] = unfolded_data
+            else:
+                unfolded_data = None
+
+            processed = DataManager.ProcessedData(data.timestamp,
+                                                  f'{data.name}@EM_pre',
+                                                  'EM_pre_processed',
+                                                  data_processed=processed_data,
+                                                  out_processed={
+                                                      'bg_frame': bg_frame,
+                                                      'unfolded_data': unfolded_data,
+                                                  })
 
             self.processed_result.emit(processed)
             self.processing_progress_signal.emit(100, 100)
@@ -583,10 +591,12 @@ class MassDataProcessor(QObject):
             timer = QElapsedTimer()
             timer.start()
 
-            unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
-            frame_size = data.framesize  # (宽度, 高度)
-            out_length = data.out_processed['out_length']
             target_idx = data.out_processed['target_idx']
+            out_length = data.out_processed['out_length']
+            time_series = data.out_processed['time_series']
+            data = next(data for data in reversed(data.history) if data.type_processed == "EM_pre_processed")# [像素数 x 帧数]
+            frame_size = data.framesize  # (宽度, 高度)
+            unfolded_data = data.out_processed['unfolded_data']
 
             # 2. 计算采样率和FFT参数
             total_frames = unfolded_data.shape[1]
@@ -595,19 +605,6 @@ class MassDataProcessor(QObject):
             if nfft < window_size: # 确保nfft大于等于窗长度
                 nfft = window_size
 
-            # # 3. 计算平均信号的STFT (用于质量评估)
-            # mean_signal = np.mean(unfolded_data, axis=0)
-            # f, t, Zxx = signal.stft(
-            #     mean_signal,
-            #     fps=fps,
-            #     window=signal.windows.hann(window_size),
-            #     nperseg=window_size,
-            #     noverlap=noverlap,
-            #     nfft=nfft,
-            #     return_onesided=True
-            # )
-            # # 发送平均信号STFT结果
-            # self.avg_stft_result.emit(f, t, np.abs(Zxx),target_freq)
             self.processing_progress_signal.emit(1, total_pixels)
 
             # 4. 初始化结果数组
@@ -653,12 +650,12 @@ class MassDataProcessor(QObject):
                     self.processing_progress_signal.emit(i, total_pixels)
 
             # 6. 发送完整结果
-            self.stft_completed.emit(DataManager.ProcessedData(data.timestamp,
+            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                                                f'{data.name}@r_stft',
                                                                'ROI_stft',
                                                                data_processed=stft_py_out,
                                                                out_processed={
-                                                                   'time_series' : data.out_processed['time_series'],
+                                                                   'time_series' : time_series,
                                                                }))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             logging.info(f"计算完成，总耗时{timer.elapsed()}ms")
@@ -731,6 +728,8 @@ class MassDataProcessor(QObject):
             timer = QElapsedTimer()
             timer.start()
 
+            data = next(
+                data for data in reversed(data.history) if data.type_processed == "EM_pre_processed")  # [像素数 x 帧数]
             unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
             frame_size = data.framesize  # (宽度, 高度)
             # cparam = 2 * pywt.central_frequency(wavelet) * totalscales
@@ -941,7 +940,247 @@ class MassDataProcessor(QObject):
         except Exception as e:
             logging.error(f'Window Fault:{e}')
 
+    @pyqtSlot(DataManager.ProcessedData)
+    def accumulate_amplitude(self,data:DataManager.ProcessedData):
+        """累计时间振幅图"""
+        self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+                                         f'{data.name}@atam',
+                                         "Accumulated_time_amplitude_map",
+                                         data_processed=np.sum(data.data_processed, axis=0)))
+        logging.info("累计时间振幅计算已完成")
+
+    @staticmethod
+    def gaussian_2d(coords, A, x0, y0, sigma_x, sigma_y, offset):
+        """二维高斯函数
+        参数:
+        coords: 网格坐标 (x, y)
+        A: 振幅
+        x0, y0: 中心位置
+        sigma_x, sigma_y: X/Y方向标准差
+        offset: 背景偏移量
+
+        返回:
+        二维高斯函数值
+        """
+        x, y = coords
+        return A * np.exp(-((x - x0) ** 2 / (2 * sigma_x ** 2) + (y - y0) ** 2 / (2 * sigma_y ** 2))) + offset
+
+    @pyqtSlot(DataManager.ProcessedData)
+    def twoD_gaussian_fit(self,data_3d:DataManager.ProcessedData,zm = 2,thr = 2.5):
+        """
+        对三维时序数据逐帧进行二维高斯拟合
+
+        参数:
+        data_3d: numpy.ndarray, 三维数组 (T, H, W)
+        zm 插值系数
+        返回:
+        results: list of dict, 每帧的拟合参数
+        """
+        T, H, W = data_3d.datashape
+        x_zmed = W * zm - (zm - 1)
+        y_zmed = H * zm - (zm - 1)
+        X, Y = np.meshgrid(np.arange(x_zmed), np.arange(y_zmed))
+
+        amplitudes = np.zeros(T)
+        centers_x = np.zeros(T)
+        centers_y = np.zeros(T)
+
+        for m in range(T):
+            frame = data_3d.data_processed[m]
+
+            # 图像插值
+            if zm >1:
+                Z = zoom(frame, zm, order=3)
+            else:
+                Z = frame
+
+            # 检查是否有超过阈值的点
+            if np.any(Z > thr):
+                max_value = np.max(Z)
+                y0_g, x0_g = np.unravel_index(np.argmax(Z), Z.shape)
+
+                # 初始参数 [A, x0, sigmax, y0, sigmay, b]
+                x0 = [max_value, x0_g, 1.0, y0_g, 1.0, np.mean(Z)]
+
+                # 参数边界
+                lb = [0, 0, 0.1, 0, 0.1, 0]
+                ub = [100, x_zmed, (x_zmed / 2) ** 2, y_zmed, (y_zmed / 2) ** 2, max_value]
+
+                try:
+                    # 二维高斯拟合
+                    popt, _ = curve_fit(self.gaussian_2d, (X.ravel(),Y.ravel()), Z.ravel(),
+                                        p0=x0, bounds=(lb, ub), maxfev=5000)
+
+                    amplitudes[m] = popt[0]
+                    centers_x[m] = popt[1]
+                    centers_y[m] = popt[3]
+                except RuntimeError:
+                    amplitudes[m] = np.mean(Z)
+                    centers_x[m] = np.nan
+                    centers_y[m] = np.nan
+            else:
+                amplitudes[m] = np.mean(Z)
+                centers_x[m] = np.nan
+                centers_y[m] = np.nan
+
+        return amplitudes, centers_x, centers_y
 
     def stop(self):
         """请求中止处理"""
         self.abort = True
+
+    @staticmethod
+    def calculate_amp_dur(data, thr, mode='open'):
+        """
+        计算单峰事件的振幅和持续时间
+
+        参数:
+        data: 一维时序数据
+        thr: 阈值
+        mode: 'open' 或 'close' (默认'open')
+
+        返回:
+        amplitudes: 事件振幅列表
+        durations: 事件持续时间列表
+        """
+        amplitudes = []
+        durations = []
+        i = 0
+        n = len(data)
+
+        while i < n:
+            if (mode == 'open' and data[i] > thr) or (mode == 'close' and data[i] < thr):
+                start = i
+                # 寻找事件结束点
+                while i < n and ((mode == 'open' and data[i] > thr) or
+                                 (mode == 'close' and data[i] < thr)):
+                    i += 1
+                end = i - 1
+
+                # 计算事件振幅和持续时间
+                event_data = data[start:end + 1]
+                amplitude = np.mean(event_data)
+                duration = (end - start + 1) * 0.65  # 假设采样间隔为0.65
+
+                amplitudes.append(amplitude)
+                durations.append(duration)
+            else:
+                i += 1
+
+        return np.array(amplitudes), np.array(durations)
+
+    # 3. 上升/下降时间常数拟合
+    def fit_exponential_time(data, thr, mode='up', n=5):
+        """
+        拟合指数时间常数
+
+        参数:
+        data: 一维时序数据
+        thr: 阈值
+        mode: 'up' (上升) 或 'down' (下降)
+        n: 用于拟合的点数 (默认5)
+
+        返回:
+        time_constants: 时间常数列表
+        mse_values: 均方误差列表
+        """
+        time_constants = []
+        mse_values = []
+        x = np.arange(0, n * 0.65, 0.65)  # 时间轴
+
+        for i in range(n, len(data) - n):
+            if mode == 'up':
+                # 上升沿检测: 当前点超过阈值，前一点低于阈值
+                if data[i] > thr and data[i - 1] < thr:
+                    # 取前n个点并反转
+                    y = data[i - 1:i + n - 1][::-1]
+                    # 调整基线
+                    y = 2 * data[i - 1] - y
+            else:  # mode == 'down'
+                # 下降沿检测: 当前点低于阈值，前一点高于阈值
+                if data[i] < thr and data[i - 1] > thr:
+                    # 取后n个点并反转
+                    y = data[i:i + n][::-1]
+
+            # 指数拟合
+            try:
+                if mode == 'up' or mode == 'down':
+                    # 初始参数估计
+                    A0 = y[0] - y[-1]
+                    tau0 = 1.0
+                    b0 = y[-1]
+                    p0 = [A0, tau0, b0]
+
+                    # 指数函数模型
+                    def exp_model(x, A, tau, b):
+                        return A * np.exp(-x / tau) + b
+
+                    # 拟合
+                    popt, pcov = curve_fit(exp_model, x, y, p0=p0)
+
+                    # 计算拟合质量
+                    y_fit = exp_model(x, *popt)
+                    mse = np.mean((y - y_fit) ** 2)
+
+                    time_constants.append(popt[1])
+                    mse_values.append(mse)
+            except (RuntimeError, ValueError):
+                # 拟合失败时跳过
+                continue
+
+        return np.array(time_constants), np.array(mse_values)
+
+    # 4. 主分析流程
+    # def analyze_single_peak_data(data_3d, T, x_m, y_m):
+    #     """
+    #     完整分析流程
+    #
+    #     参数:
+    #     data_3d: 三维时序数据 (T, H, W)
+    #     T: 时间轴
+    #     x_m, y_m: ROI起始坐标
+    #
+    #     返回:
+    #     所有分析结果
+    #     """
+    #     # 1. ROI高斯拟合
+    #     amplitudes, centers_x, centers_y = fit_gaussian_roi(data_3d, x_m, y_m)
+    #
+    #     # 绘制振幅变化
+    #     plt.figure(figsize=(10, 6))
+    #     plt.plot(T, amplitudes)
+    #     plt.xlabel('Time')
+    #     plt.ylabel('Amplitude')
+    #     plt.title('Amplitude over Time')
+    #     plt.xlim([0, 15])
+    #     plt.ylim([0, 10])
+    #     plt.show()
+    #
+    #     # 2. 单峰振幅-持续时间计算
+    #     open_amps, open_durs = calculate_amp_dur(amplitudes, thr=10, mode='open')
+    #     close_amps, close_durs = calculate_amp_dur(amplitudes, thr=10, mode='close')
+    #
+    #     # 3. 时间常数拟合
+    #     with warnings.catch_warnings():
+    #         warnings.simplefilter("ignore")
+    #         tau_up, mse_up = fit_exponential_time(amplitudes, thr=10, mode='up', n=5)
+    #         tau_down, mse_down = fit_exponential_time(amplitudes, thr=10, mode='down', n=5)
+    #
+    #     # 过滤低质量拟合
+    #     tau_up = tau_up[mse_up < 0.1]
+    #     tau_down = tau_down[mse_down < 0.1]
+    #
+    #     # 返回所有结果
+    #     results = {
+    #         'amplitudes': amplitudes,
+    #         'centers_x': centers_x,
+    #         'centers_y': centers_y,
+    #         'open_amps': open_amps,
+    #         'open_durs': open_durs,
+    #         'close_amps': close_amps,
+    #         'close_durs': close_durs,
+    #         'tau_up': tau_up,
+    #         'tau_down': tau_down
+    #     }
+    #
+    #     return results

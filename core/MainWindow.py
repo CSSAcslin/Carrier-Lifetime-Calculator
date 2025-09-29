@@ -40,6 +40,9 @@ class MainWindow(QMainWindow):
     cwt_quality_signal = pyqtSignal(ProcessedData,float, int, int, str)
     cwt_python_signal = pyqtSignal(ProcessedData,float, int, int, str, float)
     mass_export_signal = pyqtSignal(np.ndarray,str,str,str)
+    atam_signal = pyqtSignal(ProcessedData)
+    tDgf_signal = pyqtSignal(ProcessedData)
+
 
     def __init__(self):
         super().__init__()
@@ -455,7 +458,13 @@ class MainWindow(QMainWindow):
 
     # EM_iSCAT下的功能选择
         EM_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
-        EM_iSCAT_layout1 = QVBoxLayout()
+        EM_iSCAT_layout = QVBoxLayout()
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)  # 关键设置
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet(""" QWidget {background-color: white; }""")
+        EM_iSCAT_layout1 = QVBoxLayout(scroll_content)
         preprocess_set_layout = QHBoxLayout()
         preprocess_set_layout.addWidget(QLabel("背景帧数："))
         self.bg_nums_input = QSpinBox()
@@ -521,8 +530,23 @@ class MainWindow(QMainWindow):
         EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
         EM_iSCAT_layout2.addWidget(self.EM_output_btn)
         EM_iSCAT_layout2.addWidget(self.roi_signal_btn)
+
+        EM_iSCAT_layout3 = QVBoxLayout()
+        self.atam_btn = QPushButton("累计时间振幅图")
+        self.tDgf_btn = QPushButton("选区二维高斯拟合")
+        self.singlecs_btn = QPushButton("单通道信号图")
+        self.ct_btn = QPushButton("受限扩散轨迹")
+        EM_iSCAT_layout3.addWidget(self.atam_btn)
+        EM_iSCAT_layout3.addWidget(self.tDgf_btn)
+        EM_iSCAT_layout3.addWidget(self.singlecs_btn)
+        EM_iSCAT_layout3.addWidget(self.ct_btn)
         EM_iSCAT_layout1.addLayout(EM_iSCAT_layout2)
-        EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout1)
+        EM_iSCAT_layout1.addLayout(EM_iSCAT_layout3)
+
+        EM_iSCAT_layout1.addStretch(1)
+        scroll_area.setWidget(scroll_content)
+        EM_iSCAT_layout.addWidget(scroll_area)
+        EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout)
         self.between_stack.addWidget(EM_iSCAT_GROUP)
 
         left_layout1.addWidget(self.between_stack)
@@ -603,9 +627,10 @@ class MainWindow(QMainWindow):
         data_history_clear.triggered.connect(self.data_history_clear)
         # 数据导入历史查看
         data_history_view = data_menu.addAction('历史导入查看')
-        data_history_view.triggered.connect(self.add_new_canvas) # 临时
+        data_history_view.triggered.connect(self.data_history_view) # 临时
         # 数据处理历史查看
         process_history_view = data_menu.addAction('历史处理查看')
+        process_history_view.triggered.connect(self.process_history_view)
 
 
     @staticmethod
@@ -797,6 +822,8 @@ class MainWindow(QMainWindow):
         self.cwt_quality_btn.clicked.connect(self.quality_EM_cwt)
         self.cwt_process_btn.clicked.connect(self.process_EM_cwt)
         self.EM_output_btn.clicked.connect(self.export_EM_data)
+        self.atam_btn.clicked.connect(self.process_atam)
+        self.tDgf_btn.clicked.connect(self.process_tDgf)
         self.roi_signal_btn.clicked.connect(self.roi_signal_avg)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
@@ -818,6 +845,13 @@ class MainWindow(QMainWindow):
         # 结果区域信号
         self.result_display.tab_type_changed.connect(self._handle_result_tab)
 
+    def canvas_signal_connect(self):
+        for canvas in self.image_display.display_canvas:
+            canvas.mouse_position_signal.connect(self._handle_hover)
+            canvas.mouse_clicked_signal.connect(self._handle_click)
+            canvas.current_canvas_signal.connect(self.image_display.set_cursor_id)
+            canvas.draw_result_signal.connect(self.draw_result)
+
     '''上面是初始化预设，下面是功能响应'''
     def add_new_canvas(self, assign_data = None):
         """新建图像显示画布"""
@@ -827,15 +861,19 @@ class MainWindow(QMainWindow):
         # if self.image_display is []:  走不到这里
         #     logging.warning("请先导入数据")
 
-        dialog = DataViewAndSelectPop(datadict=self.get_data_all())
+        dialog = DataViewAndSelectPop(datadict=self.get_data_all(), processed_datadict=self.get_processed_data_all(),add_canvas=True)
         if dialog.exec_():
-            data_index = dialog.get_selected_index()
             selected_timestamp = dialog.get_selected_timestamp()
             data_display = None
-            for data in self.data._history:
+            for data in self.data.history:
                 if data.timestamp == selected_timestamp:
                     data_display = ImagingData.create_image(data)
-                    logging.info("数据选择成功")
+                    logging.info("数据选择成功（原初）")
+                    continue
+            for data in self.processed_data.history:
+                if data.timestamp == selected_timestamp:
+                    data_display = ImagingData.create_image(data)
+                    logging.info("数据选择成功（处理）")
                     continue
             if data_display is not None:
                 self.image_display.add_canvas(data_display)
@@ -843,15 +881,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self,"数据错误","数据已经遗失（不可能错误）")
                 return
 
-        for canvas in self.image_display.display_canvas:
-            canvas.mouse_position_signal.connect(self._handle_hover)
-            canvas.mouse_clicked_signal.connect(self._handle_click)
+        self.canvas_signal_connect()
         # self.image_display.update_time_slice(0, True)
 
         self.update_status("准备就绪", 'idle')
 
     def get_data_all(self) ->  List[Dict[str, Any]]:
         Data_list = []
+        if self.data is None:
+            return []
         Data_list.append({
             "type": 'Data',
             "name": self.data.name,
@@ -862,7 +900,7 @@ class MainWindow(QMainWindow):
         })
 
         # 历史数据
-        for data in self.data._history:
+        for data in self.data.history:
             if data.name != Data_list[-1]['name']:
                 Data_list.append({
                     "type": 'Data',
@@ -876,23 +914,25 @@ class MainWindow(QMainWindow):
 
     def get_processed_data_all(self) ->  List[Dict[str, Any]]:
         ProcessedData_list = []
+        if self.processed_data is None:
+            return []
         ProcessedData_list.append({
             "type": "ProcessedData",
             "name": self.processed_data.name,
-            "处理类型": self.processed_data.processing_type,
+            "处理类型": self.processed_data.type_processed,
             "数据大小": self.processed_data.datashape,
-            "数据源": self.processed_data.timestamp_inherited,
+            "数据源": self._find_parent_name(self.processed_data.timestamp_inherited),
             "timestamp": self.processed_data.timestamp,
 
         })
 
         # 历史数据
-        for processed in self.processed_data._history:
+        for processed in self.processed_data.history:
             if processed.name != ProcessedData_list[-1]['name']:
                 ProcessedData_list.append({
                     "type": "ProcessedData(history)",
                     "name": processed.name,
-                    "处理类型": processed.processing_type,
+                    "处理类型": processed.type_processed,
                     "数据大小": processed.datashape,
                     "数据源": self._find_parent_name(processed.timestamp_inherited),
                     "timestamp": processed.timestamp,
@@ -923,9 +963,7 @@ class MainWindow(QMainWindow):
             totalframes = self.imaging_main.totalframes
             # self.time_slider.setMaximum(totalframes - 1)
             # self.time_label.setText(f"时间点: 0/{totalframes - 1}")
-            for canvas in self.image_display.display_canvas:
-                canvas.mouse_position_signal.connect(self._handle_hover)
-                canvas.mouse_clicked_signal.connect(self._handle_click)
+            self.canvas_signal_connect()
         else:
             if data_type == 'original':
                 # imports_done = self.other_imports
@@ -1058,6 +1096,8 @@ class MainWindow(QMainWindow):
         self.cwt_quality_signal.connect(self.mass_data_processor.quality_cwt)
         self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
         self.mass_export_signal.connect(self.mass_data_processor.export_EM_data)
+        self.atam_signal.connect(self.mass_data_processor.accumulate_amplitude)
+        self.tDgf_signal.connect(self.mass_data_processor.twoD_gaussian_fit)
 
         # self.avi_thread.start()
 
@@ -1209,7 +1249,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("无数据，请先加载数据文件")
             return
-        roi_dialog = ROIdrawDialog(base_layer_array=self.data.image_import[self.idx],parent=self)
+        roi_dialog = ROIdrawDialog(base_layer_array=self.data.data_origin[0],parent=self)
         self.update_status("ROI绘制ing", 'working')
         if roi_dialog.exec_() == QDialog.Accepted:
             if roi_dialog.action_type == "mask":
@@ -1227,21 +1267,6 @@ class MainWindow(QMainWindow):
 
 
         self.update_status("准备就绪", 'idle')
-
-    # def update_time_slice(self, idx, first_create = False):
-    #     """更新时间切片显示"""
-    #     if self.data is None:
-    #         logging.warning("无数据可显示")
-    #         return
-    #     self.idx = idx
-    #     if self.data is not None and 0 <= idx < len(self.data.image_import):
-    #         self.time_label.setText(f"时间点: {idx}/{len(self.data.image_import) - 1}")
-    #         self.image_display.current_image = self.data.image_import[idx]
-    #         if first_create:
-    #             self.image_display.display_image(self.data.image_import[idx],idx)
-    #         else:
-    #             self.image_display.update_display_idx(self.data.image_import[idx],idx)
-    #             self._handle_hover(t = idx)
 
     def update_progress(self, current, total=None):
         """更新进度条"""
@@ -1462,7 +1487,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("没有数据可以计算，请先加载数据")
             return
-        if "unfolded_data" in self.data.parameters:
+        if "EM_pre_processed" == self.processed_data.type_processed:
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
@@ -1485,7 +1510,7 @@ class MainWindow(QMainWindow):
                 self.EM_params['EM_fps']=self.EM_fps
                 self._is_quality = True
         else:
-            logging.warning("请先对数据进行预处理")
+            logging.warning("请先对数据进行预处理，或重选当前数据焦点")
             self.update_status("准备就绪")
             return
 
@@ -1498,7 +1523,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("没有数据可以计算，请先加载数据")
             return
-        if "unfolded_data" in self.data.parameters:
+        if "stft_quality" == self.processed_data.type_processed:
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
@@ -1529,7 +1554,7 @@ class MainWindow(QMainWindow):
                                              self.EM_params['stft_window_type'])
                 self._is_quality = False
         else:
-            logging.warning("请先对数据进行预处理")
+            logging.warning("请先对数据进行预处理，或重选当前数据焦点")
             self.update_status("准备就绪")
             return
 
@@ -1537,7 +1562,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("没有数据可以计算，请先加载数据")
             return
-        if "unfolded_data" in self.data.parameters:
+        if "EM_pre_processed" == self.processed_data.type_processed:
             dialog = CWTComputePop(self.EM_params,'quality')
 
             if dialog.exec_():
@@ -1554,7 +1579,7 @@ class MainWindow(QMainWindow):
                                              self.EM_params['cwt_type'])
                 self.EM_params['EM_fps'] = self.EM_fps
         else:
-            logging.warning("请先对数据进行预处理")
+            logging.warning("请先对数据进行预处理，或重选当前数据焦点")
             self.update_status("准备就绪")
             return
 
@@ -1563,7 +1588,7 @@ class MainWindow(QMainWindow):
         if self.data is None:
             logging.warning("没有数据可以计算，请先加载数据")
             return
-        if "unfolded_data" in self.data.parameters :
+        if "cwt_quality" == self.processed_data.type_processed:
             dialog = CWTComputePop(self.EM_params, 'signal')
             if dialog.exec_():
                 self.update_status("CWT计算ing", 'working')
@@ -1582,7 +1607,7 @@ class MainWindow(QMainWindow):
                                             self.EM_params['cwt_type'],
                                             self.EM_params['cwt_scale_range'])
         else:
-            logging.warning("请先对数据进行预处理")
+            logging.warning("请先对数据进行预处理，或重选当前数据焦点")
             self.update_status("准备就绪", 'idle')
             return
 
@@ -1624,6 +1649,15 @@ class MainWindow(QMainWindow):
                     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result))  # 要改
                     self.load_image()
                 pass
+            case 'Accumulated_time_amplitude_map':
+                self.atam_btn.setEnabled(True)
+                pass
+
+    def draw_result(self,draw_type:str,result):
+        """canvas绘图结果处理"""
+        if draw_type == "v_rect":
+            # ((x1, y1), width, height)
+            v_rect = result
 
     def roi_signal_avg(self):
         """计算选区信号平均值并显示"""
@@ -1794,7 +1828,53 @@ class MainWindow(QMainWindow):
             logging.warning('请先加载并处理数据')
             return
 
+    def process_atam(self):
+        if self.data and self.processed_data is None :
+            logging.warning('请先导入数据')
+            return
+        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
+            self.atam_signal.emit(self.processed_data)
+            self.atam_btn.setEnabled(False)
+            return True
+        else:
+            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确")
+            return False
+
+    def process_tDgf(self):
+        if self.data or self.processed_data is None:
+            logging.warning('请先导入数据')
+            return
+        if self.processed_data.type_processed == 'Accumulated_time_amplitude_map':
+            self.tDgf_signal.emit(self.processed_data)
+
+    def data_history_view(self):
+        """查看历史数据"""
+        if self.data is None :
+            logging.warning('请先导入数据')
+            return
+
+        dialog = DataViewAndSelectPop(datadict=self.get_data_all())
+        if dialog.exec_():
+            selected_timestamp = dialog.get_selected_timestamp()
+            self.data = self.data.find_history(selected_timestamp)
+            logging.info(f"当前数据焦点已更新至{self.data.name}")
+
+    def process_history_view(self):
+        """查看历史数据-处理"""
+        if self.processed_data is None:
+            logging.warning('请先处理数据')
+            return
+        # if self.image_display is []:  走不到这里
+        #     logging.warning("请先导入数据")
+
+        dialog = DataViewAndSelectPop(processed_datadict=self.get_processed_data_all())
+        if dialog.exec_():
+            selected_timestamp = dialog.get_selected_timestamp()
+            self.processed_data = self.processed_data.find_history(selected_timestamp)
+            logging.info(f"当前数据焦点已更新至{self.processed_data.name}")
+
     def data_history_clear(self):
+        """历史数据清楚（所有）"""
         if Data is not None:
             Data.clear_history()
             logging.info('导入数据已清除')
@@ -1954,6 +2034,7 @@ QDockWidget {
     border: 1px solid #388E3C;
     border-radius: 4px;
 }
+
 
 /* 标题栏样式 */
 QDockWidget::title {
@@ -2176,6 +2257,24 @@ QComboBox QAbstractItemView::item:hover {
     /* 鼠标悬停在单元格上的样式 */
     QTableWidget::item:hover {
         background-color: #C8E6C9; /* 悬停颜色 */
+    }
+    QScrollArea {
+        border: none;
+        background-color: white;
+    }
+    QScrollBar:vertical {
+        width: 12px;
+        background: #f0f0f0;
+    }
+    QScrollBar::handle:vertical {
+        background: #C8E6C9;
+        min-height: 20px;
+    }
+    QScrollBar::handle:vertical:hover {
+        background: #A5D6A7;      /* 悬停时稍深 */
+    }
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+        height: 0px;
     }
     """
     # 应用全局样式
