@@ -212,12 +212,12 @@ class CalculationSetDialog(QDialog):
         peak_layout = QFormLayout()
 
         self.peak_min_spin = QDoubleSpinBox()
-        self.peak_min_spin.setRange(0, 1e2)
+        self.peak_min_spin.setRange(-1e8, 1e2)
         self.peak_min_spin.setValue(self.params['peak_min'])
         self.peak_min_spin.setSingleStep(0.1)
 
         self.peak_max_spin = QDoubleSpinBox()
-        self.peak_max_spin.setRange(0, 1e8)
+        self.peak_max_spin.setRange(-1e2, 1e8)
         self.peak_max_spin.setValue(self.params['peak_max'])
         self.peak_max_spin.setSingleStep(0.1)
 
@@ -809,8 +809,6 @@ class DataViewAndSelectPop(QDialog):
                 if row_idx == 0:
                     item.setToolTip('当前数据（最新）')
                     item.setBackground(QColor(212, 237, 205))
-                elif row_idx == num_rows - 1:
-                    item.setToolTip('最新数据')
                 else:
                     item.setToolTip('历史数据')
 
@@ -832,7 +830,7 @@ class DataViewAndSelectPop(QDialog):
     def on_row_button_clicked(self, row_index, table):
         """处理行按钮点击事件"""
         # 确定数据来自哪个表格
-        table_index = self.tables.index
+        table_index = self.tables.index(table)
         data_list = self.datadict if table_index == 0 and self.datadict !=[] else self.processed_datadict
 
         self.selected_index = row_index

@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QToolBar, QAction, QDockWidget, QStyle,
                              QGraphicsRectItem, QActionGroup
                              )
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize, QTimer, QDateTime
 
 from transient_data_processing.core.DataManager import ImagingData
 
@@ -109,7 +109,7 @@ class ImageDisplayWindow(QMainWindow):
 
         # 从display_canvas列表中移除
         for i, canvas in enumerate(self.display_canvas):
-            if canvas.canvas_id == canvas_id:
+            if canvas.id == canvas_id:
                 del self.display_canvas[i]
                 break
 
@@ -129,7 +129,7 @@ class ImageDisplayWindow(QMainWindow):
             canvas_id = self.display_canvas[-1].canvas_id
         # 删除所有画布
         elif canvas_id == -1: # 全部清除
-            all_ids = [c.canvas_id for c in self.display_canvas]
+            all_ids = [c.id for c in self.display_canvas]
             for cid in all_ids:
                 self._remove_single_canvas(cid)
             return True
@@ -181,7 +181,7 @@ class SubImageDisplayWidget(QDockWidget):
     mouse_position_signal = pyqtSignal(int, int, int, float,float)
     mouse_clicked_signal = pyqtSignal(int, int)
     current_canvas_signal = pyqtSignal(int)
-    draw_result_signal = pyqtSignal(str,object)
+    draw_result_signal = pyqtSignal(str,int,object)
     def __init__(self, parent=None,canvas_id = None,name = None, data :ImagingData = None):
         super().__init__(name, parent)
         self.id = canvas_id
@@ -201,8 +201,13 @@ class SubImageDisplayWidget(QDockWidget):
         self.start_pos = None
         self.end_pos = None
         self.temp_item = None # 临时画布
-        self.vector_rect_item = None # 矢量矩形绘制
         self.v_rect_roi = None # 矢量矩形蒙版结果（左上角坐标（x,y), 宽度, 高度）
+        # 播放相关
+        self.play_timer = QTimer(self)
+        self.play_timer.timeout.connect(self.auto_play_update)
+        self.play_start_time = 0
+        self.play_paused_time = 0
+        self.is_playing = False
 
         self.init_ui()
         self.map_view = False
@@ -238,14 +243,34 @@ class SubImageDisplayWidget(QDockWidget):
         self.graphics_view.mouseReleaseEvent = self.mouse_release_event
 
         slider_layout = QHBoxLayout()
+        # 自动播放按钮
         self.start_button = QPushButton()
         self.start_button.setIcon(QIcon(QApplication.style().standardIcon(QStyle.SP_MediaPlay)))
-        self.start_button.setIconSize(QSize(16,16))
+        self.start_button.setIconSize(QSize(12, 12))
+        self.start_button.setFixedSize(16,16)
+        self.start_button.clicked.connect(self.start_auto_play)
+        # 暂停播放按钮
+        self.pause_button = QPushButton()
+        self.pause_button.setIcon(QIcon(QApplication.style().standardIcon(QStyle.SP_MediaPause)))
+        self.pause_button.setIconSize(QSize(12, 12))
+        self.pause_button.setFixedSize(16, 16)
+        self.pause_button.clicked.connect(self.pause_auto_play)
+        self.pause_button.setEnabled(False)  # 初始不可用
+        # 重置播放按钮
+        self.reset_button = QPushButton()
+        self.reset_button.setIcon(QIcon(QApplication.style().standardIcon(QStyle.SP_MediaSkipBackward)))
+        self.reset_button.setIconSize(QSize(12, 12))
+        self.reset_button.setFixedSize(16, 16)
+        self.reset_button.clicked.connect(self.reset_auto_play)
+        self.reset_button.setEnabled(False)  # 初始不可用
+
         self.time_slider = QSlider(Qt.Horizontal)
         self.time_slider.setMinimum(0)
         self.time_slider.setMaximum(self.max_time_idx-1)
         self.time_label = QLabel(f"{self.current_time_idx}/{self.max_time_idx-1}")
         slider_layout.addWidget(self.start_button)
+        slider_layout.addWidget(self.pause_button)
+        slider_layout.addWidget(self.reset_button)
         slider_layout.addWidget(self.time_slider)
         slider_layout.addWidget(self.time_label)
         if self.data.is_temporary :
@@ -262,20 +287,17 @@ class SubImageDisplayWidget(QDockWidget):
         self.end_pos = None
 
         # 清除前序画板
-        self.clear_vector_rect()
+        if tool == "V-rect":
+            self.clear_draw_layer()
         if self.temp_item:
             self.scene.removeItem(self.temp_item)
             self.temp_item = None
 
-    def clear_vector_rect(self):
+    def clear_draw_layer(self):
         """清除之前绘制的矢量矩形"""
-        if self.vector_rect_item:
-            self.scene.removeItem(self.vector_rect_item)
-            self.vector_rect_item = None
-        if self.temp_item:
-            self.scene.removeItem(self.temp_item)
-            self.temp_item = None
-        self.current_roi_rect = None
+        if hasattr(self, 'top_pixmap'):
+            self.top_pixmap.fill(Qt.transparent)
+            self.draw_layer.setPixmap(self.top_pixmap)
 
     def wheel_event(self, event: QWheelEvent):
         """滚轮缩放实现"""
@@ -323,7 +345,7 @@ class SubImageDisplayWidget(QDockWidget):
         elif event.button() == Qt.LeftButton:
             # 左键点击：发射坐标信号
             if self.drawing_tool == 'V-rect':
-                self.clear_vector_rect()
+                self.clear_draw_layer()
                 self.drawing = True
                 self.start_pos = self.graphics_view.mapToScene(event.pos())
                 self.end_pos = self.start_pos
@@ -392,32 +414,36 @@ class SubImageDisplayWidget(QDockWidget):
         elif event.button() == Qt.LeftButton and self.drawing:
             # 完成绘图
             self.drawing = False
-
+            end_pos = self.graphics_view.mapToScene(event.pos())
+            x2,y2=int(end_pos.x()), int(end_pos.y())
             if self.drawing_tool == 'V-rect' and self.temp_item:
                 # 获取矩形坐标
-                rect = self.temp_item.rect()
-                x1 = int(rect.x())
-                y1 = int(rect.y())
-                width = int(rect.width())
-                height = int(rect.height())
+                # rect = self.temp_item.rect()
+                x1 = int(self.start_pos.x())
+                y1 = int(self.start_pos.y())
+                width = abs(x2-x1)
+                height = abs(y2-y1)
+
+                x = x1 if x1 <= x2 else x2
+                y = y1 if y1 <= y2 else y2
 
                 # 确保坐标在图像范围内
                 h, w = self.current_image.shape
-                x1 = max(0, min(x1, w - 1))
-                y1 = max(0, min(y1, h - 1))
-                width = min(width, w - x1)
-                height = min(height, h - y1)
+                x = max(0, min(x, w - 1))
+                y = max(0, min(y, h - 1))
+                width = min(width, w - x-1)
+                height = min(height, h - y-1)
 
                 # 创建ROI信息
-                self.v_rect_roi = ((x1, y1), width, height)
-                self.draw_result_signal.emit('v_rect',self.v_rect_roi)
+                self.v_rect_roi = ((x, y), width, height)
+                self.draw_result_signal.emit('v_rect',self.id,self.v_rect_roi)
 
                 # 移除临时绘图项
 
-                self.vector_rect_item = QGraphicsRectItem(QRectF(x1, y1, width, height))
-                self.vector_rect_item.setPen(QPen(Qt.yellow, 1,Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
-                self.vector_rect_item.setBrush(QBrush(QColor(255,255, 0, 128)))
-                self.scene.addItem(self.vector_rect_item)
+                # self.vector_rect_item = QGraphicsRectItem(QRectF(x1, y1, width, height))
+                # self.vector_rect_item.setPen(QPen(Qt.yellow, 1,Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
+                # self.vector_rect_item.setBrush(QBrush(QColor(255,255, 0, 128)))
+                # self.scene.addItem(self.vector_rect_item)
 
                 self.scene.removeItem(self.temp_item)
                 self.temp_item = None
@@ -425,8 +451,9 @@ class SubImageDisplayWidget(QDockWidget):
                 # 可选：在绘图层显示ROI区域
                 if hasattr(self, 'top_pixmap'):
                     painter = QPainter(self.top_pixmap)
-                    painter.setPen(QPen(Qt.red, 1,))
-                    painter.drawRect(x1, y1, width, height)
+                    painter.setPen(QPen(Qt.yellow, 1,Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
+                    painter.setBrush(QBrush(QColor(255,255, 0, 128)))
+                    painter.drawRect(x, y, width, height)
                     painter.end()
                     self.draw_layer.setPixmap(self.top_pixmap)
 
@@ -438,10 +465,72 @@ class SubImageDisplayWidget(QDockWidget):
             self.parent().remove_canvas(self.canvas_id)
         super().closeEvent(event)
 
+    """下面是播放盒帧更新的设置"""
+    def start_auto_play(self):
+        if self.max_time_idx <= 1:
+            return False # 没有足够的帧进行播放
+
+        if not self.is_playing:
+            if self.play_paused_time == 0:            # 如果是第一次播放或重置后播放
+                self.play_start_time = QDateTime.currentMSecsSinceEpoch()
+            else:                # 如果是暂停后继续播放，调整开始时间
+                self.play_start_time = QDateTime.currentMSecsSinceEpoch() - self.play_paused_time
+            self.is_playing = True
+            self.start_button.setEnabled(False)
+            self.pause_button.setEnabled(True)
+            self.reset_button.setEnabled(True)
+
+            # 计算帧间隔时间（毫秒）
+            total_time = 15000  # 15秒
+            frame_interval = max(1, total_time // self.max_time_idx)
+            self.play_timer.start(frame_interval)
+
+    def pause_auto_play(self):
+        """暂停自动播放"""
+        if self.is_playing:
+            self.is_playing = False
+            self.play_paused_time = QDateTime.currentMSecsSinceEpoch() - self.play_start_time
+            self.play_timer.stop()
+            self.start_button.setEnabled(True)
+            self.pause_button.setEnabled(False)
+
+    def reset_auto_play(self):
+        """重置自动播放"""
+        self.play_timer.stop()
+        self.is_playing = False
+        self.play_start_time = 0
+        self.play_paused_time = 0
+        self.current_time_idx = 0
+        self.time_slider.setValue(0)
+        self.time_label.setText(f"{self.current_time_idx}/{self.max_time_idx - 1}")
+        self.start_button.setEnabled(True)
+        self.pause_button.setEnabled(False)
+        self.reset_button.setEnabled(False)
+
+    def auto_play_update(self):
+        """定时器回调，更新帧显示"""
+        if not self.is_playing:
+            return
+
+        # 计算当前应该显示的帧索引
+        elapsed = QDateTime.currentMSecsSinceEpoch() - self.play_start_time
+        position_in_cycle = elapsed % 15000
+
+        # 根据周期位置计算帧索引
+        target_idx = int(self.max_time_idx * position_in_cycle / 15000)
+        target_idx = min(self.max_time_idx - 1, target_idx)
+
+        # 只有当帧索引变化时才更新显示
+        if target_idx != self.current_time_idx:
+            self.current_time_idx = target_idx
+            self.time_slider.setValue(target_idx)
+            self.time_label.setText(f"{self.current_time_idx}/{self.max_time_idx - 1}")
+
     def update_time_slice(self,idx=0):
         if not 0 <= idx < self.max_time_idx:
             raise ValueError('idx out of range(impossible Fault)')
         self.current_time_idx = idx
+        self.time_label.setText(f"{self.current_time_idx}/{self.max_time_idx - 1}")
         if self.data.ROI_applied:
             self.update_display_idx(self.data.image_ROI[idx])
         if not self.data.ROI_applied:

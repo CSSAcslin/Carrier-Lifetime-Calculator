@@ -279,7 +279,6 @@ class CalculationThread(QObject):
     processed_result = pyqtSignal(ProcessedData)
     calculating_progress_signal = pyqtSignal(int, int)
     stop_thread_signal = pyqtSignal()
-    cal_time = pyqtSignal(float)
     update_status = pyqtSignal(str,str)
 
 
@@ -295,9 +294,6 @@ class CalculationThread(QObject):
         self.calculating_progress_signal.emit(1, 3)
         self.cal_running_status.emit(True)
         try:
-            # 计时器
-            timer = QElapsedTimer()
-            timer.start()
             # 获取参数
             time_points = data.time_point * time_unit
             self.calculating_progress_signal.emit(2, 3)
@@ -316,7 +312,6 @@ class CalculationThread(QObject):
                                                                       'r_squared': r_squared,
                                                                       'model_type': model_type,
                                                                       'boundary': {'min':data.datamin, 'max':data.datamax}}))
-            self.cal_time.emit(timer.elapsed())
             logging.info("计算完成!")
             self.calculating_progress_signal.emit(3, 3)
             self.cal_running_status.emit(False)
@@ -334,9 +329,6 @@ class CalculationThread(QObject):
         self.cal_running_status.emit(True)
         try:
 
-            # 计时器
-            timer = QElapsedTimer()
-            timer.start()
             time_points = data.time_point * time_unit
             data_type = data.parameters['data_type'] if data.parameters is not None and 'data_type' in data.parameters else None
 
@@ -384,7 +376,6 @@ class CalculationThread(QObject):
                                                       f'{data.name}@d-lft',
                                                       'lifetime_distribution',
                                                       data_processed=smoothed_map))
-            self.cal_time.emit(timer.elapsed())
             self._is_calculating = False
             self.cal_running_status.emit(False)
             self.stop_thread_signal.emit()
@@ -399,8 +390,6 @@ class CalculationThread(QObject):
         # 存储拟合方差结果 [时间, 方差]
         self._is_calculating = True
         self.cal_running_status.emit(True)
-        timer = QElapsedTimer()
-        timer.start()
 
         sigma_results = np.zeros((2, len(frame_data)))
         time_series = []
@@ -449,7 +438,6 @@ class CalculationThread(QObject):
                                                  time_point=dif_data_dict['time_series'],
                                                  data_processed=dif_data_dict['signal'],
                                                  out_processed=dif_data_dict))
-        self.cal_time.emit(timer.elapsed())
         self._is_calculating = False
         self.cal_running_status.emit(False)
         self.stop_thread_signal.emit()

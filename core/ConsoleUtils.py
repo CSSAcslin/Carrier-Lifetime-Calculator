@@ -220,16 +220,16 @@ class ConsoleWidget(QWidget):
             self.parent.command_processor.process_command(command)
             self.command_input.clear()
 
-    def update_progress(self, value, maximum=None):
-        """更新进度条"""
-        if maximum is not None:
-            self.progress_bar.setMaximum(maximum)
-
-        self.progress_bar.setValue(value)
-        self.progress_bar.setFormat(
-            f"计算进度: {value}/{self.progress_bar.maximum()} ({value / self.progress_bar.maximum() * 100:.1f}%)")
-
-        if value == 1:
-            self.progress_bar.show()
-        elif value >= self.progress_bar.maximum():
-            self.progress_bar.hide()
+    # def update_progress(self, value, maximum=None):
+    #     """更新进度条"""
+    #     if maximum is not None:
+    #         self.progress_bar.setMaximum(maximum)
+    #
+    #     self.progress_bar.setValue(value)
+    #     self.progress_bar.setFormat(
+    #         f"计算进度: {value}/{self.progress_bar.maximum()} ({value / self.progress_bar.maximum() * 100:.1f}%)")
+    #
+    #     if value == 1:
+    #         self.progress_bar.show()
+    #     elif value >= self.progress_bar.maximum():
+    #         self.progress_bar.hide()

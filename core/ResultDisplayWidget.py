@@ -467,7 +467,7 @@ class ResultDisplayWidget(QTabWidget):
                              shading='gouraud', cmap='viridis')
         ax.set_ylabel('频率 [Hz]')
         ax.set_xlabel('时间 [秒]')
-        figure.colorbar(spec, label='强度 [dB]')
+        figure.colorbar(spec, label='功率 [dB/Hz]')
         # 标记目标频率
         ax.axhline(y=target_freq, color='r', linestyle='--', alpha=0.7)
         ax.set_title(f'信号质量评估 (目标频率: {target_freq} Hz)')

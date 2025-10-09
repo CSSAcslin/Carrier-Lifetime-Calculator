@@ -365,8 +365,8 @@ class ProcessedData:
         return (
             f"ProcessedData<{self.name} | "
             f"Type: {self.type_processed} | "
-            f"Shape: {self.data_shape} | "
-            f"Range: [{self.data_min:.2f}, {self.data_max:.2f}]>"
+            f"Shape: {self.datashape} | "
+            f"Range: [{self.datamin:.2f}, {self.datamax:.2f}]>"
         )
 
 @dataclass
@@ -383,6 +383,7 @@ class ImagingData:
     colormode: str = None
     canvas_num: int = field(default=0)
     is_temporary: bool = field(init=False ,default=False)
+    timestamp : float = field(init=False, default_factory=time.time)
 
     def __post_init__(self):
         self.image_data = self.to_uint8(self.image_backup)
@@ -407,7 +408,7 @@ class ImagingData:
         if isinstance(data_obj, Data):
             # instance.image_data = data_obj.data_origin.copy()
             instance.image_backup = data_obj.data_origin.copy()
-
+            instance.timestamp_inherited = data_obj.timestamp
             instance.source_type = "Data"
             instance.source_name = data_obj.name
             instance.source_format = data_obj.format_import
@@ -418,11 +419,11 @@ class ImagingData:
             else:
                 # instance.image_data = data_obj.data_processed.copy()
                 instance.image_backup = data_obj.data_processed.copy()
+            instance.timestamp_inherited = data_obj.timestamp
             instance.source_type = "ProcessedData"
             instance.source_name = data_obj.name
             instance.source_format = data_obj.type_processed
-        else:
-            raise TypeError("不支持的输入类型")
+
 
         # 调用后初始化
         instance.__post_init__()

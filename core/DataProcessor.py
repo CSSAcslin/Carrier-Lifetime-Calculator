@@ -457,8 +457,7 @@ class MassDataProcessor(QObject):
         try:
             logging.info("开始预处理...")
             self.processing_progress_signal.emit(0, 100)
-            timer = QElapsedTimer()
-            timer.start()
+
             # 1. 提取前n帧计算背景帧
             if data.datatype != np.float32:
                 data_origin = data.data_origin.astype(np.float32) # 注意这里开始原本Uint8 转为了F32
@@ -486,21 +485,15 @@ class MassDataProcessor(QObject):
                     progress_value = 20 + int(60 * i / total_frames)
                     self.processing_progress_signal.emit(progress_value, 100)
             self.processing_progress_signal.emit(80, 100)
-            # 保存结果
-            processed = DataManager.ProcessedData(data.timestamp,
-                                                  f'{data.name}@EM_pre',
-                                                  'EM_pre_processed',
-                                                  data_processed=processed_data,
-                                                  out_processed={})
-            processed.out_processed['bg_frame'] = bg_frame
+
             # 3. 展开为二维数组
-            self.processing_progress_signal.emit(95, 100)
             if unfold:
                 T, H, W = processed_data.shape
                 unfolded_data = processed_data.reshape((T, H * W)).T
             else:
                 unfolded_data = None
-
+            self.processing_progress_signal.emit(95, 100)
+            # 保存结果
             processed = DataManager.ProcessedData(data.timestamp,
                                                   f'{data.name}@EM_pre',
                                                   'EM_pre_processed',
@@ -512,8 +505,6 @@ class MassDataProcessor(QObject):
 
             self.processed_result.emit(processed)
             self.processing_progress_signal.emit(100, 100)
-            logging.info(f"预处理完成，总耗时{timer.elapsed()}ms")
-
 
         except Exception as e:
             logging.error(f"预处理错误: {str(e)}")
@@ -524,8 +515,6 @@ class MassDataProcessor(QObject):
         """STFT质量分析"""
         if not data:
             raise ValueError("请先进行预处理")
-        timer = QElapsedTimer()
-        timer.start()
 
         unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
 
@@ -548,7 +537,8 @@ class MassDataProcessor(QObject):
             nperseg=window_size,
             noverlap=noverlap,
             nfft=custom_nfft,
-            return_onesided=True
+            return_onesided=True,
+            scaling='psd'
         )
         # 发送平均信号STFT结果
         # self.avg_stft_result.emit(f, t, np.abs(Zxx), target_freq)
@@ -588,8 +578,6 @@ class MassDataProcessor(QObject):
             if 'out_length' not in data.out_processed:
                 raise ValueError("请先进行质量评估")
 
-            timer = QElapsedTimer()
-            timer.start()
 
             target_idx = data.out_processed['target_idx']
             out_length = data.out_processed['out_length']
@@ -608,7 +596,7 @@ class MassDataProcessor(QObject):
             self.processing_progress_signal.emit(1, total_pixels)
 
             # 4. 初始化结果数组
-            width, height = frame_size
+            height, width = frame_size
             stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
 
             # 窗函数的选择和生成
@@ -634,20 +622,19 @@ class MassDataProcessor(QObject):
                     nperseg=window_size,
                     noverlap=noverlap,
                     nfft=nfft,
-                    return_onesided=False
+                    return_onesided=False,
+                    scaling='psd'
                 )
 
                 # 提取目标频率处的幅度
-                magnitude = np.abs(Zxx[target_idx, :]) * 5
+                magnitude = np.abs(Zxx[target_idx, :]) * 2
 
                 # 将结果存入对应像素位置
                 y = i // width
                 x = i % width
                 stft_py_out[:, y, x] = magnitude
 
-                # 每100个像素更新一次进度
-                if i % 100 == 0:
-                    self.processing_progress_signal.emit(i, total_pixels)
+                self.processing_progress_signal.emit(i, total_pixels)
 
             # 6. 发送完整结果
             self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
@@ -658,10 +645,27 @@ class MassDataProcessor(QObject):
                                                                    'time_series' : time_series,
                                                                }))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
-            logging.info(f"计算完成，总耗时{timer.elapsed()}ms")
 
         except Exception as e:
             logging.error(f"STFT计算错误: {str(e)}")
+
+    def get_window(self,window_type, window_size):
+        try:
+            if window_type == 'gaussian':
+                window = signal.get_window((window_type, window_size / 6), window_size, fftbins=False)
+            elif window_type == 'general_gaussian':
+                window = signal.get_window((window_type, 1.5, window_size / 6), window_size, fftbins=False)
+            else:
+                window = signal.get_window(window_type, window_size, fftbins=False)
+            # # 计算窗口能量
+            # win_energy = np.sum(window ** 2)
+            #
+            # # 对窗口进行能量归一化
+            # normalized_window = window / np.sqrt(win_energy)
+
+            return window
+        except Exception as e:
+            logging.error(f'Window Fault:{e}')
 
     @pyqtSlot(DataManager.ProcessedData,float,int,int,str)
     def quality_cwt(self,data, target_freq: float, fps: int, totalscales: int, wavelet: str = 'morl'):
@@ -676,9 +680,6 @@ class MassDataProcessor(QObject):
         try:
             if not data:
                 raise ValueError("请先进行预处理")
-
-            timer = QElapsedTimer()
-            timer.start()
 
             unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
             frame_size = data.framesize  # (宽度, 高度)
@@ -725,9 +726,6 @@ class MassDataProcessor(QObject):
             if not data:
                 raise ValueError("请先进行预处理")
 
-            timer = QElapsedTimer()
-            timer.start()
-
             data = next(
                 data for data in reversed(data.history) if data.type_processed == "EM_pre_processed")  # [像素数 x 帧数]
             unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
@@ -771,8 +769,7 @@ class MassDataProcessor(QObject):
                 cwt_py_out[:, y, x] = magnitude_avg
 
                 # 每100个像素更新一次进度
-                if i % 100 == 0:
-                    self.processing_progress_signal.emit(i, total_pixels)
+                self.processing_progress_signal.emit(i, total_pixels)
 
             # 发送完整结果
             times = np.arange(cwt_py_out.shape[0]) / fps
@@ -784,7 +781,6 @@ class MassDataProcessor(QObject):
                                                                      'time_series': times,
                                                                  }))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
-            logging.info(f"计算完成，总耗时{timer.elapsed()}ms")
 
         except Exception as e:
             logging.error(f"CWT计算错误: {str(e)}")
@@ -928,29 +924,17 @@ class MassDataProcessor(QObject):
         logging.info(f'完成GIF导出: {output_path}, 总数{num_frames}帧')
         return [output_path]
 
-    def get_window(self,window_type, window_size):
-        try:
-            if window_type == 'gaussian':
-                window = signal.get_window((window_type, window_size / 6), window_size, fftbins=False)
-            elif window_type == 'general_gaussian':
-                window = signal.get_window((window_type, 1.5, window_size / 6), window_size, fftbins=False)
-            else:
-                window = signal.get_window(window_type, window_size, fftbins=False)
-            return window
-        except Exception as e:
-            logging.error(f'Window Fault:{e}')
-
     @pyqtSlot(DataManager.ProcessedData)
     def accumulate_amplitude(self,data:DataManager.ProcessedData):
         """累计时间振幅图"""
         self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                          f'{data.name}@atam',
                                          "Accumulated_time_amplitude_map",
-                                         data_processed=np.sum(data.data_processed, axis=0)))
+                                         data_processed=np.mean(data.data_processed, axis=0)))
         logging.info("累计时间振幅计算已完成")
 
     @staticmethod
-    def gaussian_2d(coords, A, x0, y0, sigma_x, sigma_y, offset):
+    def D2GaussFunction(xy, A, x0, sigmax, y0, sigmay, b):
         """二维高斯函数
         参数:
         coords: 网格坐标 (x, y)
@@ -962,11 +946,11 @@ class MassDataProcessor(QObject):
         返回:
         二维高斯函数值
         """
-        x, y = coords
-        return A * np.exp(-((x - x0) ** 2 / (2 * sigma_x ** 2) + (y - y0) ** 2 / (2 * sigma_y ** 2))) + offset
+        x, y = xy[:, 0], xy[:, 1]
+        return A * np.exp(-((x - x0) ** 2 / (2 * sigmax ** 2) + (y - y0) ** 2 / (2 * sigmay ** 2))) + b
 
     @pyqtSlot(DataManager.ProcessedData)
-    def twoD_gaussian_fit(self,data_3d:DataManager.ProcessedData,zm = 2,thr = 2.5):
+    def twoD_gaussian_fit(self,data_3d:DataManager.ProcessedData,zm = 2,thr = 0.1):
         """
         对三维时序数据逐帧进行二维高斯拟合
 
@@ -976,10 +960,11 @@ class MassDataProcessor(QObject):
         返回:
         results: list of dict, 每帧的拟合参数
         """
+        timer = QElapsedTimer()
+        timer.start()
+
         T, H, W = data_3d.datashape
-        x_zmed = W * zm - (zm - 1)
-        y_zmed = H * zm - (zm - 1)
-        X, Y = np.meshgrid(np.arange(x_zmed), np.arange(y_zmed))
+        self.processing_progress_signal.emit(0, T)
 
         amplitudes = np.zeros(T)
         centers_x = np.zeros(T)
@@ -987,12 +972,16 @@ class MassDataProcessor(QObject):
 
         for m in range(T):
             frame = data_3d.data_processed[m]
-
+            self.processing_progress_signal.emit(m, T)
             # 图像插值
             if zm >1:
                 Z = zoom(frame, zm, order=3)
             else:
                 Z = frame
+
+            h_z, w_z = Z.shape
+            X, Y = np.meshgrid(np.arange(w_z), np.arange(h_z))
+            xy = np.column_stack((X.ravel(), Y.ravel()))
 
             # 检查是否有超过阈值的点
             if np.any(Z > thr):
@@ -1004,12 +993,16 @@ class MassDataProcessor(QObject):
 
                 # 参数边界
                 lb = [0, 0, 0.1, 0, 0.1, 0]
-                ub = [100, x_zmed, (x_zmed / 2) ** 2, y_zmed, (y_zmed / 2) ** 2, max_value]
+                ub = [100, w_z, (w_z/2)**2, h_z, (h_z/2)**2, max_value]
 
                 try:
                     # 二维高斯拟合
-                    popt, _ = curve_fit(self.gaussian_2d, (X.ravel(),Y.ravel()), Z.ravel(),
-                                        p0=x0, bounds=(lb, ub), maxfev=5000)
+                    popt, _ = curve_fit(self.D2GaussFunction,
+                                        xy,
+                                        Z.ravel(),
+                                        p0=x0,
+                                        bounds=(lb, ub),
+                                        maxfev=5000)
 
                     amplitudes[m] = popt[0]
                     centers_x[m] = popt[1]
@@ -1023,6 +1016,7 @@ class MassDataProcessor(QObject):
                 centers_x[m] = np.nan
                 centers_y[m] = np.nan
 
+        self.processing_progress_signal.emit(T, T)
         return amplitudes, centers_x, centers_y
 
     def stop(self):

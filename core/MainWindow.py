@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget,
                              QStatusBar, QScrollBar
                              )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject, QElapsedTimer
 from astropy.utils.console import ProgressBar
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
@@ -57,12 +57,8 @@ class MainWindow(QMainWindow):
         self.idx = None
         self.vector_array = None
 
-        # 参数和数据管理
+        # 参数初始化
         self.init_params()
-        # self.data_thread = QThread()
-        # self.data_manager = DataManager()
-        # self.data_thread.moveToThread(self.data_thread)
-        # self.data_thread.start()
 
         # 界面加载
         self.init_ui()
@@ -71,6 +67,12 @@ class MainWindow(QMainWindow):
         self.setup_logging()
         self.log_startup_message()
 
+        # 进度条与计时器
+        self.elapsed_timer = QElapsedTimer()
+        self.last_time = 0 # 记录运算的时间
+        self.last_progress = 0 # 记录进度
+        self.last_percent = -1 # 记录百分比进度
+        self.cached_remaining = "计算中..." # 记录剩余时长
 
         # 状态控制
         self._is_calculating = False
@@ -798,7 +800,6 @@ class MainWindow(QMainWindow):
         self.cal_thread.calculating_progress_signal.connect(self.update_progress)
         self.cal_thread.processed_result.connect(self.processed_result)
         self.cal_thread.stop_thread_signal.connect(self.stop_thread)
-        self.cal_thread.cal_time.connect(lambda ms: logging.info(f"耗时: {ms}毫秒"))
         self.cal_thread.cal_running_status.connect(self.btn_safety)
         self.cal_thread.update_status.connect(self.update_status)
 
@@ -890,53 +891,34 @@ class MainWindow(QMainWindow):
         Data_list = []
         if self.data is None:
             return []
-        Data_list.append({
-            "type": 'Data',
-            "name": self.data.name,
-            "序号": self.data.serial_number,
-            "导入格式": self.data.format_import,
-            "数据大小": self.data.datashape,
-            "timestamp": self.data.timestamp,
-        })
-
-        # 历史数据
+        # 直接读取历史数据
         for data in self.data.history:
-            if data.name != Data_list[-1]['name']:
-                Data_list.append({
-                    "type": 'Data',
-                    "name": data.name,
-                    "序号": data.serial_number,
-                    "导入格式": data.format_import,
-                    "数据大小": data.datashape,
-                    "timestamp": data.timestamp,
-                })
+            Data_list.append({
+                "type": 'Data',
+                "name": data.name,
+                "序号": data.serial_number,
+                "导入格式": data.format_import,
+                "数据大小": data.datashape,
+                "timestamp": data.timestamp,
+            })
+            Data_list.reverse()
         return Data_list
 
     def get_processed_data_all(self) ->  List[Dict[str, Any]]:
         ProcessedData_list = []
         if self.processed_data is None:
             return []
-        ProcessedData_list.append({
-            "type": "ProcessedData",
-            "name": self.processed_data.name,
-            "处理类型": self.processed_data.type_processed,
-            "数据大小": self.processed_data.datashape,
-            "数据源": self._find_parent_name(self.processed_data.timestamp_inherited),
-            "timestamp": self.processed_data.timestamp,
-
-        })
-
-        # 历史数据
+        # 直接读取历史数据
         for processed in self.processed_data.history:
-            if processed.name != ProcessedData_list[-1]['name']:
                 ProcessedData_list.append({
-                    "type": "ProcessedData(history)",
+                    "type": "ProcessedData",
                     "name": processed.name,
                     "处理类型": processed.type_processed,
                     "数据大小": processed.datashape,
                     "数据源": self._find_parent_name(processed.timestamp_inherited),
                     "timestamp": processed.timestamp,
                 })
+        ProcessedData_list.reverse()
         return ProcessedData_list
 
     def _find_parent_name(self, timestamp: float) -> Optional[str]:
@@ -1268,20 +1250,63 @@ class MainWindow(QMainWindow):
 
         self.update_status("准备就绪", 'idle')
 
+    def start_calculation(self):
+        """开始计算时调用此方法"""
+        self.elapsed_timer.start()
+        self.last_time = 0
+        self.last_progress = 0
+        self.last_percent = -1
+        self.cached_remaining = "计算中..."
+
     def update_progress(self, current, total=None):
         """更新进度条"""
         if total is not None:
             self.progress_bar.setMaximum(total)
 
         self.progress_bar.setValue(current)
+        # 计算当前进度
+        current_percent = current / self.progress_bar.maximum() * 100 if self.progress_bar.maximum() > 0 else 0
+        elapsed_ms = self.elapsed_timer.elapsed()
+        elapsed_sec = elapsed_ms / 1000.0
+
+        # 只有当进度变化超过1%时才更新剩余时间
+        if int(current_percent) > self.last_percent:
+
+            # 计算剩余时间（仅当进度变化超过1%时）
+            if current > self.last_progress and elapsed_ms > self.last_time:
+                # 计算速度
+                progress_diff = current - self.last_progress
+                time_diff = (elapsed_ms - self.last_time) / 1000.0
+                speed = progress_diff / time_diff if time_diff > 0 else 0
+
+                # 更新记录点
+                self.last_progress = current
+                self.last_time = elapsed_ms
+
+                # 计算并缓存剩余时间
+                if speed > 0 and total is not None:
+                    remaining_sec = (total - current) / speed
+                    self.cached_remaining = self.format_time(remaining_sec)
+
+            # 更新百分比记录
+            self.last_percent = int(current_percent)
+
+        # 格式化时间显示
+        elapsed_str = self.format_time(elapsed_sec)
+
+        # 更新进度条格式
         self.progress_bar.setFormat(
-            f"进度: {current}/{self.progress_bar.maximum()} ({current / self.progress_bar.maximum() * 100:.1f}%)")
-        self.console_widget.update_progress(current, total)
+            f"进度: {current}/{self.progress_bar.maximum()} "
+            f"({current_percent:.1f}%) "
+            f"已用: {elapsed_str} | 剩余: {self.cached_remaining}"
+        )
+
+        # self.console_widget.update_progress(current, total)
 
         if current == 1:
-            # self.update_status("计算中...", True)
-            pass
+            self.start_calculation() # 启动计时器
         elif current >= self.progress_bar.maximum():
+            logging.info(f"计算完成，总耗时{elapsed_str}")
             self.update_status("进程任务完成,准备就绪",'idle')
             self.progress_bar.reset()
         elif current == -1:
@@ -1484,8 +1509,8 @@ class MainWindow(QMainWindow):
         self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
 
     def quality_EM_stft(self):
-        if self.data is None:
-            logging.warning("没有数据可以计算，请先加载数据")
+        if self.processed_data is None:
+            logging.warning("没有数据可以计算，请先加载并预处理数据")
             return
         if "EM_pre_processed" == self.processed_data.type_processed:
             # 窗函数选择转义
@@ -1520,8 +1545,8 @@ class MainWindow(QMainWindow):
             type = "python"
         if self.stft_program_select.currentIndex() == 1:
             type = "julia"
-        if self.data is None:
-            logging.warning("没有数据可以计算，请先加载数据")
+        if self.processed_data is None:
+            logging.warning("没有数据可以计算，请先加载并预处理数据")
             return
         if "stft_quality" == self.processed_data.type_processed:
             # 窗函数选择转义
@@ -1559,8 +1584,8 @@ class MainWindow(QMainWindow):
             return
 
     def quality_EM_cwt(self):
-        if self.data is None:
-            logging.warning("没有数据可以计算，请先加载数据")
+        if self.processed_data is None:
+            logging.warning("没有数据可以计算，请先加载并预处理数据")
             return
         if "EM_pre_processed" == self.processed_data.type_processed:
             dialog = CWTComputePop(self.EM_params,'quality')
@@ -1585,8 +1610,8 @@ class MainWindow(QMainWindow):
 
     def process_EM_cwt(self):
         """小波变换"""
-        if self.data is None:
-            logging.warning("没有数据可以计算，请先加载数据")
+        if self.processed_data is None:
+            logging.warning("没有数据可以计算，请先加载并预处理数据")
             return
         if "cwt_quality" == self.processed_data.type_processed:
             dialog = CWTComputePop(self.EM_params, 'signal')
@@ -1653,12 +1678,36 @@ class MainWindow(QMainWindow):
                 self.atam_btn.setEnabled(True)
                 pass
 
-    def draw_result(self,draw_type:str,result):
+    def draw_result(self,draw_type:str,canvas_id:int,result):
         """canvas绘图结果处理"""
+        timestamp = self.image_display.display_canvas[canvas_id].data.timestamp_inherited
+        draw_data = None
+        if self.data is not None:
+            for data in self.data.history:
+                if data.timestamp == timestamp:
+                    draw_data = data
+                    break
+        if self.processed_data is not None and draw_data is None:
+            draw_data = next(data for data in self.processed_data.history if data.timestamp == timestamp)
         if draw_type == "v_rect":
-            # ((x1, y1), width, height)
-            v_rect = result
+            # ((x, y), width, height)
+            x,y,w,h = result[0][0],result[0][1],result[1],result[2]
+            if w == 0 or h == 0:
+                return
+            source_data = next(data for data in self.processed_data.history if data.timestamp == draw_data.timestamp_inherited)
+            if isinstance(draw_data, Data):
+                roi_data = source_data.data_origin[:,y:y+h,x:x+w]
+            elif isinstance(draw_data, ProcessedData):
+                roi_data = source_data.data_processed[:,y:y+h,x:x+w]
+            else:
+                logging.error("roi应用错误（不可能错误）")
+                roi_data = None
 
+            self.processed_data = ProcessedData(draw_data.timestamp,
+                                            f"{draw_data.name}@ROIed",
+                                            "Roi_applied",
+                                            data_processed=roi_data,
+                                            ROI_applied=True)
     def roi_signal_avg(self):
         """计算选区信号平均值并显示"""
         if not hasattr(self,"bool_mask") or self.bool_mask is None:
@@ -1841,10 +1890,10 @@ class MainWindow(QMainWindow):
             return False
 
     def process_tDgf(self):
-        if self.data or self.processed_data is None:
+        if self.data is None and self.processed_data is None:
             logging.warning('请先导入数据')
             return
-        if self.processed_data.type_processed == 'Accumulated_time_amplitude_map':
+        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
             self.tDgf_signal.emit(self.processed_data)
 
     def data_history_view(self):
@@ -1910,6 +1959,15 @@ class MainWindow(QMainWindow):
 
     def clear_result(self):
         self.result_display.clear()
+
+    @staticmethod
+    def format_time(seconds):
+        """将秒数格式化为 HH:MM:SS"""
+        if seconds < 0:
+            return "--:--:--"
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
 
 
 class StreamLogger(object):
