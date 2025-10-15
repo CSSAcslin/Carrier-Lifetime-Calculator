@@ -476,24 +476,24 @@ class STFTComputePop(QDialog):
         layout = QFormLayout()
 
         self.target_freq_input = QDoubleSpinBox()
-        self.target_freq_input.setRange(0.1, 1000)
+        self.target_freq_input.setRange(0.1, 10000)
         self.target_freq_input.setValue(self.params['target_freq'])
         self.target_freq_input.setSuffix(" Hz")
 
         self.fps_input = QSpinBox()
-        self.fps_input.setRange(10,9999)
+        self.fps_input.setRange(10,99999)
         self.fps_input.setValue(self.params['EM_fps'])
 
         self.window_size_input = QSpinBox()
-        self.window_size_input.setRange(1, 2048)
+        self.window_size_input.setRange(1, 65536)
         self.window_size_input.setValue(self.params['stft_window_size'])
 
         self.noverlap_input = QSpinBox()
-        self.noverlap_input.setRange(0, 1024)
+        self.noverlap_input.setRange(0, 65536)
         self.noverlap_input.setValue(self.params['stft_noverlap'])
 
         self.custom_nfft_input = QSpinBox()
-        self.custom_nfft_input.setRange(0, 1024)
+        self.custom_nfft_input.setRange(0, 65536)
         self.custom_nfft_input.setValue(self.params['custom_nfft'])
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
@@ -529,20 +529,20 @@ class CWTComputePop(QDialog):
         layout = QFormLayout()
 
         self.target_freq_input = QDoubleSpinBox()
-        self.target_freq_input.setRange(0.1, 100)
+        self.target_freq_input.setRange(0.1, 1000)
         self.target_freq_input.setValue(self.params['target_freq'])
         self.target_freq_input.setSuffix(" Hz")
 
         self.fps_input = QSpinBox()
-        self.fps_input.setRange(100,9999)
+        self.fps_input.setRange(100,99999)
         self.fps_input.setValue(self.params['EM_fps'])
 
         self.cwt_size_input = QSpinBox()
-        self.cwt_size_input.setRange(1, 2048)
+        self.cwt_size_input.setRange(0, 65536)
         self.cwt_size_input.setValue(self.params['cwt_total_scales'])
 
         self.wavelet = QComboBox()
-        self.wavelet.addItems(['morl','cmor3-3','cmor1.5-1.0','cgau8'])
+        self.wavelet.addItems(['cmor3-3','cmor1.5-1.0','morl(实)','cgau8'])
         self.wavelet.setCurrentText(self.params['cwt_type'])
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
@@ -552,7 +552,7 @@ class CWTComputePop(QDialog):
 
         if self.case == 'signal':
             self.cwt_scale_range = QDoubleSpinBox()
-            self.cwt_scale_range.setRange(0.1, 100)
+            self.cwt_scale_range.setRange(0.1, 1000)
             self.cwt_scale_range.setValue(self.params['cwt_scale_range'])
             self.cwt_scale_range.setSuffix(" Hz")
             layout.addRow(QLabel("处理跨度"), self.cwt_scale_range)

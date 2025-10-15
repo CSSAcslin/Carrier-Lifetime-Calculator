@@ -21,6 +21,7 @@ class ImageDisplayWindow(QMainWindow):
         self.display_canvas = []
         self.init_tool_bars()
         self.cursor_id = 0
+        self.current_tool = None
 
     def init_tool_bars(self):
         Canvas_bar = QToolBar('Canvas')
@@ -77,8 +78,11 @@ class ImageDisplayWindow(QMainWindow):
 
         self.addToolBar(Drawing_bar)
 
-    def set_cursor_id(self,id):
-        self.cursor_id = id
+    def set_cursor_id(self,cursor_id):
+        self.cursor_id = cursor_id
+        # if self.current_tool is not None:
+        #     self.display_canvas[self.cursor_id].set_drawing_tool(self.current_tool)
+
 
     def add_canvas(self,data):
         """新增图像显示画布"""
@@ -172,6 +176,7 @@ class ImageDisplayWindow(QMainWindow):
 
     def set_tools(self,tool_name:str):
         self.display_canvas[self.cursor_id].set_drawing_tool(tool_name)
+        self.current_tool = tool_name
 
 
 
@@ -435,7 +440,7 @@ class SubImageDisplayWidget(QDockWidget):
                 height = min(height, h - y-1)
 
                 # 创建ROI信息
-                self.v_rect_roi = ((x, y), width, height)
+                self.v_rect_roi = ((x, y), width+1, height+1)
                 self.draw_result_signal.emit('v_rect',self.id,self.v_rect_roi)
 
                 # 移除临时绘图项

@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject, QElapsedTimer
 from astropy.utils.console import ProgressBar
+from fontTools.ttx import process
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from DataProcessor import DataProcessor, MassDataProcessor
@@ -26,7 +27,6 @@ from DataManager import *
 class MainWindow(QMainWindow):
     """主窗口"""
     # 线程激活信号
-    # data
     # cal
     start_reg_cal_signal = pyqtSignal(Data, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(Data, float, str)
@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
             'time_step': 1.000,
             'space_step': 1.000,
             'region_size': 5,
-            'bg_nums': 360
+            'bg_nums': 300,
         }
         self.plot_params = {
             'current_mode': 'heatmap',  # 'heatmap' 或 'curve'
@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
             'stft_window_type': 'hann',
             'stft_total_scales': 10,  # 频率分辨率
             'stft_scale_range': 5,  # 取频率范围（以target frequency为中心）
-            'custom_nfft': 128,  # 变换长度，默认为窗长度
+            'custom_nfft': 360,  # 变换长度，默认为调制频率
             'cwt_type': 'morl',
             'cwt_total_scales': 256,  # 频率分辨率
             'cwt_scale_range': 10.0,  # 取频率范围（以target frequency为中心）
@@ -503,7 +503,7 @@ class MainWindow(QMainWindow):
         process_set_layout2 = QHBoxLayout()
         process_set_layout2.addWidget(QLabel("窗选择"))
         process_set_layout2.addWidget(self.stft_window_select)
-        self.stft_quality_btn = QPushButton("stft质量评价（功率谱）")
+        self.stft_quality_btn = QPushButton("stft质量评价（功率密度谱）")
         self.stft_process_btn = QPushButton("执行短时傅里叶变换")
         stft_layout.addLayout(process_set_layout1)
         stft_layout.addLayout(process_set_layout2)
@@ -866,16 +866,18 @@ class MainWindow(QMainWindow):
         if dialog.exec_():
             selected_timestamp = dialog.get_selected_timestamp()
             data_display = None
-            for data in self.data.history:
-                if data.timestamp == selected_timestamp:
-                    data_display = ImagingData.create_image(data)
-                    logging.info("数据选择成功（原初）")
-                    continue
-            for data in self.processed_data.history:
-                if data.timestamp == selected_timestamp:
-                    data_display = ImagingData.create_image(data)
-                    logging.info("数据选择成功（处理）")
-                    continue
+            if self.data is not None:
+                for data in self.data.history:
+                    if data.timestamp == selected_timestamp:
+                        data_display = ImagingData.create_image(data)
+                        logging.info("数据选择成功（原初）")
+                        continue
+            if self.processed_data is not None:
+                for data in self.processed_data.history:
+                    if data.timestamp == selected_timestamp:
+                        data_display = ImagingData.create_image(data)
+                        logging.info("数据选择成功（处理）")
+                        continue
             if data_display is not None:
                 self.image_display.add_canvas(data_display)
             else:
@@ -1058,7 +1060,6 @@ class MainWindow(QMainWindow):
             self.load_image()
         pass
 
-
     def EM_thread_open(self):
         """加载EM文件的线程开启"""
         # 初始化数据处理线程
@@ -1178,6 +1179,9 @@ class MainWindow(QMainWindow):
             self.time_slider_vertical.setVisible(True)
             self.time_slider_vertical.setMaximum(self.data.timelength - 1)
             self.time_slider_vertical.setValue(0)
+        elif tab_type == 'scs':
+            self.time_slider_vertical.setVisible(True)
+            self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['max_signal'].max()*10))
         else:
             if self.time_slider_vertical.isVisible():
                 self.time_slider_vertical.setVisible(False)
@@ -1297,8 +1301,8 @@ class MainWindow(QMainWindow):
         # 更新进度条格式
         self.progress_bar.setFormat(
             f"进度: {current}/{self.progress_bar.maximum()} "
-            f"({current_percent:.1f}%) "
-            f"已用: {elapsed_str} | 剩余: {self.cached_remaining}"
+            f"({current_percent:.1f}%) | "
+            f"已用: {elapsed_str} | 预计剩余: {self.cached_remaining}"
         )
 
         # self.console_widget.update_progress(current, total)
@@ -1331,6 +1335,8 @@ class MainWindow(QMainWindow):
             return
 
     def update_result_display(self,idx,reuse_current=True):
+        """目前有两个地方用到垂直滚动条"""
+        data = self.processed_data
         if self.vector_array is not None and 0 <= idx < self.vector_array.shape[0]:
             frame_data = self.vector_array[idx]
             self.result_display.display_roi_series(
@@ -1340,6 +1346,18 @@ class MainWindow(QMainWindow):
                 reuse_current = reuse_current
 
             )
+        elif self.processed_data.type_processed == 'Single_channel_signal' and not data.out_processed['thr_known']:
+            thr = idx/10
+            for m in range(self.processed_data.framesize):
+                if data.out_processed['max_signal'][m] > thr:
+                    data.data_processed[m] = data.out_processed['amplitudes'][m]
+                else:
+                    data.data_processed[m] = data.out_processed['mean_signal'][m]
+            data.out_processed['thr'] = thr
+            self.result_display.single_channel(data,
+                reuse_current = reuse_current)
+        else:
+            logging.debug("结果垂直滚动条失去更新源，不可能错误")
 
     def vectorROI_selection(self):
         """向量选取信号选择展示"""
@@ -1534,6 +1552,7 @@ class MainWindow(QMainWindow):
                                              self.EM_params['stft_window_type'])
                 self.EM_params['EM_fps']=self.EM_fps
                 self._is_quality = True
+                # self.stft_quality_btn.setEnabled(False)
         else:
             logging.warning("请先对数据进行预处理，或重选当前数据焦点")
             self.update_status("准备就绪")
@@ -1570,6 +1589,7 @@ class MainWindow(QMainWindow):
                                                  self.EM_params['custom_nfft'],
                                                  self.EM_params['stft_window_type'])
                     self.EM_params['EM_fps']=self.EM_fps
+                    self.stft_process_btn.setEnabled(False)
             else:
                 self.stft_python_signal.emit(self.processed_data,
                                              self.EM_params['target_freq'], self.EM_fps,
@@ -1578,6 +1598,7 @@ class MainWindow(QMainWindow):
                                              self.EM_params['custom_nfft'],
                                              self.EM_params['stft_window_type'])
                 self._is_quality = False
+                self.stft_process_btn.setEnabled(False)
         else:
             logging.warning("请先对数据进行预处理，或重选当前数据焦点")
             self.update_status("准备就绪")
@@ -1602,6 +1623,7 @@ class MainWindow(QMainWindow):
                                              self.EM_fps,
                                              self.EM_params['cwt_total_scales'],
                                              self.EM_params['cwt_type'])
+                # self.cwt_quality_btn.setEnabled(False)
                 self.EM_params['EM_fps'] = self.EM_fps
         else:
             logging.warning("请先对数据进行预处理，或重选当前数据焦点")
@@ -1631,6 +1653,7 @@ class MainWindow(QMainWindow):
                                             self.EM_params['cwt_total_scales'],
                                             self.EM_params['cwt_type'],
                                             self.EM_params['cwt_scale_range'])
+                self.cwt_process_btn.setEnabled(False)
         else:
             logging.warning("请先对数据进行预处理，或重选当前数据焦点")
             self.update_status("准备就绪", 'idle')
@@ -1638,6 +1661,16 @@ class MainWindow(QMainWindow):
 
     def processed_result(self, data:ProcessedData):
         """处理过后的数据都来这里重整再分配"""
+        if isinstance(data, ProcessedData):
+            pass
+        else:
+            self.cwt_quality_btn.setEnabled(True)
+            self.stft_quality_btn.setEnabled(True)
+            self.stft_process_btn.setEnabled(True)
+            self.cwt_process_btn.setEnabled(True)
+            self.tDgf_btn.setEnabled(True)
+            QMessageBox.warning(self,"运算错误","data['error")
+            return False
         self.processed_data = data
         # 各处理后响应
         process_type = self.processed_data.type_processed
@@ -1657,19 +1690,23 @@ class MainWindow(QMainWindow):
             case 'EM_pre_processed':
                 pass
             case 'stft_quality':
+                self.stft_quality_btn.setEnabled(True)
+                logging.info("请稍等，出图会有点慢")
                 self.result_display.quality_avg(self.processed_data)
-                pass
             case 'cwt_quality':
+                self.cwt_quality_btn.setEnabled(True)
                 self.result_display.quality_avg(self.processed_data)
-                pass
+                logging.info("请稍等，出图会有点慢")
             case 'ROI_stft':
                 result = self.processed_data.data_processed
+                self.stft_process_btn.setEnabled(True)
                 if self.show_stft_check.isChecked():
                     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result)) # 要改
                     self.load_image()
                 pass
             case 'ROI_cwt':
                 result = self.processed_data.data_processed
+                self.cwt_process_btn.setEnabled(True)
                 if self.show_stft_check.isChecked():
                     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result))  # 要改
                     self.load_image()
@@ -1677,6 +1714,16 @@ class MainWindow(QMainWindow):
             case 'Accumulated_time_amplitude_map':
                 self.atam_btn.setEnabled(True)
                 pass
+            case 'Single_channel_signal':
+                self.tDgf_btn.setEnabled(True)
+                if self.processed_data.out_processed['thr_known']:
+                    self.result_display.single_channel(self.processed_data)
+                else:
+                    thr = int(self.processed_data.out_processed['thr'])
+                    self.time_slider_vertical.setVisible(True)
+                    self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['max_signal'].max()*10))
+                    self.time_slider_vertical.setValue(thr*10)
+                    self.update_result_display(thr*10, reuse_current=False)
 
     def draw_result(self,draw_type:str,canvas_id:int,result):
         """canvas绘图结果处理"""
@@ -1706,14 +1753,19 @@ class MainWindow(QMainWindow):
             self.processed_data = ProcessedData(draw_data.timestamp,
                                             f"{draw_data.name}@ROIed",
                                             "Roi_applied",
+                                            time_point=draw_data.time_point,
                                             data_processed=roi_data,
+                                            out_processed=draw_data.out_processed,
                                             ROI_applied=True)
+
     def roi_signal_avg(self):
         """计算选区信号平均值并显示"""
         if not hasattr(self,"bool_mask") or self.bool_mask is None:
             QMessageBox.warning(self,"警告","请先绘制ROI")
             return
-        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
+        if self.processed_data.type_processed == 'ROI_stft' or self.processed_data.type_processed == 'ROI_cwt':
+            pass
+        else:
             logging.warning("请先处理数据")
             return
 
@@ -1732,6 +1784,27 @@ class MainWindow(QMainWindow):
 
         # self.data['EM_masked'] = EM_masked
         self.result_display.plot_time_series(self.processed_data.out_processed['time_series'] , average_series)
+
+    def process_atam(self):
+        if self.data and self.processed_data is None :
+            logging.warning('请先导入数据')
+            return
+        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
+            self.atam_signal.emit(self.processed_data)
+            self.atam_btn.setEnabled(False)
+            return True
+        else:
+            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确")
+            return False
+
+    def process_tDgf(self):
+        if self.data is None and self.processed_data is None:
+            logging.warning('请先导入数据')
+            return
+        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
+            self.tDgf_signal.emit(self.processed_data)
+            self.tDgf_btn.setEnabled(False)
+
 
     '''其他功能'''
     def is_thread_active(self, thread_name: str) -> bool:
@@ -1877,25 +1950,6 @@ class MainWindow(QMainWindow):
             logging.warning('请先加载并处理数据')
             return
 
-    def process_atam(self):
-        if self.data and self.processed_data is None :
-            logging.warning('请先导入数据')
-            return
-        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
-            self.atam_signal.emit(self.processed_data)
-            self.atam_btn.setEnabled(False)
-            return True
-        else:
-            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确")
-            return False
-
-    def process_tDgf(self):
-        if self.data is None and self.processed_data is None:
-            logging.warning('请先导入数据')
-            return
-        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
-            self.tDgf_signal.emit(self.processed_data)
-
     def data_history_view(self):
         """查看历史数据"""
         if self.data is None :
@@ -1923,7 +1977,7 @@ class MainWindow(QMainWindow):
             logging.info(f"当前数据焦点已更新至{self.processed_data.name}")
 
     def data_history_clear(self):
-        """历史数据清楚（所有）"""
+        """历史数据清除（所有）"""
         if Data is not None:
             Data.clear_history()
             logging.info('导入数据已清除')

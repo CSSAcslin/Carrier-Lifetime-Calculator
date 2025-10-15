@@ -1,3 +1,4 @@
+import copy
 import glob
 import logging
 import os
@@ -7,6 +8,7 @@ import tifffile as tiff
 import sif_parser
 import cv2
 import pywt
+import h5py
 from PIL import Image
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
 from skimage.exposure import equalize_adapthist
@@ -302,7 +304,7 @@ class MassDataProcessor(QObject):
     """大型数据（EM-iSCAT）处理的线程解决"""
     mass_finished = pyqtSignal(DataManager.Data) # 数据读取
     processing_progress_signal = pyqtSignal(int, int) # 进度槽
-    processed_result = pyqtSignal(DataManager.ProcessedData)
+    processed_result = pyqtSignal(object)
 
     def __init__(self):
         super(MassDataProcessor,self).__init__()
@@ -505,59 +507,55 @@ class MassDataProcessor(QObject):
 
             self.processed_result.emit(processed)
             self.processing_progress_signal.emit(100, 100)
-
+            return True
         except Exception as e:
-            logging.error(f"预处理错误: {str(e)}")
+            self.processed_result.emit({'type': "EM_pre_processed", 'error': str(e)})
+            return False
 
     @pyqtSlot(DataManager.ProcessedData,float,int,int,int,int,str)
     def quality_stft(self,data,target_freq: float,fps:int, window_size: int, noverlap: int,
                     custom_nfft: int, window_type: str):
         """STFT质量分析"""
         if not data:
-            raise ValueError("请先进行预处理")
+                raise ValueError("请先进行预处理")
+        try:
+            unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
 
-        unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
+            # 窗函数的选择和生成
+            window = self.get_window(window_type, window_size)
 
-        # 窗函数的选择和生成
-        window = self.get_window(window_type, window_size)
-
-        mean_signal = np.mean(unfolded_data, axis=0)
-        # if len(mean_signal) % 2 == 1:
-        #     mean_signal = mean_signal[:-1]
-        # mean_signal = hilbert(mean_signal)
-        # wvd = WignerVilleDistribution(mean_signal)
-        # wvd.run()
-        # wvd.plot(kind='contour', extent=[0, 1000, 0, 60])
-        # wvd.plot(kind='contour', sqmod= True,extent=[0, len(mean_signal), 0, 60])
-
-        f, t, Zxx = signal.stft(
-            mean_signal,
-            fs=fps,
-            window=window,
-            nperseg=window_size,
-            noverlap=noverlap,
-            nfft=custom_nfft,
-            return_onesided=True,
-            scaling='psd'
-        )
-        # 发送平均信号STFT结果
-        # self.avg_stft_result.emit(f, t, np.abs(Zxx), target_freq)
-        # self.out_length = Zxx.shape[1]
-        # self.target_idx = np.argmin(np.abs(f - target_freq))
-        # self.time_series = t
-        self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
-                                                             f'{data.name}@stft_q',
-                                                             'stft_quality',
-                                                             data_processed=np.abs(Zxx),
-                                                             out_processed={
-                                                                 'out_length': Zxx.shape[1],
-                                                                 'frequencies':f,
-                                                                 'time_series':t,
-                                                                 'target_freq':target_freq,
-                                                                 'target_idx':np.argmin(np.abs(f - target_freq)),
-                                                             })
-                                   )
-
+            mean_signal = np.mean(unfolded_data, axis=0)
+            f, t, Zxx = signal.stft(
+                mean_signal,
+                fs=fps,
+                window=window,
+                nperseg=window_size,
+                noverlap=noverlap,
+                nfft=custom_nfft,
+                return_onesided=True,
+                scaling='psd'
+            )
+            # 发送平均信号STFT结果
+            # self.avg_stft_result.emit(f, t, np.abs(Zxx), target_freq)
+            # self.out_length = Zxx.shape[1]
+            # self.target_idx = np.argmin(np.abs(f - target_freq))
+            # self.time_series = t
+            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+                                                                 f'{data.name}@stft_q',
+                                                                 'stft_quality',
+                                                                 data_processed=Zxx,
+                                                                 out_processed={
+                                                                     'out_length': Zxx.shape[1],
+                                                                     'frequencies':f,
+                                                                     'time_series':t,
+                                                                     'target_freq':target_freq,
+                                                                     'target_idx':np.argmin(np.abs(f - target_freq)),
+                                                                 })
+                                       )
+            return True
+        except Exception as e:
+            self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
+            return False
 
 
     @pyqtSlot(DataManager.ProcessedData,float,int,int,int,int,str)
@@ -615,6 +613,7 @@ class MassDataProcessor(QObject):
                 pixel_signal = unfolded_data[i, :]
 
                 # 计算当前像素的STFT
+                # signal.ShortTimeFFT
                 _, _, Zxx = signal.stft(
                     pixel_signal,
                     fs=fps,
@@ -627,7 +626,7 @@ class MassDataProcessor(QObject):
                 )
 
                 # 提取目标频率处的幅度
-                magnitude = np.abs(Zxx[target_idx, :]) * 2
+                magnitude = np.abs(Zxx[target_idx, :]) * 560
 
                 # 将结果存入对应像素位置
                 y = i // width
@@ -636,18 +635,22 @@ class MassDataProcessor(QObject):
 
                 self.processing_progress_signal.emit(i, total_pixels)
 
+            with h5py.File('transfer_data.h5', 'w') as f:
+                # 创建数据集并写入数据
+                dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
+
             # 6. 发送完整结果
             self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                                                f'{data.name}@r_stft',
                                                                'ROI_stft',
+                                                                time_point=time_series,
                                                                data_processed=stft_py_out,
-                                                               out_processed={
-                                                                   'time_series' : time_series,
-                                                               }))
+                                                               ))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
-
+            return True
         except Exception as e:
-            logging.error(f"STFT计算错误: {str(e)}")
+            self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
+            return False
 
     def get_window(self,window_type, window_size):
         try:
@@ -708,8 +711,10 @@ class MassDataProcessor(QObject):
                                                                      'target_freq' : target_freq,
                                                                  }))
             self.processing_progress_signal.emit(100, 100)
+            return True
         except Exception as e:
-            logging.error(e)
+            self.processed_result.emit({'type': "cwt_quality", 'error': str(e)})
+            return False
 
     @pyqtSlot(DataManager.ProcessedData,float, int, int,str, float)
     def python_cwt(self,data, target_freq: float, fps: int, totalscales: int, wavelet: str, cwt_scale_range: float):
@@ -720,7 +725,7 @@ class MassDataProcessor(QObject):
             target_freq: 目标分析频率(Hz)
             EM_fps: 采样频率
             scales: 尺度数组，控制小波变换的频率分辨率
-            wavelet: 使用的小波类型(默认为'morl'墨西哥帽小波)
+            wavelet: 使用的小波类型(默认为cmor3-3)
         """
         try:
             if not data:
@@ -776,14 +781,14 @@ class MassDataProcessor(QObject):
             self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                                                  f'{data.name}@cwt',
                                                                  'ROI_cwt',
+                                                                 time_point=times,
                                                                  data_processed=cwt_py_out,
-                                                                 out_processed={
-                                                                     'time_series': times,
-                                                                 }))
+                                                                 ))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
-
+            return True
         except Exception as e:
-            logging.error(f"CWT计算错误: {str(e)}")
+            self.processed_result.emit({'type':"ROI_cwt",'error':str(e)})
+            return False
 
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
@@ -930,6 +935,7 @@ class MassDataProcessor(QObject):
         self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                          f'{data.name}@atam',
                                          "Accumulated_time_amplitude_map",
+                                         time_point=data.time_point,
                                          data_processed=np.mean(data.data_processed, axis=0)))
         logging.info("累计时间振幅计算已完成")
 
@@ -950,7 +956,7 @@ class MassDataProcessor(QObject):
         return A * np.exp(-((x - x0) ** 2 / (2 * sigmax ** 2) + (y - y0) ** 2 / (2 * sigmay ** 2))) + b
 
     @pyqtSlot(DataManager.ProcessedData)
-    def twoD_gaussian_fit(self,data_3d:DataManager.ProcessedData,zm = 2,thr = 0.1):
+    def twoD_gaussian_fit(self,data_3d:DataManager.ProcessedData,zm = 2,thr = 2.5,thr_known = False):
         """
         对三维时序数据逐帧进行二维高斯拟合
 
@@ -960,64 +966,110 @@ class MassDataProcessor(QObject):
         返回:
         results: list of dict, 每帧的拟合参数
         """
-        timer = QElapsedTimer()
-        timer.start()
+        try:
+            timer = QElapsedTimer()
+            timer.start()
 
-        T, H, W = data_3d.datashape
-        self.processing_progress_signal.emit(0, T)
+            T, H, W = data_3d.datashape
+            self.processing_progress_signal.emit(0, T)
 
-        amplitudes = np.zeros(T)
-        centers_x = np.zeros(T)
-        centers_y = np.zeros(T)
+            amplitudes = np.zeros(T)
+            centers_x = np.zeros(T)
+            centers_y = np.zeros(T)
+            mean_signal = np.zeros(T)
+            max_signal = np.zeros(T)
 
-        for m in range(T):
-            frame = data_3d.data_processed[m]
-            self.processing_progress_signal.emit(m, T)
-            # 图像插值
-            if zm >1:
-                Z = zoom(frame, zm, order=3)
-            else:
-                Z = frame
+            for m in range(T):
+                frame = data_3d.data_processed[m]
+                self.processing_progress_signal.emit(m, T)
+                # 图像插值
+                if zm >1:
+                    Z = zoom(frame, zm, order=3)
+                else:
+                    Z = frame
 
-            h_z, w_z = Z.shape
-            X, Y = np.meshgrid(np.arange(w_z), np.arange(h_z))
-            xy = np.column_stack((X.ravel(), Y.ravel()))
+                h_z, w_z = Z.shape
+                X, Y = np.meshgrid(np.arange(w_z), np.arange(h_z))
+                xy = np.column_stack((X.ravel(), Y.ravel()))
+                mean_signal[m] = np.mean(Z)
+                max_signal[m] = np.max(Z)
+                if thr_known: # 如果知道阈值
+                    # 检查是否有超过阈值的点
+                    if np.any(Z > thr):
+                        max_value = np.max(Z)
+                        y0_g, x0_g = np.unravel_index(np.argmax(Z), Z.shape)
 
-            # 检查是否有超过阈值的点
-            if np.any(Z > thr):
-                max_value = np.max(Z)
-                y0_g, x0_g = np.unravel_index(np.argmax(Z), Z.shape)
+                        # 初始参数 [A, x0, sigmax, y0, sigmay, b]
+                        x0 = [max_value, x0_g, 1.0, y0_g, 1.0, np.mean(Z)]
 
-                # 初始参数 [A, x0, sigmax, y0, sigmay, b]
-                x0 = [max_value, x0_g, 1.0, y0_g, 1.0, np.mean(Z)]
+                        # 参数边界
+                        lb = [0, 0, 0.1, 0, 0.1, 0]
+                        ub = [100, w_z, (w_z/2)**2, h_z, (h_z/2)**2, max_value]
 
-                # 参数边界
-                lb = [0, 0, 0.1, 0, 0.1, 0]
-                ub = [100, w_z, (w_z/2)**2, h_z, (h_z/2)**2, max_value]
+                        try:
+                            # 二维高斯拟合
+                            popt, _ = curve_fit(self.D2GaussFunction,
+                                                xy,
+                                                Z.ravel(),
+                                                p0=x0,
+                                                bounds=(lb, ub),
+                                                maxfev=5000)
 
-                try:
-                    # 二维高斯拟合
-                    popt, _ = curve_fit(self.D2GaussFunction,
-                                        xy,
-                                        Z.ravel(),
-                                        p0=x0,
-                                        bounds=(lb, ub),
-                                        maxfev=5000)
+                            amplitudes[m] = popt[0]
+                            centers_x[m] = popt[1]
+                            centers_y[m] = popt[3]
+                        except RuntimeError:
+                            amplitudes[m] = np.mean(Z)
+                            centers_x[m] = np.nan
+                            centers_y[m] = np.nan
+                    else:
+                        amplitudes[m] = np.mean(Z)
+                        centers_x[m] = np.nan
+                        centers_y[m] = np.nan
+                else:
+                    max_value = np.max(Z)
+                    y0_g, x0_g = np.unravel_index(np.argmax(Z), Z.shape)
 
-                    amplitudes[m] = popt[0]
-                    centers_x[m] = popt[1]
-                    centers_y[m] = popt[3]
-                except RuntimeError:
-                    amplitudes[m] = np.mean(Z)
-                    centers_x[m] = np.nan
-                    centers_y[m] = np.nan
-            else:
-                amplitudes[m] = np.mean(Z)
-                centers_x[m] = np.nan
-                centers_y[m] = np.nan
+                    # 初始参数 [A, x0, sigmax, y0, sigmay, b]
+                    x0 = [max_value, x0_g, 1.0, y0_g, 1.0, np.mean(Z)]
 
-        self.processing_progress_signal.emit(T, T)
-        return amplitudes, centers_x, centers_y
+                    # 参数边界
+                    lb = [0, 0, 0.1, 0, 0.1, 0]
+                    ub = [100, w_z, (w_z / 2) ** 2, h_z, (h_z / 2) ** 2, max_value]
+                    mean_signal[m] = np.mean(Z)
+                    try:
+                        # 二维高斯拟合
+                        popt, _ = curve_fit(self.D2GaussFunction,
+                                            xy,
+                                            Z.ravel(),
+                                            p0=x0,
+                                            bounds=(lb, ub),
+                                            maxfev=5000)
+
+                        amplitudes[m] = popt[0]
+                        centers_x[m] = popt[1]
+                        centers_y[m] = popt[3]
+                    except RuntimeError:
+                        amplitudes[m] = np.mean(Z)
+                        centers_x[m] = np.nan
+                        centers_y[m] = np.nan
+            self.processing_progress_signal.emit(T, T)
+            self.processed_result.emit(DataManager.ProcessedData(data_3d.timestamp,
+                                             f'{data_3d.name}@scs',
+                                             "Single_channel_signal",
+                                             time_point=data_3d.time_point,
+                                             data_processed=copy.deepcopy(amplitudes),
+                                             out_processed={
+                                                 'thr_known': thr_known,
+                                                 'thr': thr,
+                                                 'mean_signal':mean_signal,
+                                                 'amplitudes':amplitudes,
+                                                 'max_signal':max_signal,
+                                             }))
+            return True
+        except Exception as e:
+            self.processed_result.emit({'type':"Single_channel_signal",'error':str(e)})
+            return False
 
     def stop(self):
         """请求中止处理"""
@@ -1063,7 +1115,7 @@ class MassDataProcessor(QObject):
 
         return np.array(amplitudes), np.array(durations)
 
-    # 3. 上升/下降时间常数拟合
+    # 上升/下降时间常数拟合
     def fit_exponential_time(data, thr, mode='up', n=5):
         """
         拟合指数时间常数

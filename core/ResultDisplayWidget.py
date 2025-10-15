@@ -59,7 +59,8 @@ class ResultDisplayWidget(QTabWidget):
             'diff': 1,  # 扩散系数
             'var': 1,  # 方差演化
             'quality': 1, # 信号评估
-            'series': 1 # EM信号
+            'series': 1, # EM信号
+            'scs': 1,# 单通道信号
         }
 
     def _current_index(self, index):
@@ -463,7 +464,7 @@ class ResultDisplayWidget(QTabWidget):
 
         ax = figure.add_subplot(111)
 
-        spec = ax.pcolormesh(t, f, 10 * np.log10(np.abs(coefficients)),
+        spec = ax.pcolormesh(t, f, 10 * np.log10(np.abs(coefficients)**2 + 1e-12),
                              shading='gouraud', cmap='viridis')
         ax.set_ylabel('频率 [Hz]')
         ax.set_xlabel('时间 [秒]')
@@ -472,6 +473,7 @@ class ResultDisplayWidget(QTabWidget):
         ax.axhline(y=target_freq, color='r', linestyle='--', alpha=0.7)
         ax.set_title(f'信号质量评估 (目标频率: {target_freq} Hz)')
         canvas.draw()
+        logging.info("质量评估绘制完成")
 
         # self.current_dataframe = pd.DataFrame({"Zxx":Zxx}) 目前有问题
         self.current_dataframe = None
@@ -489,7 +491,7 @@ class ResultDisplayWidget(QTabWidget):
 
         ax = figure.add_subplot(111)
         ax.plot(time, series, 'b-', linewidth=line_width)
-        ax.set_title(title)
+        ax.set_title("选区信号均值变化")
         ax.set_xlabel("time (s)")
         ax.set_ylabel(r"$\Delta$S")
         ax.grid(show_grid)
@@ -500,3 +502,27 @@ class ResultDisplayWidget(QTabWidget):
             'series': series,
         })
         self.store_tab_data(tab, self.current_mode, time = time, series = series)
+
+    def single_channel(self,data,reuse_current=False):
+        """单通道信号"""
+        self.current_mode = "scs"
+        time_series = data.time_point
+        signal = data.data_processed
+        figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'scs',reuse_current)
+        show_grid = self.plot_settings['show_grid']
+        line_style = self.plot_settings['line_style']
+        line_width = self.plot_settings['line_width']
+
+        ax = figure.add_subplot(111)
+        ax.plot(time_series, signal, 'r-', linewidth=line_width)
+        ax.set_title(f"单通道信号（thr = {data.out_processed['thr']})")
+        ax.set_xlabel("time (s)")
+        ax.set_ylabel(r"$\Delta$A")
+        ax.grid(show_grid)
+        canvas.draw()
+
+        self.current_dataframe = pd.DataFrame({
+            'time_series': time_series,
+            'signal': signal,
+        })
+        self.store_tab_data(tab, self.current_mode, time_series = time_series, signal = signal)
