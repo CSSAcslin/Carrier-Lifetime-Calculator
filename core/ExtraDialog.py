@@ -9,7 +9,11 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QMessageBox, QFormLayout, QDoubleSpinBox, QColorDialog, QComboBox, QCheckBox,
                              QFileDialog, QWhatsThis, QTextBrowser, QTableWidget, QDialogButtonBox, QTableWidgetItem,
                              QHeaderView, QAbstractItemView, QTabWidget, QWidget)
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QTimer
+import markdown
+from markdown.extensions.codehilite import CodeHiliteExtension
+from markdown.extensions.fenced_code import FencedCodeExtension
+import re
 
 
 # 坏帧处理对话框
@@ -470,6 +474,7 @@ class STFTComputePop(QDialog):
         self.setMinimumWidth(300)
         self.setMinimumHeight(200)
         self.params = params
+        self.help_dialog = None
         self.init_ui()
 
     def init_ui(self):
@@ -513,6 +518,239 @@ class STFTComputePop(QDialog):
         layout.setLayout(5,QFormLayout.FieldRole,button_layout)
 
         self.setLayout(layout)
+
+    def event(self, event):
+        if event.type() == QEvent.EnterWhatsThisMode:
+            # QWhatsThis.leaveWhatsThisMode()
+            QTimer.singleShot(0, self.show_custom_help)
+            return True
+        return super().event(event)
+
+    def show_custom_help(self):
+        """显示自定义非模态帮助对话框"""
+        QWhatsThis.leaveWhatsThisMode()
+        help_title = "STFT 帮助说明"
+        help_content = r"""
+        <!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; }
+        h1 { color: #2e7d32; 
+            border-bottom: 2px solid #4caf50; }
+        h2 { color: #388e3c; }
+        h3 { color: black; }
+        .code-block { 
+            background-color: #e8f5e9; 
+            border: 1px solid #c8e6c9;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        .param-table th {
+            background-color: #4caf50;
+            color: white;
+            text-align: left;
+            padding: 8px;
+        }
+        .param-table td {
+            border: 1px solid #c8e6c9;
+            padding: 8px;
+        }
+        .param-table tr:nth-child(even) {
+            background-color: #f1f8e9;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .math-block {
+            font-size: large;
+            background-color: #f9fbe7;
+            border: 1px solid #dcedc8;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>STFT（短时傅里叶变换）分析</h1>
+    
+    <h2>1. 功能概述</h2>
+    <p>STFT（Short-Time Fourier Transform）是一种时频分析方法，用于分析信号频率随时间的变化特性。本实现针对电化学调制数据逐像素执行STFT分析，分析数据中周期性变化的频率特性。</p>
+    
+    <h2>2. 算法原理</h2>
+    <p>STFT通过在信号上滑动窗口，对每个窗口内的信号段进行傅里叶变换，从而获得信号在时间和频率上的联合分布：</p>
+    <div class="math-block">
+    X(τ, ω) = ∫<sub>-∞</sub><sup>∞</sup> x(t) w(t-τ) e<sup>-jωt</sup> dt
+    </div>
+    <p>其中：</p>
+    <ul>
+        <li>x(t)：输入信号</li>
+        <li>w(t)：窗函数</li>
+        <li>τ：时间位置</li>
+        <li>ω：角频率</li>
+    </ul>
+    
+    <h2>3. 参数说明</h2>
+    <table class="param-table">
+        <tr>
+            <th>参数</th>
+            <th>默认值</th>
+            <th>说明</th>
+        </tr>
+        <tr>
+            <td>窗函数类型</td>
+            <td>hann</td>
+            <td>窗函数类型(如'hann'汉宁窗, 'hamming'汉明窗等，详情查看第七部分)</td>
+        </tr>
+        <tr>
+            <td>目标频率</td>
+            <td>30.0 Hz</td>
+            <td>想要提取的目标频率</td>
+        </tr>
+        <tr>
+            <td>采样帧率</td>
+            <td>360 (帧/秒)</td>
+            <td>你提供的视频or时序数据所采样的帧率（影响拍摄时长）</td>
+        </tr>
+        <tr>
+            <td>窗口大小</td>
+            <td>128 (点数)</td>
+            <td>进行短时傅里叶加窗的长度</td>
+        </tr>
+        <tr>
+            <td>窗口重叠</td>
+            <td>120 (点数)</td>
+            <td>相邻窗重复的长度<br>（步长=窗口大小-窗口重叠）</td>
+        </tr>
+        <tr>
+            <td>变换长度</td>
+            <td>360 (点数)</td>
+            <td>即参与变换的点数，最小取窗口大小，影响频率点数（非频率分辨率）</td>
+        </tr>
+    </table>
+    
+    <h2>4. 处理流程</h2>
+    <ol>
+        <li>导入原始数据（支持avi和tiff序列）</li>
+        <li>预处理数据（去背景、展数据等操作）</li>
+        <li>进行质量评价（得到）</li>
+        <li>逐像素执行STFT：
+            <ul>
+                <li>提取像素时间序列</li>
+                <li>应用窗函数</li>
+                <li>计算STFT</li>
+                <li>提取目标频率幅度</li>
+            </ul>
+        </li>
+        <li>得到目标频率处具有一定时频分辨率的幅值序列</li>
+    </ol>
+    <div class="note">
+        <strong>注意：</strong>使用前需先执行<i>预处理</i>和<i>质量评估</i>两个步骤
+    </div>
+    <h2>5. 输出结果</h2>
+    <p>质量评价的结果为功率谱密度（PSD）</p>
+    <p>STFT处理结果为时序幅值图像（可显示）：</p>
+    <div class="code-block">
+        stft_py_out[time_index, y_coord, x_coord]
+    </div>
+    <p>其中：</p>
+    <ul>
+        <li><strong>time_index</strong>：处理后时间</li>
+        <li><strong>y_coord</strong>：像素Y坐标</li>
+        <li><strong>x_coord</strong>：像素X坐标</li>
+    </ul>
+    <h2>6. STFT 时频分辨率浅析</h2>
+    <h3>窗口大小（窗长）</h3>
+    <p>
+        <ul> 
+            <li>较长的窗口 → 频率分辨率高（能区分更接近的频率成分），但时间分辨率低（无法精确定位快速变化的瞬态信号）。</li>
+            <li>较短的窗口 → 时间分辨率高（能捕捉快速变化），但频率分辨率低（频率模糊）。
+        </ul>
+        这是由<strong>海森堡不确定性原理</strong>决定的固有权衡。<strong>gabor窗</strong>的特殊之处就在于，它满足了不确定性原理的最下限，保证了时域和频域同时最集中，是使时频图分辨率最高的窗函数。</p>
+    <h3>采样率（采样帧率）</h3>
+    <p>采样率决定了信号的最高可分析频率（Nyquist频率 = 采样率/2），
+        但不会改变STFT的时频分辨率。
+        <br>例如：若采样率翻倍，Nyquist频率提高，但窗口长度（以样本点计）不变时，
+        实际时间窗口的持续时间（秒）会缩短（因为样本点间隔更小），
+        从而可能间接影响时间分辨率。</p>
+    <h3>变换步长（窗口重叠）</h3>
+    <p>变换步长不会影响实际的时间分辨率，但会决定STFT结果的时间分辨能力。<br>
+        <ul>
+            <li>较小的步长（高重叠） → 时间采样更密集，但计算量更大。</li>
+            <li>较大的步长（低重叠） → 时间采样更稀疏，计算量更小。</li></ul>
+        </p>
+    <h3>变换长度（nfft）</h3>
+    <p>变换长度不会改变实际的频率分辨率，但决定了频率分辨能力（频率点数）。
+        <ul>
+            <li>较大的变换长度 → 频率点数更多，但计算量更大。</li>
+            <li>较小的变换长度 → 频率点数更少，计算量更小。</li></ul>
+        当变换长度≥窗口长度时，在计算中尾部会采取补零的操作，频谱插值更平滑，但不会增加真实频率信息。<br>不过在实际测试中，会对结果数值产生一定影响。</p>
+    <h2>7. 窗函数介绍</h2>
+    <table class="param-table">
+        <tr>
+            <th>窗函数</th>
+            <th>名称</th>
+            <th>说明</th>
+        </tr>
+        <tr>
+            <td>hann</td>
+            <td>汉宁窗</td>
+            <td>默认窗，主瓣较宽，快滚降，频谱泄漏适中</td>
+        </tr>
+        <tr>
+            <td>hamming</td>
+            <td>汉明窗</td>
+            <td>主瓣适中，旁瓣较低，慢滚降，频谱泄漏适中</td>
+        </tr>
+        <tr>
+            <td>gaussian</td>
+            <td>gabor窗</td>
+            <td>时间频率分辨率达到理论极限（不确定性原理），旁瓣较低，低泄漏，滚降一般</td>
+        </tr>
+
+        <tr>
+            <td>boxcar</td>
+            <td>矩形窗</td>
+            <td>所有点权重相等，主瓣最窄，频谱泄漏严重，滚降最慢</td>
+        </tr>
+        <tr>
+            <td>blackman</td>
+            <td>Blackman窗</td>
+            <td>主瓣宽，旁瓣低，频谱泄漏很小，滚降快</td>
+        <tr>
+            <td>blackmanharris</td>
+            <td>BH窗</td>
+            <td>主瓣超宽，旁瓣极低，频谱泄漏很小，滚降超快</td>
+        </tr>
+        
+    </table>
+    <p><i>附：程序使用<a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.stft.html#scipy.signal.stft">
+        scipy.signal.stft</a>方法进行运算</i></p>
+</body>
+</html>
+        """
+
+        # 创建并显示自定义对话框
+        self.help_dialog = CustomHelpDialog(help_title, help_content)
+        self.help_dialog.setWindowModality(Qt.NonModal)
+        if self.help_dialog.exec_():
+            return True
+        return None
+        # self.help_dialog.show()  # 非阻塞显示
+        # self.help_dialog.activateWindow()
+        # self.help_dialog.raise_()
 
 # 计算cwt参数弹窗
 class CWTComputePop(QDialog):
@@ -567,6 +805,56 @@ class CWTComputePop(QDialog):
         layout.setLayout(5,QFormLayout.FieldRole,button_layout)
 
         self.setLayout(layout)
+
+# 单通道信号参数弹窗
+class SCSComputePop(QDialog):
+    def __init__(self,params,parent = None):
+        super().__init__(parent)
+        self.setWindowTitle("单通道模式")
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(120)
+        self.params = params
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QFormLayout()
+
+        self.thr_known_check = QCheckBox()
+        self.thr_known_check.setChecked(self.params['thr_known'])
+
+        self.thr_input = QDoubleSpinBox()
+        self.thr_input.setRange(0.1, 1000)
+        self.thr_input.setValue(self.params['scs_thr'])
+
+        self.zoom_input = QSpinBox()
+        self.zoom_input.setRange(0,100)
+        self.zoom_input.setValue(self.params['scs_zoom'])
+
+
+        layout.addRow(QLabel("阈值是否已知"), self.thr_known_check)
+        layout.addRow(QLabel("阈值设置"),self.thr_input)
+        layout.addRow(QLabel("插值倍数"),self.zoom_input)
+        layout.setSpacing(10)
+
+
+        button_layout = QHBoxLayout()
+        self.apply_btn = QPushButton("执行")
+        self.apply_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.apply_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.setLayout(3,QFormLayout.FieldRole,button_layout)
+
+        self.setLayout(layout)
+
+        self.thr_known_check.toggled.connect(self.update_thr_state)
+        self.update_thr_state()
+
+    def update_thr_state(self):
+        thr_known = self.thr_known_check.isChecked()
+        self.thr_input.setEnabled(thr_known)
+
 
 # EM时频变换数据导出
 class MassDataSavingPop(QDialog):
@@ -694,7 +982,7 @@ class MassDataSavingPop(QDialog):
             'filetype': self.type_combo.currentText()
         }
 
-
+# 数据选择查看视窗
 class DataViewAndSelectPop(QDialog):
     def __init__(self, parent=None, datadict=None, processed_datadict=None, add_canvas=False):
         super().__init__(parent)
@@ -870,7 +1158,7 @@ class DataViewAndSelectPop(QDialog):
 class CustomHelpDialog(QDialog):
     """自定义非模态帮助对话框"""
 
-    def __init__(self, title, content, parent=None):
+    def __init__(self, title, content, content_format="html", parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
@@ -879,18 +1167,17 @@ class CustomHelpDialog(QDialog):
         # 创建布局和控件
         layout = QVBoxLayout()
 
-        # 标题标签
-        title_label = QLabel(title)
-        title_font = QFont()
-        title_font.setBold(True)
-        title_font.setPointSize(12)
-        title_label.setFont(title_font)
-        layout.addWidget(title_label)
-
-        # 富文本内容区域（支持HTML格式）
+        # 内容浏览器（支持多种格式）
         content_browser = QTextBrowser()
-        content_browser.setHtml(content)
-        content_browser.setOpenExternalLinks(True)  # 允许打开外部链接
+        content_browser.setOpenExternalLinks(True)
+
+        # 根据格式处理内容
+        if content_format.lower() == "markdown":
+            processed_content = self._render_markdown(content)
+        else:  # 默认为HTML
+            processed_content = content
+
+        content_browser.setHtml(processed_content)
         layout.addWidget(content_browser)
 
         # 关闭按钮
@@ -899,4 +1186,13 @@ class CustomHelpDialog(QDialog):
         layout.addWidget(close_btn)
 
         self.setLayout(layout)
-        self.resize(250, 500)  # 设置初始大小
+        self.resize(500, 700)  # 设置初始大小
+
+    def _render_markdown(self, md_content):
+        """将Markdown转换为HTML"""
+        # 添加扩展支持代码高亮和围栏代码块
+        extensions = [
+            CodeHiliteExtension(noclasses=True),
+            FencedCodeExtension()
+        ]
+        return markdown.markdown(md_content, extensions=extensions)

@@ -1,15 +1,12 @@
 import logging
-
-import numpy as np
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QWheelEvent, QTransform, QIcon, QPen, QBrush, QColor
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QToolBar, QAction, QDockWidget, QStyle,
-                             QGraphicsRectItem, QActionGroup
+                             QGraphicsRectItem, QActionGroup, QGraphicsLineItem, QGraphicsEllipseItem
                              )
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize, QTimer, QDateTime
-
 from transient_data_processing.core.DataManager import ImagingData
 
 
@@ -19,9 +16,12 @@ class ImageDisplayWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.display_canvas = []
-        self.init_tool_bars()
         self.cursor_id = 0
         self.current_tool = None
+        self.anchor_active = False
+        self.actions_all = []
+
+        self.init_tool_bars()
 
     def init_tool_bars(self):
         Canvas_bar = QToolBar('Canvas')
@@ -37,7 +37,7 @@ class ImageDisplayWindow(QMainWindow):
 
         cursor = QAction('cursor', self)
         cursor.setStatusTip("cursor")
-        # cursor.triggered.connect(self.cursor)
+        cursor.triggered.connect(self.cursor)
         Canvas_bar.addAction(cursor)
 
         self.addToolBar(Canvas_bar)
@@ -51,9 +51,11 @@ class ImageDisplayWindow(QMainWindow):
             action.setStatusTip(tip)
             action.setToolTip(tip)
             action.setCheckable(True)  # 允许选中状态
-            action.triggered.connect(lambda : self.set_tools(name))
+            action.triggered.connect(lambda checked: self.set_tools(name if checked else None))
+            action.triggered.connect(lambda checked, a=action: self.toggle_action(a))
             self.drawing_action_group.addAction(action)  # 添加到互斥组
             Drawing_bar.addAction(action)
+            self.actions_all.append(action)
             return action
 
         # 创建所有绘图工具
@@ -69,7 +71,7 @@ class ImageDisplayWindow(QMainWindow):
         set_color = create_drawing_action('Color', "Set the color")
 
         Drawing_bar.addSeparator()
-
+        anchor = create_drawing_action('Anchor', "Anchor")
         vector_line = create_drawing_action('V-line', "Draw the vector line")
         vector_rect = create_drawing_action('V-rect', "Draw the vector rect")
         #
@@ -78,10 +80,16 @@ class ImageDisplayWindow(QMainWindow):
 
         self.addToolBar(Drawing_bar)
 
+    def toggle_action(self,action):
+        # 反转当前选中状态
+        action.setChecked(not action.isChecked())
+
     def set_cursor_id(self,cursor_id):
         self.cursor_id = cursor_id
         # if self.current_tool is not None:
         #     self.display_canvas[self.cursor_id].set_drawing_tool(self.current_tool)
+        if self.anchor_active:
+            self.display_canvas[self.cursor_id].set_anchor_mode(True)
 
 
     def add_canvas(self,data):
@@ -177,8 +185,17 @@ class ImageDisplayWindow(QMainWindow):
     def set_tools(self,tool_name:str):
         self.display_canvas[self.cursor_id].set_drawing_tool(tool_name)
         self.current_tool = tool_name
+        if tool_name == 'Anchor':
+            self.anchor_active = not self.anchor_active
+            if self.anchor_active:
+                # 激活时清除所有画板的十字标
+                for canvas in self.display_canvas:
+                    canvas.clear_anchor()
 
-
+    def cursor(self):
+        self.display_canvas[self.cursor_id].set_drawing_tool(None)
+        for action in self.actions:
+            action.setChecked(False)
 
 
 class SubImageDisplayWidget(QDockWidget):
@@ -189,6 +206,7 @@ class SubImageDisplayWidget(QDockWidget):
     draw_result_signal = pyqtSignal(str,int,object)
     def __init__(self, parent=None,canvas_id = None,name = None, data :ImagingData = None):
         super().__init__(name, parent)
+
         self.id = canvas_id
         self.data = data
         self.mouse_pos = None
@@ -199,14 +217,22 @@ class SubImageDisplayWidget(QDockWidget):
         self.initial_scale = None
         self.min_scale = 0.1
         self.max_scale = 30.0
-        self.draw_layer_opacity = 0.8
-        # self.setMinimumSize(300,300)
+
+        self.data_layer = None # 数据层
+        self.draw_layer = None # 绘图层
+        self.top_pixmap = None # 顶层绘图层的pixmap
+        self.draw_layer_opacity = 0.8 # 绘图层透明度
+
+        # 工具响应
         self.drawing_tool = None
         self.drawing = False
         self.start_pos = None
         self.end_pos = None
         self.temp_item = None # 临时画布
         self.v_rect_roi = None # 矢量矩形蒙版结果（左上角坐标（x,y), 宽度, 高度）
+        self.anchor_active = False
+        self.anchor_item = None  # 存储十字标图形项
+        self.anchor_pos = None  # 存储十字标位置
         # 播放相关
         self.play_timer = QTimer(self)
         self.play_timer.timeout.connect(self.auto_play_update)
@@ -294,9 +320,25 @@ class SubImageDisplayWidget(QDockWidget):
         # 清除前序画板
         if tool == "V-rect":
             self.clear_draw_layer()
+        elif tool == "Anchor":
+            self.clear_draw_layer()
         if self.temp_item:
             self.scene.removeItem(self.temp_item)
             self.temp_item = None
+
+    def set_anchor_mode(self, active):
+        """设置 anchor 模式"""
+        self.anchor_active = active
+        if not active:
+            self.clear_anchor()
+
+    def clear_anchor(self):
+        """清除十字标"""
+        if self.anchor_item:
+            for item in self.anchor_item:
+                self.scene.removeItem(item)
+            self.anchor_item = None
+            self.anchor_pos = None
 
     def clear_draw_layer(self):
         """清除之前绘制的矢量矩形"""
@@ -362,6 +404,42 @@ class SubImageDisplayWidget(QDockWidget):
                 self.temp_item = QGraphicsRectItem(rect)
                 self.temp_item.setPen(QPen(Qt.yellow, 0.2, Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
                 self.scene.addItem(self.temp_item)
+            elif self.drawing_tool == 'Anchor' and self.anchor_active:
+                # 光标模式
+                pos = self.graphics_view.mapToScene(event.pos())
+                x_int , y_int = int(pos.x()), int(pos.y())
+                x, y = x_int+0.5, y_int+0.5
+                h, w = self.current_image.shape
+
+                if 0 <= x < w and 0 <= y < h:
+                    # 清除现有十字标
+                    self.clear_anchor()
+
+                    # 创建新的十字标
+                    pen = QPen(Qt.yellow, 0.1, Qt.SolidLine)
+                    # 水平线
+                    h_line = QGraphicsLineItem(x-1, y,x+1, y)
+                    h_line.setPen(pen)
+                    # 垂直线
+                    v_line = QGraphicsLineItem(x, y-1, x, y + 1)
+                    v_line.setPen(pen)
+                    circle = QGraphicsEllipseItem(x-0.4, y-0.4, 0.8, 0.8)
+                    circle.setPen(pen)
+
+                    # 添加到场景
+                    self.scene.addItem(h_line)
+                    self.scene.addItem(v_line)
+                    self.scene.addItem(circle)
+
+                    # 存储十字标位置
+                    self.anchor_pos = (x_int, y_int)
+                    self.anchor_item = [h_line, v_line,circle]
+
+                    # 获取并发射图像数据
+                    self.get_value(y_int, x_int)
+
+                    return
+
             else:
                 pos = self.graphics_view.mapToScene(event.pos())
                 x, y = int(pos.x()), int(pos.y())
@@ -386,6 +464,9 @@ class SubImageDisplayWidget(QDockWidget):
                 self.graphics_view.verticalScrollBar().value() - delta.y())
             self.drag_start_pos = event.pos()
 
+        # 当 anchor 激活时，禁用动态获取鼠标位置功能
+        if self.anchor_active:
+            return
         # 获取鼠标在图像上的坐标
         pos = self.graphics_view.mapToScene(event.pos())
         self.x_img, self.y_img = int(pos.x()), int(pos.y())
@@ -394,13 +475,7 @@ class SubImageDisplayWidget(QDockWidget):
         h, w = self.current_image.shape
         if 0 <= self.x_img < w and 0 <= self.y_img < h:
             self.mouse_pos = (self.x_img, self.y_img)
-            value = self.current_image[self.y_img, self.x_img]
-            if self.data.is_temporary :
-                original_value = self.data.image_backup[self.current_time_idx][self.y_img, self.x_img]
-            else:
-                original_value = self.data.image_backup[self.y_img, self.x_img]
-            # 发射信号(需要主窗口连接此信号)
-            self.mouse_position_signal.emit(self.x_img, self.y_img, self.current_time_idx, value,original_value)
+            self.get_value(self.y_img, self.x_img)
             self.current_canvas_signal.emit(self.id)
 
         # 绘图模式
@@ -444,7 +519,6 @@ class SubImageDisplayWidget(QDockWidget):
                 self.draw_result_signal.emit('v_rect',self.id,self.v_rect_roi)
 
                 # 移除临时绘图项
-
                 # self.vector_rect_item = QGraphicsRectItem(QRectF(x1, y1, width, height))
                 # self.vector_rect_item.setPen(QPen(Qt.yellow, 1,Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
                 # self.vector_rect_item.setBrush(QBrush(QColor(255,255, 0, 128)))
@@ -453,7 +527,6 @@ class SubImageDisplayWidget(QDockWidget):
                 self.scene.removeItem(self.temp_item)
                 self.temp_item = None
 
-                # 可选：在绘图层显示ROI区域
                 if hasattr(self, 'top_pixmap'):
                     painter = QPainter(self.top_pixmap)
                     painter.setPen(QPen(Qt.yellow, 1,Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
@@ -470,7 +543,7 @@ class SubImageDisplayWidget(QDockWidget):
             self.parent().remove_canvas(self.canvas_id)
         super().closeEvent(event)
 
-    """下面是播放盒帧更新的设置"""
+    """下面是播放和帧更新的设置"""
     def start_auto_play(self):
         if self.max_time_idx <= 1:
             return False # 没有足够的帧进行播放
@@ -579,17 +652,30 @@ class SubImageDisplayWidget(QDockWidget):
         self.draw_layer.setOpacity(self.draw_layer_opacity)
         self.draw_layer.setZValue(1)  # 确保绘图层在数据层之上
 
-
     def update_display_idx(self, image_data):
         """仅更新图像数据，不改变视图状态"""
         self.current_image = image_data
 
         # 归一化到0-255
+        if self.anchor_pos:
+            x, y = self.anchor_pos
+            # 获取并发射图像数据
+            self.get_value(y,x)
+
         qimage = QImage(image_data, image_data.shape[1], image_data.shape[0],
                         image_data.shape[1], QImage.Format_Grayscale8)
         pixmap = QPixmap.fromImage(qimage)
         # 直接更新现有pixmap，避免重置场景，其它层保持不变
         self.data_layer.setPixmap(pixmap)
+
+    def get_value(self,y,x):
+        value = self.current_image[y,x]
+        if self.data.is_temporary:
+            original_value = self.data.image_backup[self.current_time_idx][y, x]
+        else:
+            original_value = self.data.image_backup[y, x]
+        # 发射信号(需要主窗口连接此信号)
+        self.mouse_position_signal.emit(x, y, self.current_time_idx, value, original_value)
 
     def reset_view(self):
         """手动重置视图（缩放和平移）"""

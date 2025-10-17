@@ -24,7 +24,7 @@ class ResultDisplayWidget(QTabWidget):
         self.chinese_fonts = [f for f in self.font_list if
                          any(c in f.lower() for c in ['simhei', 'simsun', 'microsoft yahei', 'fang'])]
         self.plot_settings = {
-            'current_mode': 'heatmap',  # 'heatmap' 或 'curve'
+            'current_mode': 'heatmap',
             'line_style': '--',
             'line_width': 2,
             'marker_style': 's',
@@ -61,6 +61,7 @@ class ResultDisplayWidget(QTabWidget):
             'quality': 1, # 信号评估
             'series': 1, # EM信号
             'scs': 1,# 单通道信号
+            'pre-scs':1 # 单通道信号不定阈值
         }
 
     def _current_index(self, index):
@@ -208,6 +209,13 @@ class ResultDisplayWidget(QTabWidget):
                 raw_data['time'],
                 raw_data['series'],
                 reuse_current=True)
+
+        elif tab_type == 'scs' or tab_type == 'pre-scs':
+            self.single_channel(
+                raw_data['data'],
+                thr_known=raw_data['thr_known'],
+                reuse_current=True
+            )
 
 
     def display_distribution_map(self, data, reuse_current=False):
@@ -476,7 +484,7 @@ class ResultDisplayWidget(QTabWidget):
         logging.info("质量评估绘制完成")
 
         # self.current_dataframe = pd.DataFrame({"Zxx":Zxx}) 目前有问题
-        self.current_dataframe = None
+        self.current_dataframe = pd.DataFrame(10 * np.log10(np.abs(coefficients)**2 + 1e-12))
         self.store_tab_data(tab, self.current_mode, data = data)
 
     def plot_time_series(self,time, series,reuse_current=False):
@@ -503,12 +511,15 @@ class ResultDisplayWidget(QTabWidget):
         })
         self.store_tab_data(tab, self.current_mode, time = time, series = series)
 
-    def single_channel(self,data,reuse_current=False):
+    def single_channel(self,data,thr_known = True,reuse_current=False):
         """单通道信号"""
-        self.current_mode = "scs"
+        if thr_known:
+            self.current_mode = "scs"
+        else:
+            self.current_mode = "pre-scs"
         time_series = data.time_point
         signal = data.data_processed
-        figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'scs',reuse_current)
+        figure, canvas, index, title, tab = self.create_tab(self.current_mode, self.current_mode,reuse_current)
         show_grid = self.plot_settings['show_grid']
         line_style = self.plot_settings['line_style']
         line_width = self.plot_settings['line_width']
@@ -520,9 +531,8 @@ class ResultDisplayWidget(QTabWidget):
         ax.set_ylabel(r"$\Delta$A")
         ax.grid(show_grid)
         canvas.draw()
-
         self.current_dataframe = pd.DataFrame({
             'time_series': time_series,
             'signal': signal,
         })
-        self.store_tab_data(tab, self.current_mode, time_series = time_series, signal = signal)
+        self.store_tab_data(tab, self.current_mode, data = data,thr_known = thr_known)

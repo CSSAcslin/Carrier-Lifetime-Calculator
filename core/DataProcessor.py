@@ -744,7 +744,7 @@ class MassDataProcessor(QObject):
             self.processing_progress_signal.emit(0, total_pixels)
             # 初始化结果数组
             width, height = frame_size
-            cwt_py_out = np.zeros((self.coefficients.shape[1], height, width), dtype=np.float32)
+            cwt_py_out = np.zeros((data.timelength, height, width), dtype=np.float32)
 
             # 5. 逐像素STFT处理
             self.processing_progress_signal.emit(1, total_pixels)
@@ -753,7 +753,7 @@ class MassDataProcessor(QObject):
             # target_idx = np.argmin(np.abs(self.frequencies - target_freq))
             mid_idx = totalscales // 8
 
-            # 对每个像素执行STFT
+            # 对每个像素执行cwt
             for i in range(total_pixels):
                 if self.abortion:
                     return
@@ -771,7 +771,7 @@ class MassDataProcessor(QObject):
                 # 将结果存入对应像素位置
                 y = i // width
                 x = i % width
-                cwt_py_out[:, y, x] = magnitude_avg
+                cwt_py_out[:, y, x] = magnitude_avg * 30
 
                 # 每100个像素更新一次进度
                 self.processing_progress_signal.emit(i, total_pixels)
@@ -955,7 +955,7 @@ class MassDataProcessor(QObject):
         x, y = xy[:, 0], xy[:, 1]
         return A * np.exp(-((x - x0) ** 2 / (2 * sigmax ** 2) + (y - y0) ** 2 / (2 * sigmay ** 2))) + b
 
-    @pyqtSlot(DataManager.ProcessedData)
+    @pyqtSlot(DataManager.ProcessedData,int,float,bool)
     def twoD_gaussian_fit(self,data_3d:DataManager.ProcessedData,zm = 2,thr = 2.5,thr_known = False):
         """
         对三维时序数据逐帧进行二维高斯拟合
