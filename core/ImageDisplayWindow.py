@@ -1,4 +1,5 @@
 import logging
+from math import atan2, pi, cos, sin
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QWheelEvent, QTransform, QIcon, QPen, QBrush, QColor
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
@@ -6,7 +7,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QToolBar, QAction, QDockWidget, QStyle,
                              QGraphicsRectItem, QActionGroup, QGraphicsLineItem, QGraphicsEllipseItem
                              )
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize, QTimer, QDateTime
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize, QTimer, QDateTime, QLineF, QPointF
 from transient_data_processing.core.DataManager import ImagingData
 
 
@@ -19,7 +20,7 @@ class ImageDisplayWindow(QMainWindow):
         self.cursor_id = 0
         self.current_tool = None
         self.anchor_active = False
-        self.actions_all = []
+        self.actions_all = {}
 
         self.init_tool_bars()
 
@@ -50,12 +51,12 @@ class ImageDisplayWindow(QMainWindow):
             action = QAction(name, self)
             action.setStatusTip(tip)
             action.setToolTip(tip)
+            action.objectName()
             action.setCheckable(True)  # 允许选中状态
             action.triggered.connect(lambda checked: self.set_tools(name if checked else None))
-            action.triggered.connect(lambda checked, a=action: self.toggle_action(a))
             self.drawing_action_group.addAction(action)  # 添加到互斥组
             Drawing_bar.addAction(action)
-            self.actions_all.append(action)
+            self.actions_all[name] = action
             return action
 
         # 创建所有绘图工具
@@ -63,8 +64,6 @@ class ImageDisplayWindow(QMainWindow):
         draw_line = create_drawing_action('Line', "Draw the line")
         draw_rect = create_drawing_action('Rect', "Draw the rect")
         draw_ellipse = create_drawing_action('Ellipse', "Draw the ellipse")
-
-        Drawing_bar.addSeparator()
 
         draw_eraser = create_drawing_action('Eraser', "Draw the eraser")
         draw_fill = create_drawing_action('Fill', "Draw the fill")
@@ -79,10 +78,6 @@ class ImageDisplayWindow(QMainWindow):
         # draw_pen.setChecked(True)
 
         self.addToolBar(Drawing_bar)
-
-    def toggle_action(self,action):
-        # 反转当前选中状态
-        action.setChecked(not action.isChecked())
 
     def set_cursor_id(self,cursor_id):
         self.cursor_id = cursor_id
@@ -187,15 +182,22 @@ class ImageDisplayWindow(QMainWindow):
         self.current_tool = tool_name
         if tool_name == 'Anchor':
             self.anchor_active = not self.anchor_active
-            if self.anchor_active:
-                # 激活时清除所有画板的十字标
-                for canvas in self.display_canvas:
-                    canvas.clear_anchor()
+            action = self.actions_all.get('Anchor')
+            action.setChecked(self.anchor_active)
+            for canvas in self.display_canvas:
+                canvas.set_anchor_mode(self.anchor_active)
+        else:
+            self.anchor_active = False
+
 
     def cursor(self):
         self.display_canvas[self.cursor_id].set_drawing_tool(None)
-        for action in self.actions:
+        for action in self.actions_all:
             action.setChecked(False)
+            self.anchor_active = False
+            # 清除所有画板的十字标
+            for canvas in self.display_canvas:
+                canvas.set_anchor_mode(self.anchor_active)
 
 
 class SubImageDisplayWidget(QDockWidget):
@@ -217,7 +219,7 @@ class SubImageDisplayWidget(QDockWidget):
         self.initial_scale = None
         self.min_scale = 0.1
         self.max_scale = 30.0
-
+        self.draw_roi = None # ROI结果（像素）
         self.data_layer = None # 数据层
         self.draw_layer = None # 绘图层
         self.top_pixmap = None # 顶层绘图层的pixmap
@@ -229,10 +231,16 @@ class SubImageDisplayWidget(QDockWidget):
         self.start_pos = None
         self.end_pos = None
         self.temp_item = None # 临时画布
+        self.temp_pixmap = None # 临时像素画布
         self.v_rect_roi = None # 矢量矩形蒙版结果（左上角坐标（x,y), 宽度, 高度）
         self.anchor_active = False
         self.anchor_item = None  # 存储十字标图形项
         self.anchor_pos = None  # 存储十字标位置
+        # 绘图设置
+        self.pen_size = 1
+        self.pen_color = Qt.black
+        self.fill_color = Qt.black
+        self.angle_step = pi / 4  # 45度约束
         # 播放相关
         self.play_timer = QTimer(self)
         self.play_timer.timeout.connect(self.auto_play_update)
@@ -318,13 +326,24 @@ class SubImageDisplayWidget(QDockWidget):
         self.end_pos = None
 
         # 清除前序画板
-        if tool == "V-rect":
+        if tool in ["V-rect",'V-line',"Anchor"]:
             self.clear_draw_layer()
-        elif tool == "Anchor":
-            self.clear_draw_layer()
+            self.clear_anchor()
         if self.temp_item:
             self.scene.removeItem(self.temp_item)
             self.temp_item = None
+
+    def set_pen_color(self, color):
+        """设置画笔颜色"""
+        self.pen_color = color
+
+    def set_fill_color(self, color):
+        """设置填充颜色"""
+        self.fill_color = color
+
+    def set_pen_size(self, size):
+        """设置画笔大小"""
+        self.pen_size = size
 
     def set_anchor_mode(self, active):
         """设置 anchor 模式"""
@@ -341,10 +360,12 @@ class SubImageDisplayWidget(QDockWidget):
             self.anchor_pos = None
 
     def clear_draw_layer(self):
-        """清除之前绘制的矢量矩形"""
+        """清除绘制层"""
         if hasattr(self, 'top_pixmap'):
             self.top_pixmap.fill(Qt.transparent)
             self.draw_layer.setPixmap(self.top_pixmap)
+            self.temp_item = None
+            self.temp_pixmap = None
 
     def wheel_event(self, event: QWheelEvent):
         """滚轮缩放实现"""
@@ -391,8 +412,7 @@ class SubImageDisplayWidget(QDockWidget):
             self.graphics_view.setCursor(Qt.ClosedHandCursor)
         elif event.button() == Qt.LeftButton:
             # 左键点击：发射坐标信号
-            if self.drawing_tool == 'V-rect':
-                self.clear_draw_layer()
+            if self.drawing_tool in ['V-rect','V-line', 'Rect', 'Ellipse', 'Line', 'Pen', 'Eraser','Fill']:
                 self.drawing = True
                 self.start_pos = self.graphics_view.mapToScene(event.pos())
                 self.end_pos = self.start_pos
@@ -400,10 +420,27 @@ class SubImageDisplayWidget(QDockWidget):
                 # 创建临时绘图项
                 if self.temp_item:
                     self.scene.removeItem(self.temp_item)
-                rect = QRectF(self.start_pos, self.end_pos)
-                self.temp_item = QGraphicsRectItem(rect)
-                self.temp_item.setPen(QPen(Qt.yellow, 0.2, Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
-                self.scene.addItem(self.temp_item)
+
+                if self.drawing_tool == 'V-rect':
+                    self.clear_draw_layer()
+                    rect = QRectF(self.start_pos, self.end_pos)
+                    self.temp_item = QGraphicsRectItem(rect)
+                    self.temp_item.setPen(QPen(Qt.yellow, 0.2, Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
+                    self.scene.addItem(self.temp_item)
+
+                elif self.drawing_tool == 'V-line':
+                    self.clear_draw_layer()
+                    pass
+
+                elif self.drawing_tool == 'Fill':
+                    # 填充工具
+                    pos = self.graphics_view.mapToScene(event.pos())
+                    self.fill_at_point(pos.toPoint())
+                    self.drawing = False
+                    return
+                if self.temp_item:
+                    self.scene.addItem(self.temp_item)
+
             elif self.drawing_tool == 'Anchor' and self.anchor_active:
                 # 光标模式
                 pos = self.graphics_view.mapToScene(event.pos())
@@ -440,7 +477,7 @@ class SubImageDisplayWidget(QDockWidget):
 
                     return
 
-            else:
+            else: # 无工具选中的纯单机模式
                 pos = self.graphics_view.mapToScene(event.pos())
                 x, y = int(pos.x()), int(pos.y())
                 h, w = self.current_image.shape
@@ -468,8 +505,8 @@ class SubImageDisplayWidget(QDockWidget):
         if self.anchor_active:
             return
         # 获取鼠标在图像上的坐标
-        pos = self.graphics_view.mapToScene(event.pos())
-        self.x_img, self.y_img = int(pos.x()), int(pos.y())
+        move_pos = self.graphics_view.mapToScene(event.pos())
+        self.x_img, self.y_img = int(move_pos.x()), int(move_pos.y())
 
         # 检查坐标是否在图像范围内
         h, w = self.current_image.shape
@@ -479,10 +516,28 @@ class SubImageDisplayWidget(QDockWidget):
             self.current_canvas_signal.emit(self.id)
 
         # 绘图模式
-        if self.drawing and self.drawing_tool == 'V-rect' and self.temp_item:
+        if self.drawing and self.drawing_tool not in ['V-Line', 'Anchor']:
             self.end_pos = self.graphics_view.mapToScene(event.pos())
-            rect = QRectF(self.start_pos, self.end_pos).normalized()
-            self.temp_item.setRect(rect)
+            shift_pressed = QApplication.keyboardModifiers() == Qt.ShiftModifier
+            if self.drawing_tool == 'V-rect':
+                rect = QRectF(self.start_pos, self.end_pos).normalized()
+                if shift_pressed:  # 强制正方形
+                    size = min(rect.width(), rect.height())
+                    if self.end_pos.x() >= self.start_pos.x() and self.end_pos.y() >= self.start_pos.y():
+                        rect = QRectF(self.start_pos, self.start_pos + QPointF(size, size))
+                    else:
+                        rect = QRectF(self.start_pos, self.start_pos - QPointF(size, size))
+                self.temp_item.setRect(rect)
+
+            elif self.drawing_tool in ['Pen', 'Eraser', 'Line', 'Rect','Ellipse']:
+                temp_pixmap = QPixmap(self.top_pixmap)
+                self.temp_pixmap = self._draw_on_pixmap(temp_pixmap, self.start_pos.toPoint(), move_pos.toPoint())
+                self.draw_layer.setPixmap(temp_pixmap)
+
+                if self.drawing_tool in ["Pen", "Eraser"]:
+                    self.top_pixmap = temp_pixmap
+                    self.start_pos = move_pos
+
         super().mouseMoveEvent(event)
 
     def mouse_release_event(self, event):
@@ -494,48 +549,158 @@ class SubImageDisplayWidget(QDockWidget):
         elif event.button() == Qt.LeftButton and self.drawing:
             # 完成绘图
             self.drawing = False
-            end_pos = self.graphics_view.mapToScene(event.pos())
-            x2,y2=int(end_pos.x()), int(end_pos.y())
-            if self.drawing_tool == 'V-rect' and self.temp_item:
-                # 获取矩形坐标
-                # rect = self.temp_item.rect()
-                x1 = int(self.start_pos.x())
-                y1 = int(self.start_pos.y())
-                width = abs(x2-x1)
-                height = abs(y2-y1)
+            if self.drawing_tool in ['V-rect', 'V-line','Anchor'] and self.temp_item:
+                # 获取最终位置
+                end_pos = self.graphics_view.mapToScene(event.pos())
+                x2, y2 = int(end_pos.x()), int(end_pos.y())
+                if self.drawing_tool in ['V-rect']:
+                    # 获取矩形坐标
+                    x1 = int(self.start_pos.x())
+                    y1 = int(self.start_pos.y())
+                    width = abs(x2-x1)
+                    height = abs(y2-y1)
 
-                x = x1 if x1 <= x2 else x2
-                y = y1 if y1 <= y2 else y2
+                    x = x1 if x1 <= x2 else x2
+                    y = y1 if y1 <= y2 else y2
 
-                # 确保坐标在图像范围内
-                h, w = self.current_image.shape
-                x = max(0, min(x, w - 1))
-                y = max(0, min(y, h - 1))
-                width = min(width, w - x-1)
-                height = min(height, h - y-1)
+                    # 确保坐标在图像范围内
+                    h, w = self.current_image.shape
+                    x = max(0, min(x, w - 1))
+                    y = max(0, min(y, h - 1))
+                    width = min(width, w - x-1)
+                    height = min(height, h - y-1)
 
-                # 创建ROI信息
-                self.v_rect_roi = ((x, y), width+1, height+1)
-                self.draw_result_signal.emit('v_rect',self.id,self.v_rect_roi)
+                    # 创建ROI信息
+                    self.v_rect_roi = ((x, y), width+1, height+1)
+                    self.draw_result_signal.emit('v_rect',self.id,self.v_rect_roi)
 
-                # 移除临时绘图项
-                # self.vector_rect_item = QGraphicsRectItem(QRectF(x1, y1, width, height))
-                # self.vector_rect_item.setPen(QPen(Qt.yellow, 1,Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
-                # self.vector_rect_item.setBrush(QBrush(QColor(255,255, 0, 128)))
-                # self.scene.addItem(self.vector_rect_item)
+                    self.scene.removeItem(self.temp_item)
+                    self.temp_item = None
 
-                self.scene.removeItem(self.temp_item)
-                self.temp_item = None
-
-                if hasattr(self, 'top_pixmap'):
                     painter = QPainter(self.top_pixmap)
                     painter.setPen(QPen(Qt.yellow, 1,Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
                     painter.setBrush(QBrush(QColor(255,255, 0, 128)))
                     painter.drawRect(x, y, width, height)
                     painter.end()
                     self.draw_layer.setPixmap(self.top_pixmap)
+                else:
+                    return
+            else:
+                self.top_pixmap = self.temp_pixmap
+                self.draw_layer.setPixmap(self.top_pixmap)
+                self.update_top_layer_array() # 仅在绘制像素时储存
+
+                # 移除临时绘图项
+            self.scene.removeItem(self.temp_item)
+            self.temp_item = None
 
         super(QGraphicsView, self.graphics_view).mouseReleaseEvent(event)
+
+    def _draw_on_pixmap(self, pixmap, from_point, to_point):
+        """在绘图层上绘制（用于Pen和Eraser）"""
+        painter = QPainter(pixmap)
+        painter.setPen(QPen(self.pen_color, self.pen_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        # 检测 Shift 按键
+        shift_pressed = QApplication.keyboardModifiers() == Qt.ShiftModifier
+
+        if self.drawing_tool == 'Pen':
+            painter.drawLine(from_point, to_point)
+        elif self.drawing_tool == 'Eraser':
+            painter.setCompositionMode(QPainter.CompositionMode_Clear)
+            painter.setPen(QPen(Qt.transparent, self.pen_size))
+            painter.drawLine(from_point, to_point)
+
+        elif self.drawing_tool == "Line":
+            if shift_pressed:
+                # --- 角度约束逻辑（45°倍数）---
+                dx = to_point.x() - from_point.x()
+                dy = to_point.y() - from_point.y()
+                length = (dx ** 2 + dy ** 2) ** 0.5  # 直线长度
+
+                if length > 0:
+                    angle = atan2(dy, dx)  # 原始角度（弧度）
+                    constrained_angle = round(angle / self.angle_step) * self.angle_step  # 锁定到最近的45°倍数
+
+                    # 修正终点坐标
+                    to_point = QPointF(
+                        from_point.x() + length * cos(constrained_angle),
+                        from_point.y() + length * sin(constrained_angle)
+                    ).toPoint()
+            painter.drawLine(from_point, to_point)
+
+        elif self.drawing_tool == "Rect":
+            rect = QRectF(from_point, to_point).normalized()
+            if shift_pressed:  # 强制正方形
+                size = min(rect.width(), rect.height())
+                if to_point.x() >= from_point.x() and to_point.y() >= from_point.y():
+                    rect = QRectF(from_point, from_point + QPointF(size, size))
+                else:
+                    rect = QRectF(from_point, from_point - QPointF(size, size))
+            painter.drawRect(rect)
+
+        elif self.drawing_tool == "Ellipse":
+            rect = QRectF(from_point, to_point).normalized()
+            if shift_pressed:  # 强制圆形
+                size = min(rect.width(), rect.height())
+                if to_point.x() >= from_point.x() and to_point.y() >= from_point.y():
+                    rect = QRectF(from_point, from_point + QPointF(size, size))
+                else:
+                    rect = QRectF(from_point, from_point - QPointF(size, size))
+            painter.drawEllipse(rect)
+
+        painter.end()
+        return pixmap
+
+    def fill_at_point(self, point):
+        """在指定点进行填充"""
+        # 创建临时图像
+        image = self.top_pixmap.toImage()
+
+        # 获取点击位置的颜色
+        target_color = image.pixelColor(point)
+
+        # 如果颜色已经是填充色，则不操作
+        if target_color == self.fill_color:
+            return
+
+        # 执行填充算法
+        self.flood_fill(image, point.x(), point.y(), target_color, self.fill_color)
+
+        # 更新pixmap
+        self.top_pixmap = QPixmap.fromImage(image)
+        self.draw_layer.setPixmap(self.top_pixmap)
+        # 将pixmap储存
+        self.update_top_layer_array()
+
+    @staticmethod
+    def flood_fill(image, x, y, target_color, fill_color):
+        """洪水填充算法实现"""
+        # 使用非递归方式实现，避免堆栈溢出
+        pixels = [(x, y)]
+        width = image.width()
+        height = image.height()
+
+        while pixels:
+            x, y = pixels.pop()
+
+            # 边界检查
+            if x < 0 or x >= width or y < 0 or y >= height:
+                continue
+
+            current_color = image.pixelColor(x, y)
+
+            # 检查是否需要填充
+            if current_color != target_color:
+                continue
+
+            # 设置填充颜色
+            image.setPixelColor(x, y, fill_color)
+
+            # 添加相邻像素
+            pixels.append((x + 1, y))
+            pixels.append((x - 1, y))
+            pixels.append((x, y + 1))
+            pixels.append((x, y - 1))
 
     def closeEvent(self, event):
         """重写关闭事件"""
@@ -676,6 +841,21 @@ class SubImageDisplayWidget(QDockWidget):
             original_value = self.data.image_backup[y, x]
         # 发射信号(需要主窗口连接此信号)
         self.mouse_position_signal.emit(x, y, self.current_time_idx, value, original_value)
+
+    def update_top_layer_array(self):
+        """将顶部图层QPixmap转换为二维数组"""
+        image = self.top_pixmap.toImage()
+        height, width = self.draw_roi.shape
+
+        for y in range(height):
+            for x in range(width):
+                if x < image.width() and y < image.height():
+                    color = image.pixelColor(x, y)
+                    # 按照透明度设置蒙版
+                    if color.alpha() == 0:  # 完全透明
+                        self.draw_roi[y, x] = 0
+                    else:
+                        self.draw_roi[y, x] = color.alpha() / 255
 
     def reset_view(self):
         """手动重置视图（缩放和平移）"""
