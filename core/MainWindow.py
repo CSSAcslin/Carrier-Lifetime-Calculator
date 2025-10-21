@@ -2273,8 +2273,8 @@ QToolBar QToolButton {
     background-color: transparent;
     border: 1px solid transparent;
     border-radius: 3px;
-    padding: 3px;
-    min-width: 20px;
+    padding: 0px;
+    min-width: 24px;
 }
 
 QToolBar QToolButton:hover {

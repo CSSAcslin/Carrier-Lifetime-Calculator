@@ -855,7 +855,6 @@ class SCSComputePop(QDialog):
         thr_known = self.thr_known_check.isChecked()
         self.thr_input.setEnabled(thr_known)
 
-
 # EM时频变换数据导出
 class MassDataSavingPop(QDialog):
     def __init__(self, parent=None, datatypes=None):
@@ -1196,3 +1195,93 @@ class CustomHelpDialog(QDialog):
             FencedCodeExtension()
         ]
         return markdown.markdown(md_content, extensions=extensions)
+
+# 画布及roi查看和选择
+class ROIInfoDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("图像与ROI信息")
+        self.setMinimumSize(800, 600)
+
+        self.main_window = parent
+        self.init_ui()
+        self.load_data()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # 创建表格
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["画布ID", "图像名称", "图像尺寸", "ROI类型", "ROI详情"])
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.doubleClicked.connect(self.handle_row_double_click)
+
+        layout.addWidget(self.table)
+
+        # 添加按钮
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+        self.setLayout(layout)
+
+    def load_data(self):
+        """加载所有画布的信息到表格"""
+        canvas_info = self.main_window.get_all_canvas_info()
+        self.table.setRowCount(0)
+
+        for info in canvas_info:
+            # 添加画布基本信息行
+            row_position = self.table.rowCount()
+            self.table.insertRow(row_position)
+            self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
+            self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
+            self.table.setItem(row_position, 2, QTableWidgetItem(f"{info['image_size'][1]}×{info['image_size'][0]}"))
+            self.table.setItem(row_position, 3, QTableWidgetItem("画布"))
+            self.table.setItem(row_position, 4, QTableWidgetItem(""))
+
+            # 添加ROI信息行
+            for roi in info['ROIs']:
+                row_position = self.table.rowCount()
+                self.table.insertRow(row_position)
+                self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
+                self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
+                self.table.setItem(row_position, 2, QTableWidgetItem(""))
+
+                # ROI类型
+                self.table.setItem(row_position, 3, QTableWidgetItem(roi['type']))
+
+                # ROI详情
+                details = ""
+                if roi['type'] == 'vector_rect':
+                    x, y = roi['position']
+                    w, h = roi['size']
+                    details = f"位置: ({x}, {y}), 尺寸: {w}×{h}"
+                elif roi['type'] == 'vector_line':
+                    x1, y1 = roi['start']
+                    x2, y2 = roi['end']
+                    details = f"起点: ({x1}, {y1}), 终点: ({x2}, {y2}), 宽度: {roi['width']}"
+                elif roi['type'] == 'anchor':
+                    x, y = roi['position']
+                    details = f"位置: ({x}, {y})"
+                elif roi['type'] == 'pixel_roi':
+                    h, w = roi['size']
+                    details = f"尺寸: {w}×{h} 像素"
+
+                self.table.setItem(row_position, 4, QTableWidgetItem(details))
+
+        # 调整列宽
+        self.table.resizeColumnsToContents()
+
+    def handle_row_double_click(self, index):
+        """双击行时选择对应的画布"""
+        row = index.row()
+        canvas_id_item = self.table.item(row, 0)
+        if canvas_id_item:
+            canvas_id = int(canvas_id_item.text())
+            self.main_window.set_cursor_id(canvas_id)
+            self.accept()
