@@ -3,6 +3,21 @@
     <file alias="icons/red_light.png">resources/red_light.png</file>
     <file alias="icons/green_light.png">resources/green_light.png</file>
     <file alias="icons/yellow_light.png">resources/yellow_light.png</file>
+    <file alias="icons/icon_add.svg">resources/icon_add.svg</file>
+    <file alias="icons/icon_anchor.svg">resources/icon_anchor.svg</file>
+    <file alias="icons/icon_color.svg">resources/icon_color.svg</file>
+    <file alias="icons/icon_cursor.svg">resources/icon_cursor.svg</file>
+    <file alias="icons/icon_del.svg">resources/icon_del.svg</file>
+    <file alias="icons/icon_ellipse.svg">resources/icon_ellipse.svg</file>
+    <file alias="icons/icon_fill.svg">resources/icon_fill.svg</file>
+    <file alias="icons/icon_line.svg">resources/icon_line.svg</file>
+    <file alias="icons/icon_pen.svg">resources/icon_pen.svg</file>
+    <file alias="icons/icon_rect.svg">resources/icon_rect.svg</file>
+    <file alias="icons/icon_eraser.svg">resources/icon_eraser.svg</file>
+    <file alias="icons/icon_v-line.svg">resources/icon_v-line.svg</file>
+    <file alias="icons/icon_v-rect.svg">resources/icon_v-rect.svg</file>
+    <file alias="icons/icon_accept.svg">resources/icon_accept.svg</file>
+    <file alias="icons/icon_reset.svg">resources/icon_reset.svg</file>
     <file>LifeCalor.ico</file>
 </qresource>
 </RCC>
