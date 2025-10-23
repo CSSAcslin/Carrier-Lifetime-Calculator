@@ -2,7 +2,8 @@ import logging
 from math import atan2, pi, cos, sin
 
 import numpy as np
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QWheelEvent, QTransform, QIcon, QPen, QBrush, QColor, QPainterPath
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QWheelEvent, QTransform, QIcon, QPen, QBrush, QColor, QPainterPath, \
+    QLinearGradient
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
@@ -12,30 +13,26 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QDialog, QMessageBox
                              )
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize, QTimer, QDateTime, QLineF, QPointF, QPoint
-from transient_data_processing.core.DataManager import ImagingData
-from transient_data_processing.core.ExtraDialog import ROIInfoDialog
+import matplotlib.cm as cm
+from matplotlib.colors import LinearSegmentedColormap
+
+from DataManager import ImagingData
+from ExtraDialog import ROIInfoDialog, ColorMapDialog
 
 
 class ImageDisplayWindow(QMainWindow):
     """图像显示管理"""
     add_canvas_signal = pyqtSignal()
-    # draw_result_signal = pyqtSignal(str, int, object)
-    def __init__(self, parent=None):
+    draw_result_signal = pyqtSignal(str, int, object)
+    params_update_signal = pyqtSignal(dict)
+    def __init__(self, params,parent=None):
         super().__init__(parent)
         self.display_canvas = []
         self.cursor_id = 0
         self.current_tool = None
         self.anchor_active = False
         self.actions_all = {}
-        self.tool_parameters = {
-            'pen_size': 2,
-            'pen_color': QColor(Qt.black),
-            'fill_color': QColor(Qt.black),
-            'vector_color': QColor(Qt.yellow),
-            'angle_step':pi/4,
-            'fill': False, # 未实装
-            'vector_width':2,
-        }
+        self.tool_parameters = params
 
         self.init_tool_bars()
 
@@ -72,14 +69,13 @@ class ImageDisplayWindow(QMainWindow):
 
         self.create_drawing_action(self.Drawing_bar,'Eraser', "Draw the eraser",'橡皮擦')
         self.create_drawing_action(self.Drawing_bar,'Fill', "Draw the fill",'填充')
-        self.create_drawing_action(self.Drawing_bar,'Color', "Set the color",'样式')
 
-        self.Drawing_bar.addSeparator()
         self.create_drawing_action(self.Drawing_bar,'Anchor', "Anchor",'光标')
         self.create_drawing_action(self.Drawing_bar,'V-line', "Draw the vector line",'向量选区')
         self.create_drawing_action(self.Drawing_bar,'V-rect', "Draw the vector rect",'矩形选区')
 
         self.Drawing_bar.addSeparator()
+        self.create_drawing_action(self.Drawing_bar,'Color', "Set the Style",'样式') # 原本色彩设置现改为样式设置
         self.create_drawing_action(self.Drawing_bar, 'Accept', "Accept Roi and check canvas", '确认')
         self.create_drawing_action(self.Drawing_bar, 'Reset', "Reset all", '重置')
 
@@ -108,9 +104,11 @@ class ImageDisplayWindow(QMainWindow):
         action = QAction(QIcon(icon_dict[name]), name, self)
         action.setStatusTip(statustip)
         action.setToolTip(tooltip)
-        if name not in ['Accept', 'Reset']:
+        if name not in ['Color','Accept', 'Reset']:
             action.triggered.connect(lambda checked: self.set_tools(name if checked else None))
             action.setCheckable(True)
+        elif name == 'Color':
+            action.triggered.connect(lambda checked: self.set_color_style())
         elif name == 'Accept':
             action.triggered.connect(lambda checked: self.show_roi_info_dialog())
         elif name == 'Reset':
@@ -200,6 +198,7 @@ class ImageDisplayWindow(QMainWindow):
 
         if dialog.exec_() == QDialog.Accepted:
             self.tool_parameters['pen_size'] = dialog.get_value()
+            self.params_update_signal.emit(self.tool_parameters)
 
     def set_vector_width(self):
         """设置工具宽度"""
@@ -213,6 +212,7 @@ class ImageDisplayWindow(QMainWindow):
 
         if dialog.exec_() == QDialog.Accepted:
             self.tool_parameters['vector_width'] = dialog.get_value()
+            self.params_update_signal.emit(self.tool_parameters)
 
     def set_pen_color(self):
         """选择画笔颜色"""
@@ -223,10 +223,12 @@ class ImageDisplayWindow(QMainWindow):
         )
         if color.isValid():
             self.tool_parameters['pen_color'] = color
+            self.params_update_signal.emit(self.tool_parameters)
 
     def toggle_fill_shape(self):
         """切换形状填充状态(这个就还没实装）"""
         self.tool_parameters['fill'] = not self.tool_parameters['fill']
+        self.params_update_signal.emit(self.tool_parameters)
 
     def set_fill_color(self):
         """选择画笔颜色"""
@@ -237,6 +239,29 @@ class ImageDisplayWindow(QMainWindow):
         )
         if color.isValid():
             self.tool_parameters['fill_color'] = color
+            self.params_update_signal.emit(self.tool_parameters)
+
+    def set_color_style(self):
+        """这是设置伪彩色的"""
+        info = []
+        for canvas in self.display_canvas:
+            info.append(f'{canvas.id}-{canvas.windowTitle()}')
+
+        dialog = ColorMapDialog(self,ColorMapManager().get_colormap_names(),info,params = self.tool_parameters)
+        if dialog.exec_() == QDialog.Accepted:
+            self.tool_parameters.update(dialog.get_value())
+            self.params_update_signal.emit(self.tool_parameters)
+            canvas = dialog.canvas_index
+            if canvas == -1:
+                if not self.display_canvas:
+                    return None
+                for canvas in self.display_canvas:
+                    canvas.set_toolset(self.tool_parameters)
+            else:
+                if not self.display_canvas:
+                    return None
+                self.display_canvas[canvas].set_toolset(self.tool_parameters)
+        pass
 
     def set_cursor_id(self,cursor_id):
         self.cursor_id = cursor_id
@@ -440,12 +465,21 @@ class ImageDisplayWindow(QMainWindow):
             return
 
         dialog = ROIInfoDialog(self)
-        dialog.exec_()
+        if dialog.exec_():
+            if dialog.roi_type == 'pixel_roi':
+                self.draw_result_signal.emit('pixel_roi',self.cursor_id,self.get_draw_roi(self.cursor_id))
+            elif dialog.roi_type == 'vector_line':
+                self.draw_result_signal.emit('v_line', self.cursor_id, self.display_canvas[self.cursor_id].vector_line)
+            elif dialog.roi_type == 'vector_rect':
+                pass
+            else:
+                pass
+            logging.info("ROI已确认选取")
 
 
 class SubImageDisplayWidget(QDockWidget):
     """子图像显示部件"""
-    mouse_position_signal = pyqtSignal(int, int, int, float,float)
+    mouse_position_signal = pyqtSignal(int, int, int, object,float)
     mouse_clicked_signal = pyqtSignal(int, int)
     current_canvas_signal = pyqtSignal(int)
     draw_result_signal = pyqtSignal(str,int,object)
@@ -454,6 +488,7 @@ class SubImageDisplayWidget(QDockWidget):
 
         self.id = canvas_id
         self.data = data
+        self.current_image = None
         self.mouse_pos = None
         self.current_time_idx = 0
         self.max_time_idx = self.data.totalframes if self.data.is_temporary else 0
@@ -467,6 +502,12 @@ class SubImageDisplayWidget(QDockWidget):
         self.draw_layer = None # 绘图层
         self.top_pixmap = None # 顶层绘图层的pixmap
         self.draw_layer_opacity = 0.8 # 绘图层透明度
+
+        # 伪彩色控制（参数设置与toolset合并）
+        self.colorbar_item = None  # 颜色条图形项
+        self.colorbar_width = 20  # 颜色条宽度
+        self.colorbar_padding = 10  # 颜色条边距
+        self.color_map_manager = ColorMapManager()  # 伪彩色管理器
 
         # 工具响应
         self.drawing_tool = None
@@ -491,6 +532,11 @@ class SubImageDisplayWidget(QDockWidget):
             'angle_step':pi/4,
             'fill': False,
             'vector_width':2,
+            'colormap': 'Jet',
+            'use_colormap': False,
+            'auto_boundary_set': True,
+            'min_value': None,
+            'max_value': None,
         }
         self.set_toolset(self.args_dict)
 
@@ -588,13 +634,28 @@ class SubImageDisplayWidget(QDockWidget):
                 self.clear_vector_line()
 
     def set_toolset(self,args_dict:dict):
-        """初始化参数"""
+        """初始化和更新参数"""
         self.pen_size = args_dict["pen_size"]
         self.pen_color = args_dict["pen_color"]
         self.fill_color = args_dict["fill_color"]
         self.vector_color = args_dict["vector_color"]
         self.angle_step = args_dict["angle_step"]
         self.vector_width = args_dict["vector_width"]
+        self.colormap = args_dict["colormap"]  # 默认伪彩色方案
+        self.use_colormap = args_dict["use_colormap"]  # 是否使用伪彩色
+        self.min_value = args_dict["min_value"]  # 伪彩色最小值
+        self.max_value = args_dict["max_value"]  # 伪彩色最大值
+        if args_dict["auto_boundary_set"]:
+            self.auto_colormap_range()
+        if self.use_colormap and hasattr(self,'graphics_view'):
+            self.data.c
+            self.update_time_slice(self.current_time_idx)
+
+    def auto_colormap_range(self):
+        """自动设置伪彩色范围"""
+        if self.data is not None:
+            self.min_value = self.data.imagemin
+            self.max_value = self.data.imagemax
 
     def set_anchor_mode(self, active):
         """设置 anchor 模式"""
@@ -774,7 +835,7 @@ class SubImageDisplayWidget(QDockWidget):
         self.x_img, self.y_img = int(move_pos.x()), int(move_pos.y())
 
         # 检查坐标是否在图像范围内
-        h, w = self.current_image.shape
+        h, w = self.current_image.shape[0],self.current_image.shape[1]
         if 0 <= self.x_img < w and 0 <= self.y_img < h:
             self.mouse_pos = (self.x_img, self.y_img)
             if not self.anchor_active:
@@ -980,7 +1041,7 @@ class SubImageDisplayWidget(QDockWidget):
             self.parent().remove_canvas(self.canvas_id)
         super().closeEvent(event)
 
-    """下面是播放和帧更新的设置"""
+    """下面是播放和图像更新的设置"""
     def start_auto_play(self):
         if self.max_time_idx <= 1:
             return False # 没有足够的帧进行播放
@@ -1050,19 +1111,25 @@ class SubImageDisplayWidget(QDockWidget):
             self.update_display_idx(self.data.image_ROI[idx])
         if not self.data.ROI_applied:
             self.update_display_idx(self.data.image_data[idx])
+        if self.use_colormap:
+            self.update_display_idx(self.data.image_backup[idx])
 
     def display_image(self):
-        """显示图像数据 (使用QPixmap)并记录当前时间索引"""
-        # 清除现有内容
+        """显示图像数据 (使用QPixmap)并记录当前时间索引
+        ROI_applied 暂时放弃"""
 
-        if self.data.is_temporary and self.data.ROI_applied:
+        if not self.use_colormap and self.data.is_temporary and self.data.ROI_applied:
             image_data = self.data.image_ROI[0]
-        elif self.data.is_temporary and not self.data.ROI_applied:
+        elif not self.use_colormap and self.data.is_temporary and not self.data.ROI_applied:
             image_data = self.data.image_data[0]
-        elif not self.data.is_temporary and self.data.ROI_applied:
+        elif not self.use_colormap and not self.data.is_temporary and self.data.ROI_applied:
             image_data = self.data.image_ROI
-        elif not self.data.is_temporary and not self.data.ROI_applied:
+        elif not self.use_colormap and not self.data.is_temporary and not self.data.ROI_applied:
             image_data = self.data.image_data
+        elif self.use_colormap and self.data.is_temporary and not self.data.ROI_applied:
+            image_data = self.data.image_backup[0]
+        elif self.use_colormap and not self.data.is_temporary and not self.data.ROI_applied:
+            image_data = self.data.image_backup
         else:
             raise ValueError('nodata(impossible Fault)')
 
@@ -1070,8 +1137,23 @@ class SubImageDisplayWidget(QDockWidget):
         self.scene.clear()
         self.current_time_idx = 0
         # 创建QImage并转换为QPixmap
-        qimage = QImage(image_data, image_data.shape[1], image_data.shape[0],
-                        image_data.shape[1], QImage.Format_Grayscale8)
+        if self.use_colormap:
+            # 应用伪彩色映射
+            image_data = self.color_map_manager.apply_colormap(
+                image_data,
+                self.colormap,
+                self.min_value,
+                self.max_value
+            )
+
+            # 创建QImage
+            height, width, _ = image_data.shape
+            qimage = QImage(image_data.data, width, height,
+                            image_data.strides[0], QImage.Format_RGBA8888)
+        else:
+            height, width = image_data.shape
+            qimage = QImage(image_data, image_data.shape[1], image_data.shape[0],
+                            image_data.shape[1], QImage.Format_Grayscale8)
         pixmap = QPixmap.fromImage(qimage)
         # 显示图像
         self.current_image = image_data
@@ -1082,7 +1164,6 @@ class SubImageDisplayWidget(QDockWidget):
         self.initial_scale = self.graphics_view.transform().m11()
         self.map_view = True
         # 绘制层
-        height, width = image_data.shape
         self.top_pixmap = QPixmap(width, height)
         self.top_pixmap.fill(Qt.transparent)
         self.draw_layer = self.scene.addPixmap(self.top_pixmap)
@@ -1093,17 +1174,76 @@ class SubImageDisplayWidget(QDockWidget):
         """仅更新图像数据，不改变视图状态"""
         self.current_image = image_data
 
-        # 归一化到0-255
         if self.anchor_pos:
             x, y = self.anchor_pos
             # 获取并发射图像数据
             self.get_value(y,x)
+        if self.use_colormap:
+            # 应用伪彩色映射
+            image_data = self.color_map_manager.apply_colormap(
+                image_data,
+                self.colormap,
+                self.min_value,
+                self.max_value
+            )
 
-        qimage = QImage(image_data, image_data.shape[1], image_data.shape[0],
-                        image_data.shape[1], QImage.Format_Grayscale8)
+            # 创建QImage
+            height, width, _ = image_data.shape
+            qimage = QImage(image_data.data, width, height,
+                            image_data.strides[0], QImage.Format_RGBA8888)
+        else:
+            qimage = QImage(image_data, image_data.shape[1], image_data.shape[0],
+                            image_data.shape[1], QImage.Format_Grayscale8)
         pixmap = QPixmap.fromImage(qimage)
         # 直接更新现有pixmap，避免重置场景，其它层保持不变
         self.data_layer.setPixmap(pixmap)
+
+    def add_colorbar(self):
+        """添加颜色条到场景"""
+        # 移除现有的颜色条
+        if self.colorbar_item:
+            self.scene.removeItem(self.colorbar_item)
+            self.colorbar_item = None
+
+        if not self.use_colormap:
+            return
+
+        # 创建颜色条
+        height = self.base_layer.pixmap().height() if self.base_layer.pixmap() else 256
+        width = self.colorbar_width
+
+        # 创建渐变
+        gradient = QLinearGradient(0, 0, 0, height)
+
+        # 获取colormap
+        cmap = self.color_map_manager.matplotlib_cmaps.get(self.colormap, cm.jet)
+
+        # 添加颜色停止点
+        for i in range(256):
+            pos = i / 255.0
+            r, g, b, _ = cmap(pos)
+            gradient.setColorAt(1.0 - pos, QColor(int(r * 255), int(g * 255), int(b * 255)))
+
+        # 创建颜色条图形项
+        self.colorbar_item = self.scene.addRect(
+            self.colorbar_padding,
+            self.colorbar_padding,
+            width,
+            height,
+            brush=QBrush(gradient)
+        )
+
+        # 添加文本标签
+        if self.min_value is not None and self.max_value is not None:
+            # 最小值标签
+            min_label = self.scene.addText(f"{self.min_value:.2f}")
+            min_label.setPos(self.colorbar_padding + width + 5, self.colorbar_padding + height)
+            min_label.setDefaultTextColor(Qt.white)
+
+            # 最大值标签
+            max_label = self.scene.addText(f"{self.max_value:.2f}")
+            max_label.setPos(self.colorbar_padding + width + 5, self.colorbar_padding)
+            max_label.setDefaultTextColor(Qt.white)
 
     def get_value(self,y,x):
         value = self.current_image[y,x]
@@ -1310,4 +1450,140 @@ class WidthSliderDialog(QDialog):
 
     def get_value(self):
         return self.slider.value()
+
+
+class ColorMapManager:
+    """伪彩色映射管理器"""
+
+    def __init__(self):
+        self.colormaps = {
+            "Jet": self.jet_colormap,
+            "Hot": self.hot_colormap,
+            # "Cool": self.cool_colormap,
+            # "Spring": self.spring_colormap,
+            # "Summer": self.summer_colormap,
+            # "Autumn": self.autumn_colormap,
+            # "Winter": self.winter_colormap,
+            # "Bone": self.bone_colormap,
+            # "Copper": self.copper_colormap,
+            # "Greys": self.greys_colormap,
+            # "Viridis": self.viridis_colormap,
+            # "Plasma": self.plasma_colormap,
+            # "Inferno": self.inferno_colormap,
+            # "Magma": self.magma_colormap,
+            # "Cividis": self.cividis_colormap,
+            # "Rainbow": self.rainbow_colormap,
+            # "Turbo": self.turbo_colormap
+        }
+
+        # 创建Matplotlib兼容的colormap
+        self.matplotlib_cmaps = {
+            "Jet": cm.jet,
+            "Hot": cm.hot,
+            "Cool": cm.cool,
+            "Spring": cm.spring,
+            "Summer": cm.summer,
+            "Autumn": cm.autumn,
+            "Winter": cm.winter,
+            "Bone": cm.bone,
+            "Copper": cm.copper,
+            "Greys": cm.gray,
+            "Viridis": cm.viridis,
+            "Plasma": cm.plasma,
+            "Inferno": cm.inferno,
+            "Magma": cm.magma,
+            "Cividis": cm.cividis,
+            "Rainbow": self.create_rainbow_cmap(),
+            "Turbo": cm.turbo
+        }
+
+    def get_colormap_names(self):
+        """获取所有可用的colormap名称"""
+        return list(self.matplotlib_cmaps.keys()) # 暂时用Matplotlib
+
+    def apply_colormap(self, image_data, colormap_name, min_val=None, max_val=None):
+        """应用伪彩色映射到图像数据"""
+        if colormap_name not in self.matplotlib_cmaps:
+            colormap_name = "Jet"  # 默认使用Jet
+
+        cmap = self.matplotlib_cmaps[colormap_name]
+
+        # 归一化数据
+        if min_val is None:
+            min_val = np.min(image_data)
+        if max_val is None:
+            max_val = np.max(image_data)
+
+        # 避免除以零
+        if min_val == max_val:
+            normalized = np.zeros_like(image_data)
+        else:
+            normalized = (image_data - min_val) / (max_val - min_val)
+            normalized = np.clip(normalized, 0, 1)
+
+        # 应用colormap
+        colored = (cmap(normalized) * 255).astype(np.uint8)
+        return colored
+
+    def create_rainbow_cmap(self):
+        """创建自定义彩虹colormap"""
+        cdict = {
+            'red': [(0.0, 1.0, 1.0),
+                    (0.15, 0.0, 0.0),
+                    (0.3, 0.0, 0.0),
+                    (0.45, 0.0, 0.0),
+                    (0.6, 1.0, 1.0),
+                    (0.75, 1.0, 1.0),
+                    (1.0, 1.0, 1.0)],
+            'green': [(0.0, 0.0, 0.0),
+                      (0.15, 0.0, 0.0),
+                      (0.3, 1.0, 1.0),
+                      (0.45, 1.0, 1.0),
+                      (0.6, 1.0, 1.0),
+                      (0.75, 0.0, 0.0),
+                      (1.0, 0.0, 0.0)],
+            'blue': [(0.0, 0.0, 0.0),
+                     (0.15, 1.0, 1.0),
+                     (0.3, 1.0, 1.0),
+                     (0.45, 0.0, 0.0),
+                     (0.6, 0.0, 0.0),
+                     (0.75, 0.0, 0.0),
+                     (1.0, 1.0, 1.0)]
+        }
+        return LinearSegmentedColormap('Rainbow', cdict)
+
+    # 以下是各种colormap的实现（保留作为参考）
+    def jet_colormap(self, value):
+        """Jet colormap实现"""
+        if value < 0.125:
+            r = 0
+            g = 0
+            b = 0.5 + 4 * value
+        elif value < 0.375:
+            r = 0
+            g = 4 * (value - 0.125)
+            b = 1
+        elif value < 0.625:
+            r = 4 * (value - 0.375)
+            g = 1
+            b = 1 - 4 * (value - 0.375)
+        elif value < 0.875:
+            r = 1
+            g = 1 - 4 * (value - 0.625)
+            b = 0
+        else:
+            r = max(1 - 4 * (value - 0.875), 0)
+            g = 0
+            b = 0
+        return (int(r * 255), int(g * 255), int(b * 255))
+
+    def hot_colormap(self, value):
+        """Hot colormap实现"""
+        r = min(3 * value, 1.0)
+        g = min(3 * value - 1, 1.0) if value > 1 / 3 else 0
+        b = min(3 * value - 2, 1.0) if value > 2 / 3 else 0
+        return (int(r * 255), int(g * 255), int(b * 255))
+
+    # 其他colormap实现类似，这里省略以节省空间...
+    # 实际使用中我们使用matplotlib的实现
 

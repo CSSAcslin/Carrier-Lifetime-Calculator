@@ -125,6 +125,18 @@ class MainWindow(QMainWindow):
             'scs_zoom': 2 , # 单通道选区放大倍数
             'thr_known' : False, # 是否已知阈值
         }
+        self.tool_params = {'pen_size': 2,
+            'pen_color': QColor(Qt.black),
+            'fill_color': QColor(Qt.black),
+            'vector_color': QColor(Qt.yellow),
+            'angle_step':pi/4,
+            'fill': False, # 未实装
+            'vector_width':2,
+            'colormap':'Jet',
+            'use_colormap':False,
+            'auto_boundary_set': True,
+            'min_value':None,
+            'max_value':None,}
 
     def init_ui(self):
         self.setWindowTitle("成像数据分析工具箱")
@@ -144,7 +156,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, self.param_dock) # 加到左侧
 
         # 右侧图像区域
-        self.image_display = ImageDisplayWindow(self)
+        self.image_display = ImageDisplayWindow(self.tool_params,self)
         image_widget = QWidget()
         image_layout = QVBoxLayout(image_widget)
 
@@ -842,10 +854,10 @@ class MainWindow(QMainWindow):
         self.diffusion_coefficient_btn.clicked.connect(self.result_display.plot_variance_evolution)
         self.export_image_btn.clicked.connect(self.export_image)
         self.export_data_btn.clicked.connect(self.export_data)
-        # 鼠标移动
-        # self.image_display.mouse_position_signal.connect(self._handle_hover)
-        # self.image_display.mouse_clicked_signal.connect(self._handle_click)
+        # 成像绘制信号
         self.image_display.add_canvas_signal.connect(self.add_new_canvas)
+        self.image_display.draw_result_signal.connect(self.draw_result)
+        self.image_display.params_update_signal.connect(lambda params : self.tool_params.update(params))
         # 时间滑块
         # self.time_slider.valueChanged.connect(self.image_display.update_time_slice)
         self.time_slider_vertical.valueChanged.connect(self.update_result_display)
@@ -1242,7 +1254,7 @@ class MainWindow(QMainWindow):
         self.update_status("准备就绪", 'idle')
 
     def roi_select_dialog(self):
-        """ROI选取功能"""
+        """ROI选取功能（即将抛弃）"""
         if self.data is None or self.processed_data is None:
             logging.warning("无数据，请先加载数据文件")
             return
@@ -1252,7 +1264,7 @@ class MainWindow(QMainWindow):
             if roi_dialog.action_type == "mask":
                 self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
                 logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
-                if self.fuction_select.currentIndex() == 3:
+                if self.fuction_select.currentIndex() == 2:
                     pass
                 else:
                     data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
@@ -1859,7 +1871,11 @@ class MainWindow(QMainWindow):
                                                 data_processed=roi_data,
                                                 out_processed=draw_data.out_processed,
                                                 ROI_applied=True)
-
+        elif draw_type == "v_line":
+            self.vector_array = result.getPixelValues(draw_data, self.space_unit, self.time_unit)
+        elif draw_type == "draw_roi":
+            draw_ROI = result[0]
+            self.bool_mask = result[1]
     '''其他功能'''
     def is_thread_active(self, thread_name: str) -> bool:
         """检查指定名称的线程是否存在且正在运行"""

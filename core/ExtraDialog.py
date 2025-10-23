@@ -1198,12 +1198,14 @@ class CustomHelpDialog(QDialog):
 
 # 画布及roi查看和选择
 class ROIInfoDialog(QDialog):
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("图像与ROI信息")
-        self.setMinimumSize(800, 600)
+        self.roi_type = None
+        self.setWindowTitle("图像与ROI信息（双击选择）")
+        self.setMinimumSize(600, 400)
 
-        self.main_window = parent
+        self.parent_window = parent
         self.init_ui()
         self.load_data()
 
@@ -1231,7 +1233,7 @@ class ROIInfoDialog(QDialog):
 
     def load_data(self):
         """加载所有画布的信息到表格"""
-        canvas_info = self.main_window.get_all_canvas_info()
+        canvas_info = self.parent_window.get_all_canvas_info()
         self.table.setRowCount(0)
 
         for info in canvas_info:
@@ -1241,7 +1243,7 @@ class ROIInfoDialog(QDialog):
             self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
             self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
             self.table.setItem(row_position, 2, QTableWidgetItem(f"{info['image_size'][1]}×{info['image_size'][0]}"))
-            self.table.setItem(row_position, 3, QTableWidgetItem("画布"))
+            self.table.setItem(row_position, 3, QTableWidgetItem("这是画布"))
             self.table.setItem(row_position, 4, QTableWidgetItem(""))
 
             # 添加ROI信息行
@@ -1256,7 +1258,6 @@ class ROIInfoDialog(QDialog):
                 self.table.setItem(row_position, 3, QTableWidgetItem(roi['type']))
 
                 # ROI详情
-                details = ""
                 if roi['type'] == 'vector_rect':
                     x, y = roi['position']
                     w, h = roi['size']
@@ -1268,20 +1269,136 @@ class ROIInfoDialog(QDialog):
                 elif roi['type'] == 'anchor':
                     x, y = roi['position']
                     details = f"位置: ({x}, {y})"
-                elif roi['type'] == 'pixel_roi':
+                elif roi['type'] == 'draw_roi':
                     h, w = roi['size']
                     details = f"尺寸: {w}×{h} 像素"
+                else:
+                    details = "没有ROI"
 
                 self.table.setItem(row_position, 4, QTableWidgetItem(details))
 
         # 调整列宽
         self.table.resizeColumnsToContents()
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
     def handle_row_double_click(self, index):
         """双击行时选择对应的画布"""
         row = index.row()
         canvas_id_item = self.table.item(row, 0)
+        self.roi_type = self.table.item(row, 3).text()
         if canvas_id_item:
             canvas_id = int(canvas_id_item.text())
-            self.main_window.set_cursor_id(canvas_id)
+            self.parent_window.set_cursor_id(canvas_id)
             self.accept()
+
+# 伪色彩管理弹窗
+class ColorMapDialog(QDialog):
+    def __init__(self, parent = None, colormap_list = None, canvas_info=None,params = None):
+        super().__init__(parent)
+        if canvas_info is None:
+            canvas_info = []
+        self.params = params
+        self.setWindowTitle("伪色彩管理器")
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(300)
+        self.colormap_list = colormap_list
+        self.canvas_info = canvas_info
+        self.canvas_index = -1
+        self.parent_window = parent
+        self.imagemin = params['min_value']
+        self.imagemax = params['max_value']
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        self.colormap_control_layout = QFormLayout()
+
+        # 伪彩色开关
+        self.colormap_toggle = QCheckBox()
+        self.colormap_toggle.stateChanged.connect(self._handle_colormap_toggle)
+
+        # 伪彩色方案选择
+        self.colormap_selector = QComboBox()
+        self.colormap_selector.addItems(self.colormap_list)
+        self.colormap_selector.setCurrentText(self.params['colormap'])
+
+        # 区域选择器
+        self.canvas_selector = QComboBox()
+        self.canvas_selector.addItems(["所有区域"])
+        if self.canvas_info:
+            for item in self.canvas_info:
+                self.canvas_selector.addItem(item)
+        self.canvas_selector.currentIndexChanged.connect(self._handle_canvas_change)
+
+        # 边界设置
+        self.boundary_set = QComboBox()
+        self.boundary_set.addItems(['自动设置','手动设置'])
+        self.boundary_set.currentIndexChanged.connect(self._handle_boundary_set)
+        if not self.params['auto_boundary_set']:
+            self.boundary_set.setCurrentIndex(1)
+
+        self.up_boundary_set = QDoubleSpinBox()
+        self.up_boundary_set.setRange(0,999999)
+        self.up_boundary_set.setDecimals(1)
+        self.low_boundary_set = QDoubleSpinBox()
+        self.low_boundary_set.setRange(0,999999)
+        self.low_boundary_set.setDecimals(1)
+
+        # 添加到布局
+        self.colormap_control_layout.addRow(QLabel("伪彩显示:"),self.colormap_toggle)
+        self.colormap_control_layout.addRow(QLabel("配色方案:"),self.colormap_selector)
+        self.colormap_control_layout.addRow(QLabel("应用区域:"),self.canvas_selector)
+        self.colormap_control_layout.addRow(QLabel("边界设置:"),self.boundary_set)
+        self.colormap_control_layout.addRow(QLabel("上界设置:"),self.up_boundary_set)
+        self.colormap_control_layout.addRow(QLabel('下界设置:'),self.low_boundary_set)
+
+        self.colormap_control_layout.setSpacing(10)
+
+        self.colormap_toggle.setChecked(self.params['use_colormap'])
+        self._handle_colormap_toggle()
+        self._handle_boundary_set()
+        layout.addLayout(self.colormap_control_layout)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+        self.setLayout(layout)
+
+    def _handle_colormap_toggle(self):
+        if self.colormap_toggle.isChecked():
+            self.colormap_selector.setEnabled(True)
+            self.canvas_selector.setEnabled(True)
+            self.boundary_set.setEnabled(True)
+        else:
+            self.colormap_selector.setEnabled(False)
+            self.canvas_selector.setEnabled(False)
+            self.boundary_set.setEnabled(False)
+
+    def _handle_boundary_set(self):
+        if self.boundary_set.currentIndex() == 0:
+            self.auto_boundary_set = True
+            self.up_boundary_set.setEnabled(False)
+            self.low_boundary_set.setEnabled(False)
+        else:
+            self.auto_boundary_set = False
+            self.up_boundary_set.setEnabled(True)
+            self.low_boundary_set.setEnabled(True)
+            self.up_boundary_set.setValue(self.imagemax)
+            self.low_boundary_set.setValue(self.imagemin)
+
+    def _handle_canvas_change(self):
+        if self.canvas_selector.currentIndex() >= 1:
+            self.imagemin = self.parent_window.display_canvas[self.canvas_selector.currentIndex()-1].data.imagemin
+            self.imagemax = self.parent_window.display_canvas[self.canvas_selector.currentIndex()-1].data.imagemax
+            self.canvas_index = self.canvas_selector.currentIndex() - 1
+        else:
+            self.canvas_index = -1
+
+    def get_value(self):
+        return {'colormap':self.colormap_selector.currentText(),
+            'use_colormap':self.auto_boundary_set,
+            'auto_boundary_set':self.auto_boundary_set,
+            'min_value':self.low_boundary_set.value() if self.auto_boundary_set else None,
+            'max_value':self.up_boundary_set.value() if self.auto_boundary_set else None,}

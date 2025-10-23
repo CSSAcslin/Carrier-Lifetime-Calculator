@@ -376,11 +376,11 @@ class ImagingData:
     timestamp_inherited 原始数据来源\n
     """
     timestamp_inherited: float
-    image_backup: np.ndarray = None
-    image_data: np.ndarray = None
+    image_backup: np.ndarray = None # 原始数据
+    image_data: np.ndarray = None # 归一，放宽，整数化后的数据
     image_ROI: np.ndarray = None
     image_type: str = None
-    colormode: str = None
+    colormode: str = None # 色彩模式，目前在sub类中实现
     canvas_num: int = field(default=0)
     is_temporary: bool = field(init=False ,default=False)
     timestamp : float = field(init=False, default_factory=time.time)
@@ -393,8 +393,8 @@ class ImagingData:
         self.framesize = (self.imageshape[1], self.imageshape[2]) if self.ndim == 3 else (self.imageshape[0], self.imageshape[1])
         # 不考虑数据点只有一个的情况
         self.is_temporary = True if self.ndim == 3 else False
-        self.imagemin = self.image_data.min()
-        self.imagemax = self.image_data.max()
+        self.imagemin = self.image_backup.min()
+        self.imagemax = self.image_backup.max()
         self.ROI_mask = None
         self.ROI_applied = False
 
@@ -462,9 +462,6 @@ class ImagingData:
 
     def to_uint8(self,data):
         """归一化和数字类型调整"""
-        # 如果已经是uint8类型且值在0-255范围内，直接返回
-        # if data.dtype == np.uint8 and data.min() >= 0 and 1 <= data.max() <= 255:
-        #     return data
 
         # 计算数组的最小值和最大值
         min_val = np.min(data)
@@ -472,20 +469,6 @@ class ImagingData:
 
         if self.source_format == "ROI_stft" or self.source_format == "ROI_cwt":
             return ((data - np.min(data))/(np.max(data)- np.min(data))*255).astype(np.uint8)
-
-        # 处理常数数组的特殊情况
-        # if min_val == max_val:
-        #     # 根据常数值映射到0/128/255
-        #     if min_val <= 0:
-        #         return np.zeros_like(data, dtype=np.uint8)
-        #     elif min_val >= 255:
-        #         return np.full_like(data, 255, dtype=np.uint8)
-        #     else:
-        #         return np.full_like(data, round(min_val), dtype=np.uint8)
-        #
-        # # 如果已经是整数类型且在0-255范围内，直接转换
-        # if np.issubdtype(data.dtype, np.integer) and min_val >= 0 and max_val <= 255:
-        #     return data.astype(np.uint8)
 
         # 通用线性变换公式
         # 使用64位浮点保证精度，避免中间步骤溢出
