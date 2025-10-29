@@ -86,7 +86,6 @@ class ResultDisplayWidget(QTabWidget):
                 self.tab_type_changed.emit(self.current_mode)
                 return
 
-
     def store_tab_data(self, tab, tab_type, **kwargs):
         """存储选项卡数据"""
         self.tab_data[id(tab)] = {
@@ -94,7 +93,6 @@ class ResultDisplayWidget(QTabWidget):
             'raw_data': kwargs,
             'dataframe': self.current_dataframe.copy() if self.current_dataframe is not None else None
         }
-
 
     def close_tab(self, index):
         """关闭指定选项卡"""
@@ -180,6 +178,7 @@ class ResultDisplayWidget(QTabWidget):
         elif tab_type == 'curve':
             self.display_lifetime_curve(
                 raw_data['data'],
+                raw_data['time_unit'],
                 reuse_current=True
             )
         elif tab_type == 'roi':
@@ -217,7 +216,6 @@ class ResultDisplayWidget(QTabWidget):
                 reuse_current=True
             )
 
-
     def display_distribution_map(self, data, reuse_current=False):
         """显示寿命热图"""
         self.current_mode = "heatmap"
@@ -240,7 +238,7 @@ class ResultDisplayWidget(QTabWidget):
         self.current_dataframe = pd.DataFrame(lifetime_map)
         self.store_tab_data(tab, self.current_mode, lifetime_map=lifetime_map)
 
-    def display_lifetime_curve(self,data,reuse_current=False):
+    def display_lifetime_curve(self,data,time_unit="ps",reuse_current=False):
         """显示区域分析结果"""
         # 使用原来的结果显示区域
         self.current_mode = "curve"
@@ -306,7 +304,7 @@ class ResultDisplayWidget(QTabWidget):
                     ha='left', va='top',
                     bbox=dict(facecolor='white', alpha=0.8))
 
-        ax.set_xlabel('时间/ps')
+        ax.set_xlabel(f'时间/{time_unit}')
         ax.set_ylabel('信号强度')
         ax.set_title('载流子寿命曲线')
         ax.legend()
@@ -319,7 +317,7 @@ class ResultDisplayWidget(QTabWidget):
                                 'fit_time': pd.Series(fit_time),
                                 'fit_curve':pd.Series(fit_curve)
                             })
-        self.store_tab_data(tab, self.current_mode, data = data)
+        self.store_tab_data(tab, self.current_mode, data = data,time_unit=time_unit)
 
     def display_roi_series(self, positions, intensities, fig_title="", reuse_current=False):
         """绘制向量ROI信号强度曲线"""
@@ -465,7 +463,7 @@ class ResultDisplayWidget(QTabWidget):
         t = data.out_processed['time_series']
         coefficients = data.data_processed
         target_freq = data.out_processed['target_freq']
-        freq_range = [target_freq - 1, target_freq + 1]
+        freq_range = data.out_processed['scale_range']
 
         self.current_mode = "quality"
         figure, canvas, index, title, tab = self.create_tab(self.current_mode, 'EM')
@@ -479,7 +477,11 @@ class ResultDisplayWidget(QTabWidget):
         figure.colorbar(spec, label='功率 [dB/Hz]')
         # 标记目标频率
         ax.axhline(y=target_freq, color='r', linestyle='--', alpha=0.7)
+        ymin = target_freq - freq_range / 2
+        ymax = target_freq + freq_range / 2
+        ax.axhspan(ymin, ymax, color='red', alpha=0.2)
         ax.set_title(f'信号质量评估 (目标频率: {target_freq} Hz)')
+
         canvas.draw()
         logging.info("质量评估绘制完成")
 

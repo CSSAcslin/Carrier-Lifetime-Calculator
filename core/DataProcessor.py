@@ -84,7 +84,7 @@ class DataProcessor:
             phy_min = min_all
         return process_show, data_type, max_mean, phy_max, phy_min
 
-    def process_tiff(self, files):
+    def process_tiff(self, files,name):
         '''初步数据处理'''
         images_original = []
         vmax_array = []
@@ -110,7 +110,8 @@ class DataProcessor:
                                     'vmax_array':vmax_array,
                                     'vmin_array':vmin_array,
                                     'data_type':data_type,
-                                })
+                                },
+                                name=name)
 
 
     def amend_data(self, data, mask = None):
@@ -234,7 +235,7 @@ class DataProcessor:
 
         return True
 
-    def process_sif(self):
+    def process_sif(self,name):
         if not hasattr(self,'sif_data_original'):
             return logging.error('无有效数据')
         if not hasattr(self,'sif_sorted_times'):
@@ -244,7 +245,8 @@ class DataProcessor:
         return DataManager.Data(np.stack(self.sif_data_original , axis=0),
                                 np.stack(self.sif_sorted_times,axis=0),
                                 'sif',
-                                np.stack(normalized, axis=0))
+                                np.stack(normalized, axis=0),
+                                name=name)
 
     @staticmethod
     def normalize_data(
@@ -326,7 +328,7 @@ class MassDataProcessor(QObject):
             - frame_size: 视频帧尺寸 (width, height)
             - duration: 视频时长(秒)
         """
-
+        file_name = os.path.basename(path)
         # 读取视频文件
         cap = cv2.VideoCapture(path)
         if not cap.isOpened():
@@ -374,7 +376,8 @@ class MassDataProcessor(QObject):
                                     normalized_frames,
                                     parameters={'fps': fps,
                                                 'frame_size': (width, height),
-                                                'duration': duration,})
+                                                'duration': duration,},
+                                    name=file_name)
 
         self.mass_finished.emit(avi_data)
 
@@ -383,6 +386,7 @@ class MassDataProcessor(QObject):
     def load_tiff(self,path):
         try:
             tiff_files = []
+            file_name = os.path.basename(path)
             for f in os.listdir(path):
                 if f.lower().endswith(('.tif', '.tiff')):
                     # 提取数字并排序
@@ -446,7 +450,8 @@ class MassDataProcessor(QObject):
                                          normalized_frames,
                                          parameters={
                                                     'frame_size': (width, height),
-                                                    'original_files': tiff_files})
+                                                    'original_files': tiff_files},
+                                         name = file_name)
             self.mass_finished.emit(tiff_data)
 
         except Exception as e:
@@ -463,6 +468,8 @@ class MassDataProcessor(QObject):
             # 1. 提取前n帧计算背景帧
             if data.datatype != np.float32:
                 data_origin = data.data_origin.astype(np.float32) # 注意这里开始原本Uint8 转为了F32
+            else:
+                data_origin = data.data_origin
             total_frames = data.timelength
 
             # 计算背景帧 (前n帧的平均)
@@ -512,8 +519,8 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type': "EM_pre_processed", 'error': str(e)})
             return False
 
-    @pyqtSlot(DataManager.ProcessedData,float,int,int,int,int,str)
-    def quality_stft(self,data,target_freq: float,fps:int, window_size: int, noverlap: int,
+    @pyqtSlot(DataManager.ProcessedData,float,int,int,int,int,int,str)
+    def quality_stft(self,data,target_freq: float,scale_range:int,fps:int, window_size: int, noverlap: int,
                     custom_nfft: int, window_type: str):
         """STFT质量分析"""
         if not data:
@@ -535,11 +542,15 @@ class MassDataProcessor(QObject):
                 return_onesided=True,
                 scaling='psd'
             )
-            # 发送平均信号STFT结果
-            # self.avg_stft_result.emit(f, t, np.abs(Zxx), target_freq)
-            # self.out_length = Zxx.shape[1]
-            # self.target_idx = np.argmin(np.abs(f - target_freq))
-            # self.time_series = t
+            # 提取范围内所有对应的索引
+            if scale_range > 0:
+                low_bound = max(0, target_freq - scale_range / 2.0)
+                high_bound = min(f[-1], target_freq + scale_range / 2.0)
+                target_idx = np.where((f >= low_bound) & (f <= high_bound))[0]
+                if len(target_idx) == 0:
+                    target_idx = [np.argmin(np.abs(f - target_freq))]
+            else:
+                target_idx = [np.argmin(np.abs(f - target_freq))]
             self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                                                  f'{data.name}@stft_q',
                                                                  'stft_quality',
@@ -549,7 +560,8 @@ class MassDataProcessor(QObject):
                                                                      'frequencies':f,
                                                                      'time_series':t,
                                                                      'target_freq':target_freq,
-                                                                     'target_idx':np.argmin(np.abs(f - target_freq)),
+                                                                     'scale_range':scale_range,
+                                                                     'target_idx':target_idx,
                                                                  })
                                        )
             return True
@@ -558,8 +570,8 @@ class MassDataProcessor(QObject):
             return False
 
 
-    @pyqtSlot(DataManager.ProcessedData,float,int,int,int,int,str)
-    def python_stft(self,data, target_freq: float,fps:int, window_size: int, noverlap: int,
+    @pyqtSlot(DataManager.ProcessedData,float,int,int,int,int,int,str)
+    def python_stft(self,data, target_freq: float,scale_range:int,fps:int, window_size: int, noverlap: int,
                     custom_nfft: int, window_type: str):
         """
         执行逐像素STFT分析
@@ -603,8 +615,6 @@ class MassDataProcessor(QObject):
             # 5. 逐像素STFT处理
             self.processing_progress_signal.emit(0, total_pixels)
 
-            # 找到目标频率最近的索引
-            # target_idx = np.argmin(np.abs(f - target_freq))
             # 对每个像素执行STFT
             for i in range(total_pixels):
                 if self.abortion:
@@ -624,9 +634,8 @@ class MassDataProcessor(QObject):
                     return_onesided=False,
                     scaling='psd'
                 )
-
                 # 提取目标频率处的幅度
-                magnitude = np.abs(Zxx[target_idx, :]) * 560
+                magnitude = np.mean(np.abs(Zxx[target_idx, :]), axis=0) * 560
 
                 # 将结果存入对应像素位置
                 y = i // width
@@ -635,9 +644,9 @@ class MassDataProcessor(QObject):
 
                 self.processing_progress_signal.emit(i, total_pixels)
 
-            with h5py.File('transfer_data.h5', 'w') as f:
-                # 创建数据集并写入数据
-                dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
+            # with h5py.File('transfer_data.h5', 'w') as f:
+            #     # 创建数据集并写入数据(for debug)
+            #     dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
 
             # 6. 发送完整结果
             self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
@@ -670,8 +679,8 @@ class MassDataProcessor(QObject):
         except Exception as e:
             logging.error(f'Window Fault:{e}')
 
-    @pyqtSlot(DataManager.ProcessedData,float,int,int,str)
-    def quality_cwt(self,data, target_freq: float, fps: int, totalscales: int, wavelet: str = 'morl'):
+    @pyqtSlot(DataManager.ProcessedData,float,int,int,int,str)
+    def quality_cwt(self,data, target_freq: float,scale_range:int, fps: int, totalscales: int, wavelet: str = 'morl'):
         """
         CWT(连续小波变换)分析信号评估
         参数:
@@ -694,7 +703,7 @@ class MassDataProcessor(QObject):
             # 计算参数
             total_frames = unfolded_data.shape[1]
             total_pixels = unfolded_data.shape[0]
-            width, height = frame_size
+            height, width = frame_size
             self.processing_progress_signal.emit(40, 100)
             # 计算平均信号的CWT (用于质量评估)
             mean_signal = np.mean(unfolded_data, axis=0)
@@ -709,6 +718,7 @@ class MassDataProcessor(QObject):
                                                                      'frequencies' : frequencies,
                                                                      'time_series' : np.arange(total_frames) / fps,
                                                                      'target_freq' : target_freq,
+                                                                     'scale_range' : scale_range,
                                                                  }))
             self.processing_progress_signal.emit(100, 100)
             return True
@@ -743,14 +753,12 @@ class MassDataProcessor(QObject):
             total_pixels = unfolded_data.shape[0]
             self.processing_progress_signal.emit(0, total_pixels)
             # 初始化结果数组
-            width, height = frame_size
+            height, width = frame_size
             cwt_py_out = np.zeros((data.timelength, height, width), dtype=np.float32)
 
             # 5. 逐像素STFT处理
             self.processing_progress_signal.emit(1, total_pixels)
 
-            # 找到目标频率最近的索引
-            # target_idx = np.argmin(np.abs(self.frequencies - target_freq))
             mid_idx = totalscales // 8
 
             # 对每个像素执行cwt

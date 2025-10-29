@@ -17,7 +17,9 @@
     <file alias="icons/icon_v-line.svg">resources/icon_v-line.svg</file>
     <file alias="icons/icon_v-rect.svg">resources/icon_v-rect.svg</file>
     <file alias="icons/icon_accept.svg">resources/icon_accept.svg</file>
+    <file alias="icons/icon_cancel.svg">resources/icon_cancel.svg</file>
     <file alias="icons/icon_reset.svg">resources/icon_reset.svg</file>
+    <file alias="icons/icon_export.svg">resources/icon_export.svg</file>
     <file>LifeCalor.ico</file>
 </qresource>
 </RCC>

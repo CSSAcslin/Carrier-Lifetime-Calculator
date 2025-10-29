@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; }
+        h1 { color: #2e7d32; 
+            border-bottom: 2px solid #4caf50; }
+        h2 { color: #388e3c; }
+        h3 { color: black; }
+        .code-block { 
+            background-color: #e8f5e9; 
+            border: 1px solid #c8e6c9;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        .param-table th {
+            background-color: #4caf50;
+            color: white;
+            text-align: left;
+            padding: 8px;
+        }
+        .param-table td {
+            border: 1px solid #c8e6c9;
+            padding: 8px;
+        }
+        .param-table tr:nth-child(even) {
+            background-color: #f1f8e9;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .math-block {
+            font-size: large;
+            background-color: #f9fbe7;
+            border: 1px solid #dcedc8;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+    </style>
+    <title>stft_help</title>
+</head>
+<body>
+    <h1>CWT(连续小波变换)分析</h1>
+
+<h2>1. 功能概述</h2>
+<p>CWT(Continuous Wavelet Transform)是一种时频分析方法，通过不同尺度的小波函数分析信号的局部特征。相比STFT，CWT在时频分辨率上具有更好的灵活性。</p>
+
+<h2>2. 算法原理</h2>
+<p>CWT通过将信号与小波基函数进行卷积变换：</p>
+<p class="math-block">C(a, b) = 1/√a ∫<sub>-∞</sub><sup>∞</sup> x(t) ψ*((t-b)/a) dt</p>
+<p>其中：</p>
+<ul>
+    <li>a：尺度参数（与频率相关）</li>
+    <li>b：平移参数（与时间相关）</li>
+    <li>ψ(t)：小波基函数</li>
+</ul>
+
+<h2>3. 参数说明</h2>
+<table class="param-table">
+    <tr>
+        <th>参数</th>
+        <th>类型</th>
+        <th>说明</th>
+    </tr>
+    <tr>
+        <td>wavelet</td>
+        <td>str</td>
+        <td>小波基函数类型（如'morl', 'cmor'等）</td>
+    </tr>
+    <tr>
+        <td>scales</td>
+        <td>array</td>
+        <td>尺度参数数组</td>
+    </tr>
+    <tr>
+        <td>sampling_period</td>
+        <td>float</td>
+        <td>采样间隔时间</td>
+    </tr>
+    <tr>
+        <td>freq_range</td>
+        <td>tuple</td>
+        <td>目标频率范围(min, max)</td>
+    </tr>
+</table>
+
+<h2>4. 小波基函数</h2>
+<ul>
+    <li><b>Morlet小波</b>：适用于频率分析</li>
+    <li><b>Mexican Hat小波</b>：适用于信号奇点检测</li>
+    <li><b>Complex Morlet小波</b>：提供相位信息</li>
+</ul>
+    <p><i>附：程序使用<a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.stft.html#scipy.signal.stft">
+        scipy.signal.stft</a>方法进行运算</i></p>
+</body>
+</html>

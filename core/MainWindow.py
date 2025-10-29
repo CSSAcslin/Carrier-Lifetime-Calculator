@@ -35,9 +35,9 @@ class MainWindow(QMainWindow):
     load_avi_EM_signal = pyqtSignal(str)
     load_tif_EM_signal = pyqtSignal(str)
     pre_process_signal = pyqtSignal(Data,int,bool)
-    stft_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, int, str)
-    stft_python_signal = pyqtSignal(ProcessedData,float, int, int, int, int, str)
-    cwt_quality_signal = pyqtSignal(ProcessedData,float, int, int, str)
+    stft_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, int, int, str)
+    stft_python_signal = pyqtSignal(ProcessedData,float, int, int, int, int, int, str)
+    cwt_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, str)
     cwt_python_signal = pyqtSignal(ProcessedData,float, int, int, str, float)
     mass_export_signal = pyqtSignal(np.ndarray,str,str,str)
     atam_signal = pyqtSignal(ProcessedData)
@@ -56,8 +56,6 @@ class MainWindow(QMainWindow):
         self.bool_mask = None
         self.idx = None
         self.vector_array = None
-
-        # 参数初始化
         self.init_params()
 
         # 界面加载
@@ -66,6 +64,7 @@ class MainWindow(QMainWindow):
         self.setup_menus()
         self.setup_logging()
         self.log_startup_message()
+        self.help_dialog = None
 
         # 进度条与计时器
         self.elapsed_timer = QElapsedTimer()
@@ -78,6 +77,9 @@ class MainWindow(QMainWindow):
         self._is_calculating = False
         # 信号连接
         self.signal_connect()
+        # 线程开启
+        self.data_thread_open()
+        self.data_thread.start() # 本线程默认不关闭
 
     def init_params(self):
         """初始化参数库"""
@@ -115,8 +117,7 @@ class MainWindow(QMainWindow):
             'stft_window_size': 128,  # 加窗大小
             'stft_noverlap': 120,  # 重叠点数
             'stft_window_type': 'hann',
-            'stft_total_scales': 10,  # 频率分辨率
-            'stft_scale_range': 5,  # 取频率范围（以target frequency为中心）
+            'stft_scale_range': 1,  # 取频率范围（以target frequency为中心）
             'custom_nfft': 360,  # 变换长度，默认为调制频率
             'cwt_type': 'morl',
             'cwt_total_scales': 256,  # 频率处理点数
@@ -490,16 +491,16 @@ class MainWindow(QMainWindow):
         self.bg_nums_input.setValue(self.main_params['bg_nums'])
         preprocess_set_layout.addWidget(self.bg_nums_input)
         self.preprocess_data_btn = QPushButton("数据预处理")
-        preprocess_set_layout2 = QHBoxLayout()
-        preprocess_set_layout2.addWidget(QLabel("是否显示结果："))
-        self.show_stft_check = QCheckBox()
-        self.show_stft_check.setChecked(False)
-        preprocess_set_layout2.addWidget(self.show_stft_check,alignment=Qt.AlignRight)
+        # preprocess_set_layout2 = QHBoxLayout()
+        # preprocess_set_layout2.addWidget(QLabel("是否显示结果："))
+        # self.show_stft_check = QCheckBox()
+        # self.show_stft_check.setChecked(False)
+        # preprocess_set_layout2.addWidget(self.show_stft_check,alignment=Qt.AlignRight)
         EM_iSCAT_layout1.addLayout(preprocess_set_layout)
         EM_iSCAT_layout1.addWidget(self.preprocess_data_btn)
         EM_iSCAT_layout1.addSpacing(4)
-        EM_iSCAT_layout1.addLayout(preprocess_set_layout2)
-        EM_iSCAT_layout1.addSpacing(4)
+        # EM_iSCAT_layout1.addLayout(preprocess_set_layout2)
+        # EM_iSCAT_layout1.addSpacing(4)
         process_set_layout = QHBoxLayout()
         self.EM_mode_combo = QComboBox()
         self.EM_mode_combo.addItems(["stft短时傅里叶","cwt连续小波变换"])
@@ -654,6 +655,15 @@ class MainWindow(QMainWindow):
         # 数据处理历史查看
         process_history_view = data_menu.addAction('历史处理查看')
         process_history_view.triggered.connect(self.process_history_view)
+
+        # 指南帮助
+        help_menu = self.menu.addMenu('使用指南')
+        all_help = help_menu.addAction('全部指南')
+        all_help.triggered.connect(lambda: self.help_show('程序使用指南大全'))
+        fs_help = help_menu.addAction('超快成像')
+        fs_help.triggered.connect(lambda: self.help_show('超快成像分析帮助',["general","lifetime"]))
+        EM_help = help_menu.addAction('电化学调制iSCAT')
+        EM_help.triggered.connect(lambda: self.help_show('电化学调制分析帮助',["general","stft","cwt"]))
 
 
     @staticmethod
@@ -810,6 +820,20 @@ class MainWindow(QMainWindow):
         logging.info(startup_msg.strip())
         logging.info("程序已进入准备状态，等待用户操作...（第一次计算可能较慢）")
 
+    def help_show(self,title,topics :list = None):
+        self.help_dialog = CustomHelpDialog(title, topics=topics, parent=self)
+        self.help_dialog.show()
+
+    def data_thread_open(self):
+        """数据线程"""
+        self.data_thread = QThread()
+        self.dat_thread = DataManager()
+        self.dat_thread.moveToThread(self.data_thread)
+        # 信号连接
+        self.image_display.image_style_change_signal.connect(self.dat_thread.to_colormap)
+        self.image_display.image_export_signal.connect(self.dat_thread.export_data)
+        self.dat_thread.data_progress_signal.connect(self.update_progress)
+
     def cal_thread_open(self):
         """计算线程相关 以及信号槽连接都放在这里了"""
         self.calc_thread = QThread()
@@ -824,6 +848,30 @@ class MainWindow(QMainWindow):
         self.cal_thread.stop_thread_signal.connect(self.stop_thread)
         self.cal_thread.cal_running_status.connect(self.btn_safety)
         self.cal_thread.update_status.connect(self.update_status)
+
+    def EM_thread_open(self):
+        """加载EM文件的线程开启"""
+        # 初始化数据处理线程
+
+        self.avi_thread = QThread()
+        self.mass_data_processor = MassDataProcessor()
+        self.mass_data_processor.moveToThread(self.avi_thread)
+
+        self.mass_data_processor.mass_finished.connect(self.loaded_EM)
+        self.mass_data_processor.processing_progress_signal.connect(self.update_progress)
+        self.mass_data_processor.processed_result.connect(self.processed_result)
+        self.load_avi_EM_signal.connect(self.mass_data_processor.load_avi)
+        self.load_tif_EM_signal.connect(self.mass_data_processor.load_tiff)
+        self.pre_process_signal.connect(self.mass_data_processor.pre_process)
+        self.stft_python_signal.connect(self.mass_data_processor.python_stft)
+        self.stft_quality_signal.connect(self.mass_data_processor.quality_stft)
+        self.cwt_quality_signal.connect(self.mass_data_processor.quality_cwt)
+        self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
+        self.mass_export_signal.connect(self.mass_data_processor.export_EM_data)
+        self.atam_signal.connect(self.mass_data_processor.accumulate_amplitude)
+        self.tDgf_signal.connect(self.mass_data_processor.twoD_gaussian_fit)
+
+        # self.avi_thread.start()
 
     def signal_connect(self):
         # 连接参数区域按钮
@@ -840,6 +888,7 @@ class MainWindow(QMainWindow):
         self.FS_mode_combo.currentIndexChanged.connect(self.FS_mode_stack.setCurrentIndex)
         # self.PA_mode_combo.currentIndexChanged.connect(self.PA_mode_stack.setCurrentIndex)
         self.EM_mode_combo.currentIndexChanged.connect(self.EM_mode_stack.setCurrentIndex)
+        self.after_process_select.currentIndexChanged.connect(self.after_process_stack.setCurrentIndex)
         self.preprocess_data_btn.clicked.connect(self.pre_process_EM)
         self.stft_process_btn.clicked.connect(self.process_EM_stft)
         self.stft_quality_btn.clicked.connect(self.quality_EM_stft)
@@ -893,6 +942,7 @@ class MainWindow(QMainWindow):
                 for data in self.data.history:
                     if data.timestamp == selected_timestamp:
                         data_display = ImagingData.create_image(data)
+                        data_display.colormode = self.tool_params['colormap'] if self.tool_params['use_colormap'] else None
                         logging.info("数据选择成功（原初）")
                         continue
             if self.processed_data is not None:
@@ -1033,6 +1083,7 @@ class MainWindow(QMainWindow):
         self.data_processor = DataProcessor(folder_path)
         if folder_path:
             logging.info(folder_path)
+            folder_name = os.path.basename(folder_path)
             self.update_status("已加载TIFF文件夹",'idle')
             current_group = self.group_selector.currentText()
 
@@ -1045,15 +1096,18 @@ class MainWindow(QMainWindow):
                 return
 
             # 读取所有图像
-            self.data = self.data_processor.process_tiff(tiff_files)
+            self.data = self.data_processor.process_tiff(tiff_files,folder_name)
 
             if not self.data or (self.data.format_import != 'tif' and self.data.format_import != 'tiff'):
                 self.update_status("无法读取TIFF文件",'warning')
                 return
 
-            logging.info('成功加载TIFF数据')
+            logging.info(f'成功加载TIFF数据({folder_name})')
             # 设置时间滑块
             self.load_image()
+        elif not folder_path:
+            self.update_status("文件夹选择已取消", 'idle')
+            return
 
     def load_sif_folder(self):
         '''加载SIF文件夹'''
@@ -1062,6 +1116,7 @@ class MainWindow(QMainWindow):
         if folder_path:
             logging.info(folder_path)
             self.update_status("已加载SIF文件夹",'idle')
+            folder_name = os.path.basename(folder_path)
 
             # 读取文件夹中的所有sif文件
             check_sif = self.data_processor.load_and_sort_sif()
@@ -1072,7 +1127,7 @@ class MainWindow(QMainWindow):
                 return
 
             # 读取所有图像
-            self.data = self.data_processor.process_sif()
+            self.data = self.data_processor.process_sif(folder_name)
 
             if not self.data or self.data.format_import != 'sif':
                 self.update_status("无法读取sif文件",'warning')
@@ -1081,31 +1136,9 @@ class MainWindow(QMainWindow):
             logging.info('成功加载SIF数据')
             # 设置时间滑块
             self.load_image()
-        pass
-
-    def EM_thread_open(self):
-        """加载EM文件的线程开启"""
-        # 初始化数据处理线程
-
-        self.avi_thread = QThread()
-        self.mass_data_processor = MassDataProcessor()
-        self.mass_data_processor.moveToThread(self.avi_thread)
-
-        self.mass_data_processor.mass_finished.connect(self.loaded_EM)
-        self.mass_data_processor.processing_progress_signal.connect(self.update_progress)
-        self.mass_data_processor.processed_result.connect(self.processed_result)
-        self.load_avi_EM_signal.connect(self.mass_data_processor.load_avi)
-        self.load_tif_EM_signal.connect(self.mass_data_processor.load_tiff)
-        self.pre_process_signal.connect(self.mass_data_processor.pre_process)
-        self.stft_python_signal.connect(self.mass_data_processor.python_stft)
-        self.stft_quality_signal.connect(self.mass_data_processor.quality_stft)
-        self.cwt_quality_signal.connect(self.mass_data_processor.quality_cwt)
-        self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
-        self.mass_export_signal.connect(self.mass_data_processor.export_EM_data)
-        self.atam_signal.connect(self.mass_data_processor.accumulate_amplitude)
-        self.tDgf_signal.connect(self.mass_data_processor.twoD_gaussian_fit)
-
-        # self.avi_thread.start()
+        elif not folder_path:
+            self.update_status("文件夹选择已取消", 'idle')
+            return
 
     def load_avi(self):
         """加载avi读取线程传递函数"""
@@ -1122,7 +1155,7 @@ class MainWindow(QMainWindow):
         )
 
         if not file_path:
-            # self.folder_path_label.setText("未选择文件")
+            self.update_status("文件夹选择已取消", 'idle')
             logging.info("用户取消选择")
             return
 
@@ -1185,7 +1218,7 @@ class MainWindow(QMainWindow):
 
             # 更新显示
             self.mouse_pos_label.setText(
-                f"光标位置: x={args['x']}, y={args['y']}, t={args['t']}; 归一值: {args['value']}, 原始值：{args['origin']:.3f}")
+                f"光标位置: x={args['x']}, y={args['y']}, t={args['t']}; 图像值: {args['value']}, 实际值：{args['origin']:.3f}")
 
         return _handle_hover
 
@@ -1566,13 +1599,14 @@ class MainWindow(QMainWindow):
             if dialog.exec_():
                 self.EM_params['target_freq'] = dialog.target_freq_input.value()
                 self.EM_fps = dialog.fps_input.value()
+                self.EM_params['stft_scale_range'] = dialog.scale_range_input.value()
                 self.EM_params['stft_window_size'] = dialog.window_size_input.value()
                 self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
                 self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
                 if not self.avi_thread.isRunning():
                     self.avi_thread.start()
                 self.stft_quality_signal.emit(data,
-                                              self.EM_params['target_freq'],self.EM_fps,
+                                              self.EM_params['target_freq'],self.EM_params['stft_scale_range'],self.EM_fps,
                                              self.EM_params['stft_window_size'],
                                              self.EM_params['stft_noverlap'],
                                              self.EM_params['custom_nfft'],
@@ -1607,7 +1641,7 @@ class MainWindow(QMainWindow):
             if not self.avi_thread.isRunning():
                 self.avi_thread.start()
             self.stft_python_signal.emit(data,
-                                         self.EM_params['target_freq'], self.EM_fps,
+                                         self.EM_params['target_freq'], self.EM_params['stft_scale_range'], self.EM_fps,
                                          self.EM_params['stft_window_size'],
                                          self.EM_params['stft_noverlap'],
                                          self.EM_params['custom_nfft'],
@@ -1635,11 +1669,13 @@ class MainWindow(QMainWindow):
                 self.EM_params['target_freq'] = dialog.target_freq_input.value()
                 self.EM_fps = dialog.fps_input.value()
                 self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
+                self.EM_params['cwt_scale_range'] = dialog.cwt_scale_range.value()
                 self.EM_params['cwt_type'] = dialog.wavelet.currentText()
                 if not self.avi_thread.isRunning():
                     self.avi_thread.start()
                 self.cwt_quality_signal.emit(data,
                                              self.EM_params['target_freq'],
+                                             int(self.EM_params['cwt_scale_range']),
                                              self.EM_fps,
                                              self.EM_params['cwt_total_scales'],
                                              self.EM_params['cwt_type'])
@@ -1690,6 +1726,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self,"bool_mask") or self.bool_mask is None:
             QMessageBox.warning(self,"警告","请先绘制ROI")
             return
+        if self.processed_data is None:
+            QMessageBox.warning(self,"警告","请先处理数据")
+            return
         if self.processed_data.type_processed == 'ROI_stft' or self.processed_data.type_processed == 'ROI_cwt':
             data = self.processed_data
         else:
@@ -1704,7 +1743,7 @@ class MainWindow(QMainWindow):
 
         mask = self.bool_mask
         if mask.dtype == bool:
-            EM_masked = np.where(mask[np.newaxis,:,:],self.processed_data.data_processed,0)
+            EM_masked = np.where(mask[np.newaxis,:,:],data.data_processed,0)
 
             total_valid_pixels = np.sum(mask)
             if total_valid_pixels == 0:
@@ -1716,13 +1755,19 @@ class MainWindow(QMainWindow):
             raise TypeError(f"不支持的蒙版类型: {mask.dtype}")
 
         # self.data['EM_masked'] = EM_masked
-        self.result_display.plot_time_series(self.processed_data.out_processed['time_series'] , average_series)
+        self.result_display.plot_time_series(data.time_point , average_series)
 
     def process_atam(self):
+        """累计时间振幅图"""
         if self.data and self.processed_data is None :
             logging.warning('请先导入数据')
             return
-        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
+        if self.processed_data is None:
+            self.atam_signal.emit(self.data)
+            self.atam_btn.setEnabled(False)
+            logging.info(f"累计时间振幅图，对意料之外的数据{self.data.name}进行处理")
+            return False
+        elif self.processed_data.type_processed == 'ROI_stft' or self.processed_data.type_processed =='ROI_cwt':
             data = self.processed_data
         else:
             data = next(
@@ -1734,7 +1779,9 @@ class MainWindow(QMainWindow):
             self.atam_btn.setEnabled(False)
             return True
         else:
-            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确")
+            self.atam_signal.emit(self.processed_data)
+            self.atam_btn.setEnabled(False)
+            logging.info(f"累计时间振幅图，对意料之外的数据{self.processed_data.name}进行处理")
             return False
 
     def process_tDgf(self):
@@ -1768,7 +1815,7 @@ class MainWindow(QMainWindow):
             self.update_status("准备就绪", 'idle')
             return
 
-    def processed_result(self, data:ProcessedData):
+    def processed_result(self, data):
         """处理过后的数据都来这里重整再分配"""
         if isinstance(data, ProcessedData):
             pass
@@ -1778,14 +1825,14 @@ class MainWindow(QMainWindow):
             self.stft_process_btn.setEnabled(True)
             self.cwt_process_btn.setEnabled(True)
             self.tDgf_btn.setEnabled(True)
-            QMessageBox.warning(self,"运算错误","data['error")
+            QMessageBox.warning(self,"运算错误",f"在{data['type']}处理中报错：\n{data['error']}")
             return False
         self.processed_data = data
         # 各处理后响应
         process_type = self.processed_data.type_processed
         match process_type:
             case "ROI_lifetime":
-                self.result_display.display_lifetime_curve(self.processed_data)
+                self.result_display.display_lifetime_curve(self.processed_data,self.time_unit_combo.currentText())
                 pass
             case 'lifetime_distribution':
                 self.result_display.display_distribution_map(self.processed_data)
@@ -1799,26 +1846,26 @@ class MainWindow(QMainWindow):
             case 'EM_pre_processed':
                 pass
             case 'stft_quality':
-                self.stft_quality_btn.setEnabled(True)
                 logging.info("请稍等，出图会有点慢")
+                self.stft_quality_btn.setEnabled(True)
                 self.result_display.quality_avg(self.processed_data)
             case 'cwt_quality':
-                self.cwt_quality_btn.setEnabled(True)
                 logging.info("请稍等，出图会有点慢")
+                self.cwt_quality_btn.setEnabled(True)
                 self.result_display.quality_avg(self.processed_data)
             case 'ROI_stft':
                 result = self.processed_data.data_processed
                 self.stft_process_btn.setEnabled(True)
-                if self.show_stft_check.isChecked():
-                    self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result)) # 要改
-                    self.load_image()
+                # if self.show_stft_check.isChecked():
+                #     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result)) # 要改
+                #     self.load_image()
                 pass
             case 'ROI_cwt':
                 result = self.processed_data.data_processed
                 self.cwt_process_btn.setEnabled(True)
-                if self.show_stft_check.isChecked():
-                    self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result))  # 要改
-                    self.load_image()
+                # if self.show_stft_check.isChecked():
+                #     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result))  # 要改
+                #     self.load_image()
                 pass
             case 'Accumulated_time_amplitude_map':
                 self.atam_btn.setEnabled(True)
@@ -1873,7 +1920,7 @@ class MainWindow(QMainWindow):
                                                 ROI_applied=True)
         elif draw_type == "v_line":
             self.vector_array = result.getPixelValues(draw_data, self.space_unit, self.time_unit)
-        elif draw_type == "draw_roi":
+        elif draw_type == "pixel_roi":
             draw_ROI = result[0]
             self.bool_mask = result[1]
     '''其他功能'''
@@ -2007,7 +2054,7 @@ class MainWindow(QMainWindow):
         """时频变换后目标频率下的结果导出"""
         if self.processed_data is not None:
             if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
-                dialog = MassDataSavingPop()
+                dialog = DataExportDialog()
                 if dialog.exec_():
                     directory = dialog.directory
                     prefix = dialog.text_edit.text().strip()
@@ -2112,81 +2159,6 @@ if __name__ == "__main__":
     app = QApplication([])
     QFontDatabase.addApplicationFont("C:/Windows/Fonts/NotoSansSC-VF.ttf")  # 如：思源黑体、阿里巴巴普惠体
     QFontDatabase.addApplicationFont("C:/Windows/Fonts/calibril.ttf")  # 如：Roboto、Fira Code
-    QSS = """
-    QWidget {
-        background-color: #0a192f;  /* 深蓝背景 */
-        color: #e6f1ff;             /* 浅蓝文字 */
-        font-family: "Fira Code", "Microsoft YaHei"; /* 优先使用科技感英文字体 */
-        font-size: 12px;
-        border: none;
-    }
-
-    /* 按钮样式 */
-    QPushButton {
-        background-color: #112240;   /* 深蓝按钮 */
-        border: 1px solid #64ffda;   /* 科技感青色边框 */
-        border-radius: 4px;          /* 圆角 */
-        padding: 8px 16px;
-        color: #64ffda;              /* 青色文字 */
-        font-weight: bold;
-    }
-    QPushButton:hover {
-        background-color: #0c2a4d;   /* 悬停加深 */
-        border-color: #00ffcc;       /* 悬停高亮 */
-    }
-    QPushButton:pressed {
-        background-color: #020c1b;   /* 按下效果 */
-    }
-
-    /* 输入框样式 */
-    QLineEdit, QTextEdit {
-        background-color: #0a192f;
-        border: 1px solid #233554;   /* 深蓝边框 */
-        border-radius: 3px;
-        padding: 6px;
-        color: #a8b2d1;              /* 灰蓝文字 */
-        selection-background-color: #64ffda; /* 选中文本背景 */
-    }
-    QLineEdit:focus, QTextEdit:focus {
-        border-color: #64ffda;       /* 聚焦高亮 */
-    }
-
-    /* 标签与标题 */
-    QLabel {
-        color: #ccd6f6;              /* 亮蓝文字 */
-        font-size: 14px;
-    }
-    QLabel#title {                   /* 通过 objectName 定制 */
-        font-size: 18px;
-        font-weight: bold;
-        color: #64ffda;
-    }
-
-    /* 复选框/单选框 */
-    QCheckBox, QRadioButton {
-        color: #ccd6f6;
-        spacing: 5px;                /* 图标与文字间距 */
-    }
-    QCheckBox::indicator, QRadioButton::indicator {
-        width: 16px;
-        height: 16px;
-        border: 1px solid #64ffda;
-        border-radius: 3px;
-    }
-    QCheckBox::indicator:checked, QRadioButton::indicator:checked {
-        background-color: #64ffda;   /* 选中状态 */
-    }
-
-    /* 进度条 */
-    QProgressBar {
-        border: 1px solid #233554;
-        border-radius: 3px;
-        text-align: center;
-    }
-    QProgressBar::chunk {
-        background-color: #64ffda;   /* 进度填充色 */
-    }
-    """
     QSS1 ="""
     /* ========== QMenuBar 样式 ========== */
 QMenuBar {
@@ -2410,54 +2382,112 @@ QComboBox QAbstractItemView::item {
 QComboBox QAbstractItemView::item:hover {
     background-color: #C8E6C9;
 }
-    QTableWidget {
-        gridline-color: #d0d0d0; /* 网格线颜色 */
-        background-color: white; /* 背景色 */
-    }
-    /* 表头样式 */
-    QHeaderView::section {
-        background-color: #e0e0e0;
-        padding: 4px;
-        border: 1px solid #c0c0c0;
-        font-weight: bold;
-    }
-    /* 单元格样式 */
-    QTableWidget::item {
-        padding: 3px;
-        border: none; /* 去除默认边框，使用网格线 */
-    }
-    /* 选中单元格的样式 */
-    QTableWidget::item:focus {
-        background-color: #C8E6C9; /* 获得焦点时的背景色 */
-        color: black;
-    }
-    /* 另一种设置选中行样式的方法（如果设置了SelectionBehavior为SelectRows） */
-    QTableWidget::item:selected {
-        background-color: #4CAF50; /* 选中项背景色 */
-        color: white;
-    }
-    /* 鼠标悬停在单元格上的样式 */
-    QTableWidget::item:hover {
-        background-color: #C8E6C9; /* 悬停颜色 */
-    }
-    QScrollArea {
-        border: none;
-        background-color: white;
-    }
-    QScrollBar:vertical {
-        width: 12px;
-        background: #f0f0f0;
-    }
-    QScrollBar::handle:vertical {
-        background: #C8E6C9;
-        min-height: 20px;
-    }
-    QScrollBar::handle:vertical:hover {
-        background: #A5D6A7;      /* 悬停时稍深 */
-    }
-    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-        height: 0px;
-    }
+/* ========== 表格 QTableWidget 样式 ========== */
+QTableWidget {
+    gridline-color: #d0d0d0; /* 网格线颜色 */
+    background-color: white; /* 背景色 */
+}
+/* 表头样式 */
+QHeaderView::section {
+    background-color: #e0e0e0;
+    padding: 4px;
+    border: 1px solid #c0c0c0;
+    font-weight: bold;
+}
+/* 单元格样式 */
+QTableWidget::item {
+    padding: 3px;
+    border: none; /* 去除默认边框，使用网格线 */
+}
+/* 选中单元格的样式 */
+QTableWidget::item:focus {
+    background-color: #C8E6C9; /* 获得焦点时的背景色 */
+    color: black;
+}
+/* 另一种设置选中行样式的方法（如果设置了SelectionBehavior为SelectRows） */
+QTableWidget::item:selected {
+    background-color: #4CAF50; /* 选中项背景色 */
+    color: white;
+}
+/* 鼠标悬停在单元格上的样式 */
+QTableWidget::item:hover {
+    background-color: #C8E6C9; /* 悬停颜色 */
+}
+/* ========== 滚动条 QScrollBar 样式 ========== */
+QScrollArea {
+    border: none;
+    background-color: white;
+}
+QScrollBar:vertical {
+    width: 12px;
+    background: #f0f0f0;
+}
+QScrollBar::handle:vertical {
+    background: #C8E6C9;
+    min-height: 20px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #A5D6A7;      /* 悬停时稍深 */
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+/* ========== QDialog 样式 ========== */
+QDialog {
+    background-color: white;
+    border: 2px solid #C8E6C9;
+    border-radius: 6px;
+}
+
+QDialog QLabel {
+    color: #2E7D32;
+    font-weight: 500;
+}
+
+QDialog QPushButton {
+    min-width: 80px;
+    margin: 0 4px;
+}
+
+/* ========== QTabWidget 样式 ========== */
+QTabWidget::pane {
+    border: 1px solid #C8E6C9;
+    border-radius: 5px;
+    background: white;
+    margin-top: -1px;
+}
+
+QTabWidget::tab-bar {
+    left: 6px; 
+}
+
+QTabBar::tab {
+    background-color: #E8F5E9;
+    color: #2E7D32;
+    border: 1px solid #C8E6C9;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius:4px;
+    padding: 6px 12px;
+    margin-right: 4px;
+    margin-left: 4px;
+    font-weight: 100;
+    min-width: 40px
+}
+
+QTabBar::tab:selected {
+    background-color: #4CAF50;
+    color: white;
+    border-color: #388E3C;
+}
+
+QTabBar::tab:hover {
+    background-color: #C8E6C9;
+}
+
+QTabBar::tab:!selected {
+    margin-top: 4px; 
+}
     """
     # 应用全局样式
     app.setStyle('Fusion')

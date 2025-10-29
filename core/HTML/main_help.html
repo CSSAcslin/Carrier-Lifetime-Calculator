@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; }
+        h1 { color: #2e7d32; 
+            border-bottom: 2px solid #4caf50; }
+        h2 { color: #388e3c; }
+        h3 { color: black; }
+        .code-block { 
+            background-color: #e8f5e9; 
+            border: 1px solid #c8e6c9;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        .param-table th {
+            background-color: #4caf50;
+            color: white;
+            text-align: left;
+            padding: 8px;
+        }
+        .param-table td {
+            border: 1px solid #c8e6c9;
+            padding: 8px;
+        }
+        .param-table tr:nth-child(even) {
+            background-color: #f1f8e9;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .math-block {
+            font-size: large;
+            background-color: #f9fbe7;
+            border: 1px solid #dcedc8;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+        .light-gray {
+            color: #888888;
+        }
+    </style>
+    <title>stft_help</title>
+</head>
+<body>
+    <h1>成像数据动态分析工具箱</h1>
+    <img src=":/LifeCalor.ico" alt="Logo" style="width:200px;">
+    <h2>1. 功能概述</h2>
+    <ul>
+    <li>全面的数据导入功能，支持多种格式的成像数据导入</li>
+        <ul>
+        <li>andor相机的sif格式文件序列</li>
+        <li>一般的高保真tiff格式文件序列</li>
+        <li>avi格式的视频文件</li>
+        </ul>
+    </li>
+    <li>丰富的应用场景（具体请见各方法介绍）</li>
+        <ul>
+        <li>Fs-iSCAT的载流子动力学分析</li>
+        <li>光热信号的处理</li>
+        <li>EM-iSCAT细胞电生理分析</li>
+        </ul>
+    </li>
+    <li>强大的可视化成像系统（请见成像模块指南）</li>
+        <ul>
+        <li>多组数据同时呈现</li>
+        <li>自由的ROI绘制功能，匹配各种需求</li>
+        <li>可随时应用的伪色样式</li>
+        </ul>
+    </li>
+    <li>充足的导出能力</li>
+        <ul>
+        <li>数据成像应用样式再导出</li>
+        <li>原始数据，处理数据，多种格式均能导出</li>
+        <li>结果绘图动态显示以及便捷导出</li>
+        </ul>
+    </li>
+    </ul>
+    <h2>2. 界面介绍</h2>
+    <ul>
+        <li>上方菜单栏：编辑、历史数据、使用指南等核心功能</li>
+        <li>左侧工具栏：方法选择、数据导入、参数设置、预处理、后处理、结果导出等功能按钮</li>
+        <li>中央成像区：数据成像显示区域，支持ROI绘制，画布增删，样式设置等等</li>
+        <li>右侧是结果绘制和控制台显示区</li>
+    </ul>
+
+    <h2>3. 使用流程</h2>
+    <ol>
+        <li>选择分析模式（FS和PA在 <i>超快成像动态分析</i> 里）和数据格式</li>
+        <li>导入原始数据</li>
+        <li class="light-gray">设置基础的时空参数（如果需要）</li>
+        <li class="light-gray">预处理数据（去背景、展数据等操作）（如果有）</li>
+        <li>选择想要进行的分析方法</li>
+        <li>按照各方法指南设置参数</li>
+        <li>按步骤运行分析，等待结果生成</li>
+            </ul>
+        </li>
+        <li>结果可视化与导出：
+            <ul>
+                <li>在成像区添加需要成像的数据（见成像指南）</li>
+                <li>支持多种伪色样式应用</li>
+                <li>本步骤可以在任意处理环节应用</li>
+            </ul>
+        </li>
+        <li>导出成像图或结果为需要的格式</li>
+    </ol>
+</body>
+</html>

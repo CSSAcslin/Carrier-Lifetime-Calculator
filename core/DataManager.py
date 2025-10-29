@@ -1,11 +1,284 @@
+import logging
+import os
 import time
 import copy
 import numpy as np
+import tifffile as tiff
+import sif_parser
+import cv2
 from collections import deque
 from typing import ClassVar, Optional, List, Dict, Any, Union
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, QThread, pyqtSlot
 from dataclasses import dataclass, field, fields
+import matplotlib.cm as cm
+from matplotlib.colors import LinearSegmentedColormap
+from PIL import Image
 
+
+
+class DataManager(QObject):
+    save_request_back = pyqtSignal(dict)
+    read_request_back = pyqtSignal(dict)
+    remove_request_back = pyqtSignal(dict)
+    amend_request_back = pyqtSignal(dict)
+    data_progress_signal = pyqtSignal(int, int)
+    def __init__(self, parent=None):
+        super(DataManager, self).__init__(parent)
+        self.color_map_manager = ColorMapManager()
+        logging.info("图像数据管理线程已启动")
+
+    @staticmethod
+    def to_uint8(data):
+        """归一化和数字类型调整"""
+        data_o = data.image_backup
+        min_value = data.imagemin
+        max_value = data.imagemax
+        if data.datatype == np.uint8 and max_value == 255:
+            data.image_data = data_o.copy()
+            return True
+
+        # 计算数组的最小值和最大值
+        data.image_data = ((data_o - min_value)/(max_value- min_value)*255).astype(np.uint8)
+        return True
+
+    def to_colormap(self,data,params):
+        """伪色彩实现（其实仅在生成视图时才会更新）"""
+        logging.info("样式应用中，预览会同步更新")
+        self.color_map_manager = ColorMapManager()
+        colormode = params['colormap']
+        if params['auto_boundary_set']:
+            min_value = data.imagemin
+            max_value = data.imagemax
+        else:
+            min_value = params['min_value']
+            max_value = params['max_value']
+        if colormode is None:
+            self.to_uint8(data)
+            data.colormode = colormode
+            return False
+        if data.is_temporary:
+            T,H,W = data.imageshape
+            self.data_progress_signal.emit(0,T)
+            new_data = np.zeros((T,H,W, 4), dtype=np.uint8)
+            for i,image in enumerate(data.image_backup):
+                new_data[i] = self.color_map_manager.apply_colormap(
+                                                                    image,
+                                                                    colormode,
+                                                                    min_value,
+                                                                    max_value
+                                                                )
+                self.data_progress_signal.emit(i, T)
+            data.image_data = new_data
+            self.data_progress_signal.emit(T, T)
+        else:
+            H, W = data.imageshape
+            new_data = np.zeros((H, W, 4), dtype=np.uint8)
+            new_data = self.color_map_manager.apply_colormap(
+                data.image_backup,
+                colormode,
+                min_value,
+                max_value
+            )
+            data.image_data = new_data
+        data.colormode = colormode
+        return True
+
+    @pyqtSlot(np.ndarray, str, str, str, bool)
+    def export_data(self, result, output_dir, prefix, format_type='tif',is_temporal=True,duration = 100):
+        """
+        时频变换后目标频率下的结果导出
+        支持多种格式: tif, avi, png, gif
+
+        参数:
+            result: 输入数据数组
+            output_dir: 输出目录路径
+            prefix: 文件前缀
+            format_type: 导出格式 ('tif', 'avi', 'png', 'gif')
+        """
+        format_type = format_type.lower()
+
+        # 根据格式类型调用不同的导出函数
+        if format_type == 'tif':
+            return self.export_as_tif(result, output_dir, prefix,is_temporal)
+        elif format_type == 'avi':
+            return self.export_as_avi(result, output_dir, prefix)
+        elif format_type == 'png':
+            return self.export_as_png(result, output_dir, prefix,is_temporal)
+        elif format_type == 'gif':
+            return self.export_as_gif(result, output_dir, prefix, duration)
+        else:
+            logging.error(f"不支持的格式类型: {format_type}")
+            raise ValueError(f"不支持格式: {format_type}。请使用 'tif', 'avi', 'png' 或 'gif'")
+
+    def _normalize_data(self, data):
+        """统一归一化处理，支持彩色/灰度数据"""
+        if data.dtype == np.uint8:
+            return data.copy()
+
+        # 计算全局最小最大值（避免逐帧计算不一致）
+        data_min = data.min()
+        data_max = data.max()
+
+        # 处理全零数据
+        if data_max - data_min < 1e-6:
+            return np.zeros_like(data, dtype=np.uint8)
+
+        normalized = ((data - data_min) / (data_max - data_min) * 255).astype(np.uint8)
+        return normalized
+
+    def export_as_tif(self, result, output_dir, prefix,is_temporal=True):
+        """支持彩色TIFF导出"""
+        created_files = []
+        if is_temporal:
+            num_frames = result.shape[0]
+            num_digits = len(str(num_frames))
+            self.data_progress_signal.emit(0, num_frames)
+
+            for frame_idx in range(num_frames):
+                frame_name = f"{prefix}-{frame_idx:0{num_digits}d}.tif"
+                output_path = os.path.join(output_dir, frame_name)
+
+                frame = result[frame_idx]
+                photometric = 'minisblack' if frame.ndim == 2 else 'rgb'
+                tiff.imwrite(output_path, frame, photometric=photometric)
+
+                created_files.append(output_path)
+                self.data_progress_signal.emit(frame_idx + 1, num_frames)
+        else:
+            num_frames = 1
+            frame_name = f"{prefix}.tif"
+            output_path = os.path.join(output_dir, frame_name)
+            photometric = 'minisblack' if result.ndim == 2 else 'rgb'
+            tiff.imwrite(output_path, result, photometric=photometric)
+            created_files.append(output_path)
+            self.data_progress_signal.emit(num_frames+1, num_frames)
+
+        logging.info(f'导出TIFF完成: {output_dir}, 共{num_frames}帧')
+        return created_files
+
+    def export_as_avi(self, result, output_dir, prefix):
+        """支持彩色视频导出"""
+        num_frames = result.shape[0]
+        self.data_progress_signal.emit(0, num_frames)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 归一化处理
+        normalized = self._normalize_data(result)
+
+        # 确定视频参数
+        height, width = normalized.shape[1:3]
+        is_color = normalized.ndim == 4 and normalized.shape[3] in (3, 4)
+
+        # 处理彩色数据 (RGB→BGR转换)
+        if is_color:
+            # 去除Alpha通道（如果需要）
+            if normalized.shape[3] == 4:
+                normalized = normalized[..., :3]
+            # RGB转BGR
+            normalized = normalized[..., ::-1]
+
+        # 创建视频
+        output_path = os.path.join(output_dir, f"{prefix}.avi")
+        fps = max(10, min(30, num_frames // 10))
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height), isColor=is_color)
+
+        for frame_idx in range(num_frames):
+            frame = normalized[frame_idx]
+            # 灰度视频需要单通道格式
+            if not is_color and frame.ndim == 3:
+                frame = frame.squeeze()
+            out.write(frame)
+            self.data_progress_signal.emit(frame_idx + 1, num_frames)
+
+        out.release()
+        logging.info(f'导出AVI完成: {output_path}, 共{num_frames}帧')
+        return [output_path]
+
+    def export_as_png(self, result, output_dir, prefix,is_temporal=True):
+        """支持彩色PNG导出"""
+        created_files = []
+        # 归一化处理
+        normalized = self._normalize_data(result)
+
+        if is_temporal:
+            num_frames = result.shape[0]
+            num_digits = len(str(num_frames))
+            self.data_progress_signal.emit(0, num_frames)
+            for frame_idx in range(num_frames):
+                frame_name = f"{prefix}-{frame_idx:0{num_digits}d}.png"
+                output_path = os.path.join(output_dir, frame_name)
+
+                frame = normalized[frame_idx]
+                # 自动检测图像模式
+                if frame.ndim == 2:
+                    img = Image.fromarray(frame, 'L')
+                elif frame.shape[2] == 4:
+                    img = Image.fromarray(frame, 'RGBA')
+                else:
+                    img = Image.fromarray(frame, 'RGB')
+
+                img.save(output_path)
+                created_files.append(output_path)
+                self.data_progress_signal.emit(frame_idx + 1, num_frames)
+
+        else:
+            num_frames = 1
+            frame_name = f"{prefix}.png"
+            output_path = os.path.join(output_dir, frame_name)
+            if normalized.ndim == 2:
+                img = Image.fromarray(normalized, 'L')
+            elif normalized.shape[2] == 4:
+                img = Image.fromarray(normalized, 'RGBA')
+            img.save(output_path)
+            created_files.append(output_path)
+            self.data_progress_signal.emit(num_frames+1, num_frames)
+
+        logging.info(f'导出PNG完成: {output_dir}, 共{num_frames}帧')
+        return created_files
+
+    def export_as_gif(self, result, output_dir, prefix,duration = 60):
+        """优化彩色GIF导出"""
+        num_frames = result.shape[0]
+        self.data_progress_signal.emit(0, num_frames)
+
+        # 归一化处理
+        normalized = self._normalize_data(result)
+        images = []
+        palette_img = None
+
+        for frame_idx in range(num_frames):
+            frame = normalized[frame_idx]
+
+            # 处理彩色帧
+            if normalized.ndim == 4:
+                # 去除Alpha通道
+                if frame.shape[2] == 4:
+                    frame = frame[..., :3]
+                img = Image.fromarray(frame, 'RGB')
+
+                # 使用全局调色板
+                if palette_img is None:
+                    palette_img = img.convert('P', palette=Image.ADAPTIVE, colors=256)
+                    images.append(palette_img)
+                else:
+                    images.append(img.quantize(palette=palette_img))
+            # 处理灰度帧
+            else:
+                images.append(Image.fromarray(frame, 'L'))
+
+        output_path = os.path.join(output_dir, f"{prefix}.gif")
+        images[0].save(
+            output_path,
+            save_all=True,
+            append_images=images[1:],
+            duration=duration,
+            loop=0,
+            optimize=True
+        )
+        self.data_progress_signal.emit(num_frames, num_frames)
+        logging.info(f'导出GIF完成: {output_path}, 共{num_frames}帧')
+        return [output_path]
 
 @dataclass
 class Data:
@@ -15,6 +288,7 @@ class Data:
     time_point 时间点（已匹配时间尺度）\n
     format_import 导入格式 \n
     image_import 原生成像数据\n
+    parameters 其他参数\n
     name 数据命名\n
     timestamp 时间戳（用于识别匹配数据流）\n
     ROI_applied 是否应用ROI蒙版 \n
@@ -47,17 +321,8 @@ class Data:
 
         if self.name is None:
             self.name = f"{self.format_import}_{self.serial_number}"
-
-        # Data.history.append( # 类级别存储
-        #     {self.serial_number: {
-        #         'data_origin' : self.data_origin,
-        #         'time_point' : self.time_point,
-        #         'format_import' : self.format_import,
-        #         'image_import': self.image_import,
-        #         'parameters' : self.parameters,
-        #         'name' : self.name,
-        #         'timestamp' : self.timestamp}}
-        # )
+        else:
+            self.name = f"{self.name}_{self.serial_number}"
         Data.history.append(copy.deepcopy(self)) # 实例存储
 
     def _recalculate(self):
@@ -395,6 +660,7 @@ class ImagingData:
         self.is_temporary = True if self.ndim == 3 else False
         self.imagemin = self.image_backup.min()
         self.imagemax = self.image_backup.max()
+        self.datatype = self.image_backup.dtype
         self.ROI_mask = None
         self.ROI_applied = False
 
@@ -460,23 +726,63 @@ class ImagingData:
 
         self.ROI_applied = True
 
-    def to_uint8(self,data):
+    def to_uint8(self,data = None):
         """归一化和数字类型调整"""
+        if data is None:
+            data = self.image_backup
+        if data.dtype == np.uint8 and np.max(data) == 255:
+            return data.copy()
 
         # 计算数组的最小值和最大值
         min_val = np.min(data)
         max_val = np.max(data)
 
-        if self.source_format == "ROI_stft" or self.source_format == "ROI_cwt":
-            return ((data - np.min(data))/(np.max(data)- np.min(data))*255).astype(np.uint8)
-
+        # if self.source_format == "ROI_stft" or self.source_format == "ROI_cwt":
+        #     return ((data - np.min(data))/(np.max(data)- np.min(data))*255).astype(np.uint8)
+        result = ((data - min_val)/(max_val- min_val)*255).astype(np.uint8)
         # 通用线性变换公式
         # 使用64位浮点保证精度，避免中间步骤溢出
-        scaled = (data.astype(np.float64) - min_val) * (255.0 / (max_val - min_val))
-
-        # 四舍五入并确保在[0,255]范围内
-        result = np.clip(np.round(scaled), 0, 255).astype(np.uint8)
+        # scaled = (data.astype(np.float64) - min_val) * (255.0 / (max_val - min_val))
+        #
+        # # 四舍五入并确保在[0,255]范围内
+        # result = np.clip(np.round(scaled), 0, 255).astype(np.uint8)
         return result
+
+    # def to_colormap(self,colormode,min_value=None,max_value=None):
+    #     """伪色彩实现（其实仅在生成视图时才会更新）"""
+    #     logging.info("请稍等片刻，更换样式需重载数据")
+    #     color_map_manager = ColorMapManager()
+    #     if colormode is None:
+    #         return None
+    #     if self.is_temporary:
+    #         T,H,W = self.imageshape
+    #         self._signals.data_progress_signal(0,T)
+    #         new_data = np.zeros((T,H,W, 4), dtype=np.uint8)
+    #         for i,image in enumerate(self.image_backup):
+    #             new_data[i] = color_map_manager.apply_colormap(
+    #                                                                 image,
+    #                                                                 colormode,
+    #                                                                 min_value,
+    #                                                                 max_value
+    #                                                             )
+    #             self._signals.data_progress_signal(i, T)
+    #         self.image_data = new_data
+    #         self._signals.data_progress_signal(T, T)
+    #         return None
+    #     else:
+    #         H, W = self.imageshape
+    #         new_data = np.zeros((H, W, 4), dtype=np.uint8)
+    #         new_data = color_map_manager.apply_colormap(
+    #             self.image_backup,
+    #             colormode,
+    #             min_value,
+    #             max_value
+    #         )
+    #         self.image_data = new_data
+    #         return None
+
+    # def export_image(self,type):
+    #     pass
 
     # @classmethod
     # def from_array(cls, image_array: np.ndarray, **metadata) -> 'ImageData':
@@ -505,15 +811,142 @@ class ImagingData:
             f"Range: [{self.imagemin:.2f}, {self.imagemax:.2f}]>"
         )
 
-class DataManager(QObject):
-    save_request_back = pyqtSignal(dict)
-    read_request_back = pyqtSignal(dict)
-    remove_request_back = pyqtSignal(dict)
-    amend_request_back = pyqtSignal(dict)
-    def __init__(self, parent=None):
-        super(DataManager, self).__init__(parent)
-        # 找数据用next
-        # latest_aabb = next(
-        #     (data for data in reversed(Data.history) if data.data_type == "aabb"),
-        #     None
-        # )
+class ColorMapManager:
+    """伪彩色映射管理器"""
+
+    def __init__(self):
+        self.colormaps = {
+            "Jet": self.jet_colormap,
+            "Hot": self.hot_colormap,
+            # "Cool": self.cool_colormap,
+            # "Spring": self.spring_colormap,
+            # "Summer": self.summer_colormap,
+            # "Autumn": self.autumn_colormap,
+            # "Winter": self.winter_colormap,
+            # "Bone": self.bone_colormap,
+            # "Copper": self.copper_colormap,
+            # "Greys": self.greys_colormap,
+            # "Viridis": self.viridis_colormap,
+            # "Plasma": self.plasma_colormap,
+            # "Inferno": self.inferno_colormap,
+            # "Magma": self.magma_colormap,
+            # "Cividis": self.cividis_colormap,
+            # "Rainbow": self.rainbow_colormap,
+            # "Turbo": self.turbo_colormap
+        }
+
+        # 创建Matplotlib兼容的colormap
+        self.matplotlib_cmaps = {
+            "Jet": cm.jet,
+            "Hot": cm.hot,
+            "Cool": cm.cool,
+            "Spring": cm.spring,
+            "Summer": cm.summer,
+            "Autumn": cm.autumn,
+            "Winter": cm.winter,
+            "Bone": cm.bone,
+            "Copper": cm.copper,
+            "Greys": cm.gray,
+            "Viridis": cm.viridis,
+            "Plasma": cm.plasma,
+            "Inferno": cm.inferno,
+            "Magma": cm.magma,
+            "Cividis": cm.cividis,
+            "Rainbow": self.create_rainbow_cmap(),
+            "Turbo": cm.turbo,
+            'CMRmap':cm.CMRmap,
+            'gnuplot2':cm.gnuplot2,
+        }
+
+    def get_colormap_names(self):
+        """获取所有可用的colormap名称"""
+        return list(self.matplotlib_cmaps.keys())  # 暂时用Matplotlib
+
+    def apply_colormap(self, image_data, colormap_name, min_val=None, max_val=None):
+        """应用伪彩色映射到图像数据"""
+        if colormap_name not in self.matplotlib_cmaps:
+            colormap_name = "Jet"  # 默认使用Jet
+
+        cmap = self.matplotlib_cmaps[colormap_name]
+
+        # 归一化数据
+        if min_val is None:
+            min_val = np.min(image_data)
+        if max_val is None:
+            max_val = np.max(image_data)
+
+        # 避免除以零
+        if min_val == max_val:
+            normalized = np.zeros_like(image_data)
+        else:
+            normalized = (image_data - min_val) / (max_val - min_val)
+            normalized = np.clip(normalized, 0, 1)
+
+        # 应用colormap
+        colored = (cmap(normalized) * 255).astype(np.uint8)
+        return colored
+
+    def create_rainbow_cmap(self):
+        """创建自定义彩虹colormap"""
+        cdict = {
+            'red': [(0.0, 1.0, 1.0),
+                    (0.15, 0.0, 0.0),
+                    (0.3, 0.0, 0.0),
+                    (0.45, 0.0, 0.0),
+                    (0.6, 1.0, 1.0),
+                    (0.75, 1.0, 1.0),
+                    (1.0, 1.0, 1.0)],
+            'green': [(0.0, 0.0, 0.0),
+                      (0.15, 0.0, 0.0),
+                      (0.3, 1.0, 1.0),
+                      (0.45, 1.0, 1.0),
+                      (0.6, 1.0, 1.0),
+                      (0.75, 0.0, 0.0),
+                      (1.0, 0.0, 0.0)],
+            'blue': [(0.0, 0.0, 0.0),
+                     (0.15, 1.0, 1.0),
+                     (0.3, 1.0, 1.0),
+                     (0.45, 0.0, 0.0),
+                     (0.6, 0.0, 0.0),
+                     (0.75, 0.0, 0.0),
+                     (1.0, 1.0, 1.0)]
+        }
+        return LinearSegmentedColormap('Rainbow', cdict)
+
+    # 以下是各种colormap的实现（保留作为参考）
+    def jet_colormap(self, value):
+        """Jet colormap实现"""
+        if value < 0.125:
+            r = 0
+            g = 0
+            b = 0.5 + 4 * value
+        elif value < 0.375:
+            r = 0
+            g = 4 * (value - 0.125)
+            b = 1
+        elif value < 0.625:
+            r = 4 * (value - 0.375)
+            g = 1
+            b = 1 - 4 * (value - 0.375)
+        elif value < 0.875:
+            r = 1
+            g = 1 - 4 * (value - 0.625)
+            b = 0
+        else:
+            r = max(1 - 4 * (value - 0.875), 0)
+            g = 0
+            b = 0
+        return (int(r * 255), int(g * 255), int(b * 255))
+
+    def hot_colormap(self, value):
+        """Hot colormap实现"""
+        r = min(3 * value, 1.0)
+        g = min(3 * value - 1, 1.0) if value > 1 / 3 else 0
+        b = min(3 * value - 2, 1.0) if value > 2 / 3 else 0
+        return (int(r * 255), int(g * 255), int(b * 255))
+
+    # 其他colormap实现类似，这里省略以节省空间...
+    # 实际使用中我们使用matplotlib的实现
+
+
+

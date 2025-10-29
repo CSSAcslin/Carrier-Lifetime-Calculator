@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QFileDialog, QWhatsThis, QTextBrowser, QTableWidget, QDialogButtonBox, QTableWidgetItem,
                              QHeaderView, QAbstractItemView, QTabWidget, QWidget)
 from PyQt5.QtCore import Qt, QEvent, QTimer
+import HelpContentHTML
 import markdown
 from markdown.extensions.codehilite import CodeHiliteExtension
 from markdown.extensions.fenced_code import FencedCodeExtension
@@ -489,6 +490,10 @@ class STFTComputePop(QDialog):
         self.fps_input.setRange(10,99999)
         self.fps_input.setValue(self.params['EM_fps'])
 
+        self.scale_range_input = QSpinBox()
+        self.scale_range_input.setRange(0,99999)
+        self.scale_range_input.setValue(self.params['stft_scale_range'])
+
         self.window_size_input = QSpinBox()
         self.window_size_input.setRange(1, 65536)
         self.window_size_input.setValue(self.params['stft_window_size'])
@@ -502,6 +507,7 @@ class STFTComputePop(QDialog):
         self.custom_nfft_input.setValue(self.params['custom_nfft'])
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
+        layout.addRow(QLabel("平均范围"),self.scale_range_input)
         layout.addRow(QLabel("采样帧率"),self.fps_input)
         layout.addRow(QLabel("窗口大小"),self.window_size_input)
         layout.addRow(QLabel("窗口重叠"),self.noverlap_input)
@@ -515,7 +521,7 @@ class STFTComputePop(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.apply_btn)
         button_layout.addWidget(self.cancel_btn)
-        layout.setLayout(5,QFormLayout.FieldRole,button_layout)
+        layout.setLayout(6,QFormLayout.FieldRole,button_layout)
 
         self.setLayout(layout)
 
@@ -618,6 +624,11 @@ class STFTComputePop(QDialog):
             <td>目标频率</td>
             <td>30.0 Hz</td>
             <td>想要提取的目标频率</td>
+        </tr>
+        <tr>
+            <td>平均范围</td>
+            <td>0 Hz</td>
+            <td>默认为0，不平均，否则以目标频率为中心，平均范围内包含的stft结果</td>
         </tr>
         <tr>
             <td>采样帧率</td>
@@ -743,7 +754,7 @@ class STFTComputePop(QDialog):
         """
 
         # 创建并显示自定义对话框
-        self.help_dialog = CustomHelpDialog(help_title, help_content)
+        self.help_dialog = CustomHelpDialog(help_title, 'custom',help_content)
         self.help_dialog.setWindowModality(Qt.NonModal)
         if self.help_dialog.exec_():
             return True
@@ -777,10 +788,13 @@ class CWTComputePop(QDialog):
 
         self.cwt_size_input = QSpinBox()
         self.cwt_size_input.setRange(0, 65536)
-        self.cwt_size_input.setValue(self.params['cwt_total_scales'])
+        if self.case == 'quality':
+            self.cwt_size_input.setValue(256)
+        else:
+            self.cwt_size_input.setValue(1)
 
         self.wavelet = QComboBox()
-        self.wavelet.addItems(['cmor3-3','cmor1.5-1.0','morl(实)','cgau8'])
+        self.wavelet.addItems(['cmor3-3','cmor1.5-1.0','cgau8','mexh','morl'])
         self.wavelet.setCurrentText(self.params['cwt_type'])
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
@@ -788,15 +802,18 @@ class CWTComputePop(QDialog):
         layout.addRow(QLabel("采样帧率"),self.fps_input)
         layout.addRow(QLabel("计算尺度"),self.cwt_size_input)
 
+        self.cwt_scale_range = QDoubleSpinBox()
+        self.cwt_scale_range.setRange(0, 10000)
+        self.cwt_scale_range.setValue(self.params['cwt_scale_range'])
+        self.cwt_scale_range.setSuffix(" Hz")
+        layout.addRow(QLabel("处理跨度"), self.cwt_scale_range)
+
         if self.case == 'signal':
-            self.cwt_scale_range = QDoubleSpinBox()
-            self.cwt_scale_range.setRange(0.1, 1000)
-            self.cwt_scale_range.setValue(self.params['cwt_scale_range'])
-            self.cwt_scale_range.setSuffix(" Hz")
-            layout.addRow(QLabel("处理跨度"), self.cwt_scale_range)
+            self.apply_btn = QPushButton("执行CWT")
+        else:
+            self.apply_btn = QPushButton("执行质量评价")
 
         button_layout = QHBoxLayout()
-        self.apply_btn = QPushButton("执行CWT")
         self.apply_btn.clicked.connect(self.accept)
         self.cancel_btn = QPushButton("取消")
         self.cancel_btn.clicked.connect(self.reject)
@@ -855,23 +872,25 @@ class SCSComputePop(QDialog):
         thr_known = self.thr_known_check.isChecked()
         self.thr_input.setEnabled(thr_known)
 
-# EM时频变换数据导出
-class MassDataSavingPop(QDialog):
-    def __init__(self, parent=None, datatypes=None):
+# 视频与彩色图像导出
+class DataExportDialog(QDialog):
+    def __init__(self, parent=None, datatypes=None,export_type='EM',canvas_info=None,is_temporal = None):
         super().__init__(parent)
         self.directory = None
-        self.setWindowTitle("数据导出")
-        self.setMinimumWidth(360)  # 加宽以适应新控件
-        self.setMinimumHeight(260)
+        if export_type == 'EM':
+            self.setWindowTitle("数据导出(EM模式)")
+        else:
+            self.setWindowTitle("数据导出(画布模式)")
+        self.setMinimumWidth(300)  # 加宽以适应新控件
+        self.setMinimumHeight(450)
         # self.datatypes = datatypes if datatypes else []
+        self.is_temporal = is_temporal
         self.datatypes = ['tif','avi','gif','png']
-
-        # 创建字体对象
-        # font = QFont("Segoe UI", 10)  # 使用更现代化的字体
-        # self.setFont(font)
+        self.canvas_info = canvas_info
+        self.export_type = export_type
 
         self.init_ui()
-        self.setStyleSheet(self.style_sheet())  # 设置样式表
+        # self.setStyleSheet(self.style_sheet())  # 设置样式表
 
     def style_sheet(self):
         """返回美化界面的样式表"""
@@ -907,39 +926,54 @@ class MassDataSavingPop(QDialog):
         main_layout.setSpacing(20)
         main_layout.setContentsMargins(20, 20, 20, 20)
 
+        # 0. 画布选择（画布导出模式）
+        form_layout = QFormLayout()
+        if self.export_type == 'canvas':
+            self.canvas_selector = QComboBox()
+            if self.canvas_info:
+                for item in self.canvas_info:
+                    self.canvas_selector.addItem(item)
+            form_layout.addRow(QLabel("画布选择"),self.canvas_selector)
+            self.canvas_selector.currentIndexChanged.connect(self.datatypes_change)
+        else:
+            pass
+
         # 1. 路径选择组件
-        path_layout = QFormLayout()
+
         path_label = QLabel("保存路径:")
         self.path_edit = QLineEdit()
-        path_layout.addRow(path_label,self.path_edit)
+        form_layout.addRow(path_label,self.path_edit)
         self.path_edit.setPlaceholderText("选择或输入文件保存路径")
         browse_btn = QPushButton("浏览文件夹")
         browse_btn.clicked.connect(self.browse_directory)
-        path_layout.addRow(QLabel(""),browse_btn)
+        form_layout.addRow(QLabel(""),browse_btn)
 
         # 2. 文本输入框
-        text_layout = QHBoxLayout()
         text_label = QLabel("文件名称:")
         self.text_edit = QLineEdit()
         self.text_edit.setPlaceholderText("请输入文件名（前缀）")
-        text_layout.addWidget(text_label)
-        text_layout.addWidget(self.text_edit)
+        form_layout.addRow(text_label,self.text_edit)
 
         # 3. 动态数据类型选择器
-        type_layout = QHBoxLayout()
         type_label = QLabel("数据类型:")
         self.type_combo = QComboBox()
         self.update_datatype(self.datatypes)  # 初始化下拉菜单
-        type_layout.addWidget(type_label)
-        type_layout.addWidget(self.type_combo)
+        form_layout.addRow(type_label, self.type_combo)
+        self.type_combo.currentIndexChanged.connect(self._update_type)
 
-        # 将三个部分添加到主布局
-        main_layout.addLayout(type_layout)
-        main_layout.addWidget(QLabel('注意：使用avi/gif/png，会对数据有压缩！'))
-        main_layout.addLayout(path_layout)
-        main_layout.addLayout(text_layout)
+        # 4. 其他参数
+        self.duration_label = QLabel("时长")
+        self.duration_input = QSpinBox()
+        self.duration_input.setRange(0,10000)
+        self.duration_input.setValue(60)
+        form_layout.addRow(self.duration_label, self.duration_input)
+        self.duration_label.setVisible(False)
+        self.duration_input.setVisible(False)
 
-        # 4. 确认/取消按钮
+        main_layout.addLayout(form_layout)
+        main_layout.addWidget(QLabel('注意：使用avi/gif/png，会对原始数据有压缩！'))
+
+        # 5. 确认/取消按钮
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         cancel_btn = QPushButton("取消")
@@ -948,11 +982,19 @@ class MassDataSavingPop(QDialog):
         confirm_btn = QPushButton("确认导出")
         confirm_btn.clicked.connect(self.accept)
 
-        btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(confirm_btn)
+        btn_layout.addWidget(cancel_btn)
 
         main_layout.addLayout(btn_layout)
         self.setLayout(main_layout)
+
+    def datatypes_change(self):
+        if self.is_temporal[self.canvas_selector.currentIndex()]:
+            self.datatypes = ['tif','avi','gif','png']
+            self.update_datatype(self.datatypes)
+        if not self.is_temporal[self.canvas_selector.currentIndex()]:
+            self.datatypes = ['tif', 'png']
+            self.update_datatype(self.datatypes)
 
     def update_datatype(self, datatypes):
         """动态更新数据类型下拉菜单"""
@@ -962,6 +1004,17 @@ class MassDataSavingPop(QDialog):
         else:
             self.type_combo.addItem("无可用格式")
             self.type_combo.setEnabled(False)
+
+    def _update_type(self):
+        """选择到处类型后发生什么"""
+        self.current_type = self.type_combo.currentText()
+        if self.current_type == 'gif':
+            self.duration_label.setVisible(True)
+            self.duration_input.setVisible(True)
+        else:
+            self.duration_label.setVisible(False)
+            self.duration_input.setVisible(False)
+            return
 
     def browse_directory(self):
         """打开文件夹选择对话框"""
@@ -976,9 +1029,11 @@ class MassDataSavingPop(QDialog):
     def get_values(self):
         """获取用户输入的值"""
         return {
+            'canvas': self.canvas_selector.currentIndex() if self.export_type == 'canvas' else None,
             'path': self.path_edit.text().strip(),
             'filename': self.text_edit.text().strip(),
-            'filetype': self.type_combo.currentText()
+            'filetype': self.type_combo.currentText(),
+            'duration': self.duration_input.value() if self.current_type == 'gif' else None,
         }
 
 # 数据选择查看视窗
@@ -1156,28 +1211,22 @@ class DataViewAndSelectPop(QDialog):
 # 帮助dialog
 class CustomHelpDialog(QDialog):
     """自定义非模态帮助对话框"""
-
-    def __init__(self, title, content, content_format="html", parent=None):
+    ALL_TOPICS = ["general","canvas", "stft", "cwt", "lifetime","whole","single"]
+    def __init__(self, title, topics=None, content = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         self.setAttribute(Qt.WA_DeleteOnClose)  # 关闭时自动释放
-
+        self.content = content
         # 创建布局和控件
         layout = QVBoxLayout()
 
-        # 内容浏览器（支持多种格式）
-        content_browser = QTextBrowser()
-        content_browser.setOpenExternalLinks(True)
+        self.tab_widget = QTabWidget()
 
-        # 根据格式处理内容
-        if content_format.lower() == "markdown":
-            processed_content = self._render_markdown(content)
-        else:  # 默认为HTML
-            processed_content = content
+        # 添加帮助主题
+        self.add_help_tabs(topics)
 
-        content_browser.setHtml(processed_content)
-        layout.addWidget(content_browser)
+        layout.addWidget(self.tab_widget)
 
         # 关闭按钮
         close_btn = QPushButton("关闭")
@@ -1187,14 +1236,61 @@ class CustomHelpDialog(QDialog):
         self.setLayout(layout)
         self.resize(500, 700)  # 设置初始大小
 
-    def _render_markdown(self, md_content):
-        """将Markdown转换为HTML"""
-        # 添加扩展支持代码高亮和围栏代码块
-        extensions = [
-            CodeHiliteExtension(noclasses=True),
-            FencedCodeExtension()
-        ]
-        return markdown.markdown(md_content, extensions=extensions)
+    def add_help_tabs(self, topics):
+        """添加指定的帮助主题标签页"""
+        # 如果没有指定主题或列表为空，则显示所有主题
+        if not topics:
+            topics = self.ALL_TOPICS
+        elif topics == "custom":
+            self.add_tab(topics,self.content)
+
+        # 添加每个主题的标签页
+        for topic in topics:
+            if topic in self.ALL_TOPICS:
+                self.add_tab(topic)
+
+    def add_tab(self, topic_key, html_text = None):
+        """添加单个帮助主题标签页"""
+        if topic_key == 'custom':
+            text = html_text
+            title = '方法帮助'
+        elif topic_key not in HelpContentHTML.HELP_CONTENT:
+            return
+        else:
+            topic = HelpContentHTML.HELP_CONTENT[topic_key]
+            text = topic["html"]
+            title = topic["title"]
+        # 创建文本浏览器
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(True)
+        browser.setHtml(text)
+
+        # 添加到标签页
+        self.tab_widget.addTab(browser, title)
+
+    # def show_topic(self, topic_key):
+    #     """显示特定主题并使其成为当前标签页"""
+    #     if topic_key not in HelpContentHTML.HELP_CONTENT:
+    #         return
+    #
+    #     # 查找标签页索引
+    #     for i in range(self.tab_widget.count()):
+    #         if self.tab_widget.tabText(i) == HelpContentHTML.HELP_CONTENT[topic_key]["title"]:
+    #             self.tab_widget.setCurrentIndex(i)
+    #             return
+    #
+    #     # 如果没找到，添加新标签页
+    #     self.add_tab(topic_key)
+    #     self.tab_widget.setCurrentIndex(self.tab_widget.count() - 1)
+
+    # def _render_markdown(self, md_content):
+    #     """将Markdown转换为HTML"""
+    #     # 添加扩展支持代码高亮和围栏代码块
+    #     extensions = [
+    #         CodeHiliteExtension(noclasses=True),
+    #         FencedCodeExtension()
+    #     ]
+    #     return markdown.markdown(md_content, extensions=extensions)
 
 # 画布及roi查看和选择
 class ROIInfoDialog(QDialog):
@@ -1258,20 +1354,20 @@ class ROIInfoDialog(QDialog):
                 self.table.setItem(row_position, 3, QTableWidgetItem(roi['type']))
 
                 # ROI详情
-                if roi['type'] == 'vector_rect':
+                if roi['type'] == 'v_rect':
                     x, y = roi['position']
                     w, h = roi['size']
                     details = f"位置: ({x}, {y}), 尺寸: {w}×{h}"
-                elif roi['type'] == 'vector_line':
+                elif roi['type'] == 'v_line':
                     x1, y1 = roi['start']
                     x2, y2 = roi['end']
                     details = f"起点: ({x1}, {y1}), 终点: ({x2}, {y2}), 宽度: {roi['width']}"
                 elif roi['type'] == 'anchor':
                     x, y = roi['position']
                     details = f"位置: ({x}, {y})"
-                elif roi['type'] == 'draw_roi':
-                    h, w = roi['size']
-                    details = f"尺寸: {w}×{h} 像素"
+                elif roi['type'] == 'pixel_roi':
+                    n = roi['counts']
+                    details = f"选中{n}个像素"
                 else:
                     details = "没有ROI"
 
@@ -1305,22 +1401,13 @@ class ColorMapDialog(QDialog):
         self.canvas_info = canvas_info
         self.canvas_index = -1
         self.parent_window = parent
-        self.imagemin = params['min_value']
-        self.imagemax = params['max_value']
+        self.imagemin = params['min_value'] if params['min_value'] is not None else 0
+        self.imagemax = params['max_value'] if params['min_value'] is not None else 255
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
         self.colormap_control_layout = QFormLayout()
-
-        # 伪彩色开关
-        self.colormap_toggle = QCheckBox()
-        self.colormap_toggle.stateChanged.connect(self._handle_colormap_toggle)
-
-        # 伪彩色方案选择
-        self.colormap_selector = QComboBox()
-        self.colormap_selector.addItems(self.colormap_list)
-        self.colormap_selector.setCurrentText(self.params['colormap'])
 
         # 区域选择器
         self.canvas_selector = QComboBox()
@@ -1330,12 +1417,18 @@ class ColorMapDialog(QDialog):
                 self.canvas_selector.addItem(item)
         self.canvas_selector.currentIndexChanged.connect(self._handle_canvas_change)
 
+        # 伪彩色开关
+        self.colormap_toggle = QCheckBox()
+        self.colormap_toggle.stateChanged.connect(self._handle_colormap_toggle)
+
+        # 伪彩色方案选择
+        self.colormap_selector = QComboBox()
+        self.colormap_selector.addItems(self.colormap_list)
+
         # 边界设置
         self.boundary_set = QComboBox()
         self.boundary_set.addItems(['自动设置','手动设置'])
         self.boundary_set.currentIndexChanged.connect(self._handle_boundary_set)
-        if not self.params['auto_boundary_set']:
-            self.boundary_set.setCurrentIndex(1)
 
         self.up_boundary_set = QDoubleSpinBox()
         self.up_boundary_set.setRange(0,999999)
@@ -1345,18 +1438,15 @@ class ColorMapDialog(QDialog):
         self.low_boundary_set.setDecimals(1)
 
         # 添加到布局
+        self.colormap_control_layout.addRow(QLabel("应用区域:"),self.canvas_selector)
         self.colormap_control_layout.addRow(QLabel("伪彩显示:"),self.colormap_toggle)
         self.colormap_control_layout.addRow(QLabel("配色方案:"),self.colormap_selector)
-        self.colormap_control_layout.addRow(QLabel("应用区域:"),self.canvas_selector)
         self.colormap_control_layout.addRow(QLabel("边界设置:"),self.boundary_set)
         self.colormap_control_layout.addRow(QLabel("上界设置:"),self.up_boundary_set)
         self.colormap_control_layout.addRow(QLabel('下界设置:'),self.low_boundary_set)
 
         self.colormap_control_layout.setSpacing(10)
 
-        self.colormap_toggle.setChecked(self.params['use_colormap'])
-        self._handle_colormap_toggle()
-        self._handle_boundary_set()
         layout.addLayout(self.colormap_control_layout)
 
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1366,15 +1456,46 @@ class ColorMapDialog(QDialog):
 
         self.setLayout(layout)
 
+        self._handle_colormap_toggle()
+        self._handle_boundary_set()
+
     def _handle_colormap_toggle(self):
         if self.colormap_toggle.isChecked():
             self.colormap_selector.setEnabled(True)
-            self.canvas_selector.setEnabled(True)
+            # self.canvas_selector.setEnabled(True)
             self.boundary_set.setEnabled(True)
         else:
             self.colormap_selector.setEnabled(False)
-            self.canvas_selector.setEnabled(False)
+            # self.canvas_selector.setEnabled(False)
             self.boundary_set.setEnabled(False)
+
+    def _handle_canvas_change(self):
+        if self.canvas_selector.currentIndex() >= 1:
+            canvas_id = self.canvas_selector.currentIndex()-1
+            canvas_params = self.parent_window.display_canvas[canvas_id].args_dict
+            self.imagemin = self.parent_window.display_canvas[canvas_id].data.imagemin
+            self.imagemax = self.parent_window.display_canvas[canvas_id].data.imagemax
+            self.colormap_toggle.setChecked(canvas_params['use_colormap'])
+            self.colormap_selector.setCurrentText(canvas_params['colormap'])
+            self.up_boundary_set.setValue(self.imagemax)
+            self.low_boundary_set.setValue(self.imagemin)
+            self.canvas_index = self.canvas_selector.currentIndex() - 1
+            if not canvas_params['auto_boundary_set']:
+                self.boundary_set.setCurrentIndex(1)
+            else:
+                self.boundary_set.setCurrentIndex(0)
+        else:
+            self.canvas_index = -1
+            self.colormap_toggle.setChecked(self.params['use_colormap'])
+            self.colormap_selector.setCurrentText(self.params['colormap'])
+            self.imagemin = self.params['min_value'] if self.params['min_value'] is not None else 0
+            self.imagemax = self.params['max_value'] if self.params['min_value'] is not None else 255
+            self.up_boundary_set.setValue(self.imagemax)
+            self.low_boundary_set.setValue(self.imagemin)
+            if not self.params['auto_boundary_set']:
+                self.boundary_set.setCurrentIndex(1)
+            else:
+                self.boundary_set.setCurrentIndex(0)
 
     def _handle_boundary_set(self):
         if self.boundary_set.currentIndex() == 0:
@@ -1388,17 +1509,9 @@ class ColorMapDialog(QDialog):
             self.up_boundary_set.setValue(self.imagemax)
             self.low_boundary_set.setValue(self.imagemin)
 
-    def _handle_canvas_change(self):
-        if self.canvas_selector.currentIndex() >= 1:
-            self.imagemin = self.parent_window.display_canvas[self.canvas_selector.currentIndex()-1].data.imagemin
-            self.imagemax = self.parent_window.display_canvas[self.canvas_selector.currentIndex()-1].data.imagemax
-            self.canvas_index = self.canvas_selector.currentIndex() - 1
-        else:
-            self.canvas_index = -1
-
     def get_value(self):
-        return {'colormap':self.colormap_selector.currentText(),
-            'use_colormap':self.auto_boundary_set,
+        return {'colormap':self.colormap_selector.currentText() if self.colormap_toggle.isChecked() else None,
+            'use_colormap':self.colormap_toggle.isChecked(),
             'auto_boundary_set':self.auto_boundary_set,
-            'min_value':self.low_boundary_set.value() if self.auto_boundary_set else None,
-            'max_value':self.up_boundary_set.value() if self.auto_boundary_set else None,}
+            'min_value':self.low_boundary_set.value() if not self.auto_boundary_set else None,
+            'max_value':self.up_boundary_set.value() if not self.auto_boundary_set else None,}

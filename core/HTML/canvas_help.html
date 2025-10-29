@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; }
+        h1 { color: #2e7d32; 
+            border-bottom: 2px solid #4caf50; }
+        h2 { color: #388e3c; }
+        h3 { color: black; }
+        .code-block { 
+            background-color: #e8f5e9; 
+            border: 1px solid #c8e6c9;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        .param-table th {
+            background-color: #4caf50;
+            color: white;
+            text-align: left;
+            padding: 8px;
+        }
+        .param-table td {
+            border: 1px solid #c8e6c9;
+            padding: 8px;
+        }
+        .param-table tr:nth-child(even) {
+            background-color: #f1f8e9;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .math-block {
+            font-size: large;
+            background-color: #f9fbe7;
+            border: 1px solid #dcedc8;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+        .tools-intro {
+            border-image: 2px round white;
+            margin: 5px;
+            border: 2px solid #dcedc8;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .light-gray {
+            color: #888888;
+        }
+    </style>
+    <title>stft_help</title>
+</head>
+<body>
+    <h1>数据可视化利器-成像系统介绍</h1>
+    <h2>1. 功能概述</h2>
+    为所有已经加载的以及处理过的图像数据进行成像。 
+    <ul>
+        <li>支持多组图像显示，最多4幅图像同时显示</li>
+        <li>支持多种伪色样式应用</li>
+        <li>支持多种ROI选取的功能，如线段、矩形、椭圆等</li>
+        <li>支持视频数据以及非视频数据</li>
+    </ul>
+    <h2>2. 工具介绍</h2>
+    <div class="note">
+        <strong>提示：</strong>鼠标悬停在工具上可以查看工具名称；鼠标右键可以设置其参数（如果有的话）。
+    </div>
+    <h3>画布工具</h3>
+    <div class="tools-intro">   
+    <img src=":icons/icon_add.svg" alt="icon_add" style="width:20px;">
+     添加画布，点击后选择要显示的数据。
+    </div>
+    <div class="tools-intro"><img src=":icons/icon_del.svg" alt="icon_del" style="width:20px;">
+    删除画布，点击后删除最后添加的画布。
+    </div> 
+    </div>
+    <div class="tools-intro"><img src=":icons/icon_cursor.svg" alt="icon_cursor" style="width:20px;">
+    光标工具，选择后会释放所有正在选择的工具，恢复为自由点击状态。
+    </div>
+        <div class="note">
+        <strong>注意：</strong>装盛图像数据的对象称为画布，同时最多只能显示4幅画布。
+    </div>
+    <h3>ROI绘制工具</h3>
+    <div class="tools-intro"><img src=":icons/icon_pen.svg" alt="icon_pen" style="width:20px;">
+    画笔。像素ROI工具
+    <br>参数：
+        <ul>
+            <li>设置画笔大小（默认为2px）</li>
+            <li>设置画笔颜色</li>
+        </ul></div>
+    <div class="tools-intro"><img src=":icons/icon_line.svg" alt="icon_line" style="width:20px;">
+    直线。像素ROI工具，按住<b>shift</b>键，可限制直线角度
+    <br>参数：
+        <ul>
+            <li>设置画笔大小（默认为2px）</li>
+            <li>设置画笔颜色</li>
+        </ul></div>
+    <div class="tools-intro"><img src=":icons/icon_rect.svg" alt="icon_rect" style="width:20px;">
+    矩形。像素ROI工具，按住<b>shift</b>键，可绘制正方形
+        <br>参数：
+        <ul>
+            <li>设置边框粗细（默认为2px）</li>
+            <li>设置画笔颜色</li>
+        </ul></div>
+    <div class="tools-intro"><img src=":icons/icon_ellipse.svg" alt="icon_ellipse" style="width:20px;">
+    椭圆。像素ROI工具，按住<b>shift</b>键，可绘制圆形        
+    <br>参数：
+        <ul>
+            <li>设置边框粗细（默认为2px）</li>
+            <li>设置画笔颜色</li>
+        </ul></div>
+    <div class="tools-intro"><img src=":icons/icon_eraser.svg" alt="icon_eraser" style="width:20px;">
+    橡皮擦。像素ROI工具，仅用于擦除像素ROI       <br>参数：
+        <ul>
+            <li>设置橡皮擦大小（默认为2px）</li>
+        </ul></div>
+            <div class="note">
+        <strong>注意：</strong>所有像素ROI工具的参数，比如大小和颜色（不包含填充颜色），是互通的。
+    </div>    
+    <div class="tools-intro"><img src=":icons/icon_fill.svg" alt="icon_fill" style="width:20px;">
+    填充。像素ROI工具，，按住<b>shift</b>键，可限制直线角度        <br>参数：
+        <ul>
+            <li>设置填充颜色</li>
+        </ul></div>
+    <div class="tools-intro"><img src=":icons/icon_anchor.svg" alt="icon_anchor" style="width:20px;">
+    锚点工具。取点工具，点击后锁定锚点，随着时间轴变化，仅显示锚点处值变化。    
+    <br>参数：
+        <ul>
+            <li>设置颜色</li>
+        </ul></div>
+    <div class="tools-intro"><img src=":icons/icon_v-line.svg" alt="icon_v-line" style="width:20px;">
+    向量直线。向量ROI工具，会沿着向量直线取值，并平均垂直于直线两侧的值，目前仅用于<i>载流子扩散的选取</i>。    
+    <br>参数：
+        <ul>
+            <li>设置选区宽度（默认为2px）<b>此设置为该工具关键设置</b></li>
+            <li>设置颜色</li>
+        </ul></div>
+    <div class="tools-intro"><img src=":icons/icon_v-rect.svg" alt="icon_v-rect" style="width:20px;">
+    向量矩形。向量ROI工具，点击后锁定锚点，随着时间轴变化，仅显示锚点处值变化，。    
+    <br>参数：
+        <ul>
+            <li>设置颜色</li>
+        </ul></div>
+    <h3>其他工具</h3>
+    <div class="tools-intro"><img src=":icons/icon_color.svg" alt="icon_color" style="width:20px;">
+    样式设置，即应用伪彩色的设置，点击后弹出样式设置对话框
+    <br>参数：
+        <ul>
+            <li>选取需要设置的画布</li>
+            <li>设置是否应用伪色（取消勾选的话，便是默认的灰度显示</li>
+            <li>选择伪色样式</li>
+            <li>设置是否自动设置上下界</li>
+            <li>设置显示上下界</li>
+        </ul></div>
+    <div class="tools-intro"><img src=":icons/icon_accept.svg" alt="icon_accept" style="width:20px;">
+    ROI确认，目前除却向量矩形，其他ROI均需要确认，点击后显示画布即ROI列表，双击即可确认</div>
+    <div class="tools-intro"><img src=":icons/icon_cancel.svg" alt="icon_cancel" style="width:20px;"><i class="light-gray">现已弃用</i></div>
+    <div class="tools-intro"><img src=":icons/icon_reset.svg" alt="icon_reset" style="width:20px;">
+    重置，即清空画布上所有物体</div>
+    <div class="tools-intro"><img src=":icons/icon_export.svg" alt="icon_export" style="width:20px;">
+    导出，点击后进入导出页面，可选择需要导出的画布以及格式</div>
+
+</body>
+</html>
