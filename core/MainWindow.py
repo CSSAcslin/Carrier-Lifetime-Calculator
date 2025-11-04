@@ -1,5 +1,7 @@
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+
+import numpy as np
 from PyQt5 import sip
 from PyQt5.QtGui import QPixmap, QIcon, QFontDatabase
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -39,10 +41,10 @@ class MainWindow(QMainWindow):
     stft_python_signal = pyqtSignal(ProcessedData,float, int, int, int, int, int, str)
     cwt_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, str)
     cwt_python_signal = pyqtSignal(ProcessedData,float, int, int, str, float)
-    mass_export_signal = pyqtSignal(np.ndarray,str,str,str)
+    mass_export_signal = pyqtSignal(np.ndarray, str, str, str, bool, int)
     atam_signal = pyqtSignal(ProcessedData)
     tDgf_signal = pyqtSignal(ProcessedData,int,float,bool)
-
+    retransform_signal = pyqtSignal(ProcessedData, np.ndarray)
 
     def __init__(self):
         super().__init__()
@@ -545,6 +547,8 @@ class MainWindow(QMainWindow):
         cwt_layout.addWidget(self.cwt_process_btn)
         self.EM_mode_stack.addWidget(cwt_GROUP)
         EM_iSCAT_layout1.addWidget(self.EM_mode_stack)
+        self.EM_output_btn = QPushButton("时频变换结果快捷导出")
+        EM_iSCAT_layout1.addWidget(self.EM_output_btn)
 
         EM_iSCAT_layout2 = QHBoxLayout()
         self.after_process_select = QComboBox()
@@ -554,9 +558,13 @@ class MainWindow(QMainWindow):
         self.after_process_stack = QStackedWidget()
         whole_cell_GROUP = self.QGroupBoxCreator(style='inner')
         whole_cell_layout = QVBoxLayout()
-        self.EM_output_btn = QPushButton("时频变换结果导出")
+        self.retransform_input = QTextEdit()
+        self.retransform_input.setPlaceholderText("频率范围设定")
+        self.retransform_input.setFixedHeight(30)
+        self.retransform_btn = QPushButton("重设频率范围的变换")
         self.roi_signal_btn = QPushButton("选区信号均值变化")
-        whole_cell_layout.addWidget(self.EM_output_btn)
+        whole_cell_layout.addWidget(self.retransform_input)
+        whole_cell_layout.addWidget(self.retransform_btn)
         whole_cell_layout.addWidget(self.roi_signal_btn)
         whole_cell_GROUP.setLayout(whole_cell_layout)
         self.after_process_stack.addWidget(whole_cell_GROUP)
@@ -664,7 +672,6 @@ class MainWindow(QMainWindow):
         fs_help.triggered.connect(lambda: self.help_show('超快成像分析帮助',["general","lifetime"]))
         EM_help = help_menu.addAction('电化学调制iSCAT')
         EM_help.triggered.connect(lambda: self.help_show('电化学调制分析帮助',["general","stft","cwt"]))
-
 
     @staticmethod
     def QGroupBoxCreator(title="",style="default"):
@@ -833,6 +840,8 @@ class MainWindow(QMainWindow):
         self.image_display.image_style_change_signal.connect(self.dat_thread.to_colormap)
         self.image_display.image_export_signal.connect(self.dat_thread.export_data)
         self.dat_thread.data_progress_signal.connect(self.update_progress)
+        self.dat_thread.process_finish_signal.connect(self.image_display.update_canvas_by_stamp)
+        self.mass_export_signal.connect(self.dat_thread.export_data)
 
     def cal_thread_open(self):
         """计算线程相关 以及信号槽连接都放在这里了"""
@@ -852,11 +861,9 @@ class MainWindow(QMainWindow):
     def EM_thread_open(self):
         """加载EM文件的线程开启"""
         # 初始化数据处理线程
-
         self.avi_thread = QThread()
         self.mass_data_processor = MassDataProcessor()
         self.mass_data_processor.moveToThread(self.avi_thread)
-
         self.mass_data_processor.mass_finished.connect(self.loaded_EM)
         self.mass_data_processor.processing_progress_signal.connect(self.update_progress)
         self.mass_data_processor.processed_result.connect(self.processed_result)
@@ -867,9 +874,9 @@ class MainWindow(QMainWindow):
         self.stft_quality_signal.connect(self.mass_data_processor.quality_stft)
         self.cwt_quality_signal.connect(self.mass_data_processor.quality_cwt)
         self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
-        self.mass_export_signal.connect(self.mass_data_processor.export_EM_data)
         self.atam_signal.connect(self.mass_data_processor.accumulate_amplitude)
         self.tDgf_signal.connect(self.mass_data_processor.twoD_gaussian_fit)
+        self.retransform_signal.connect(self.mass_data_processor.retransform_data)
 
         # self.avi_thread.start()
 
@@ -897,6 +904,7 @@ class MainWindow(QMainWindow):
         self.EM_output_btn.clicked.connect(self.export_EM_data)
         self.atam_btn.clicked.connect(self.process_atam)
         self.tDgf_btn.clicked.connect(self.process_tDgf)
+        # self.retransform_btn.clicked.connect(self.retransform_EM_data)
         self.roi_signal_btn.clicked.connect(self.roi_signal_avg)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
@@ -1450,19 +1458,25 @@ class MainWindow(QMainWindow):
         # # 自动显示方差演化图
         # self.display_diffusion_coefficient()
 
-    def parse_frame_input(self):
+    def parse_frame_input(self,parse_type = "frame",freq = None):
         """解析用户输入的帧数"""
-        text = self.frame_input.toPlainText()
-        self.max_frame = self.vector_array.shape[0] - 1
-        # 替换所有分隔符为逗号
+        if parse_type=='frame':
+            text = self.frame_input.toPlainText()
+            self.max_frame = self.vector_array.shape[0] - 1
+        elif parse_type=='freq':
+            text = self.retransform_input.toPlainText()
         if text == 'all':
-            return list(range(self.max_frame + 1))
+            if parse_type=='frame':
+                return list(range(self.max_frame + 1))
+            else:
+                return freq
         if not text:
             QMessageBox.warning(self, "输入为空", "请输入有效的帧数选择")
             return None
-
+        # 替换所有分隔符为逗号
         text = text.replace(';', ',').replace('，', ',')
         frames = set()
+        target_idx = []
         parts = text.split(',')
         try:
             for part in parts:
@@ -1480,31 +1494,55 @@ class MainWindow(QMainWindow):
                     if start > end:
                         raise ValueError(f"起始帧({start})不能大于结束帧({end})")
 
-                    # 确保范围在有效区间内
-                    if start < 0 or end > self.max_frame:
-                        raise ValueError(f"范围 {part} 超出有效帧范围 (0-{self.max_frame})")
+                    if parse_type=='frame':
+                        # 确保范围在有效区间内
+                        if start < 0 or end > self.max_frame:
+                            raise ValueError(f"范围 {part} 超出有效帧范围 (0-{self.max_frame})")
+                        frames.update(range(start, end + 1))
 
-                    frames.update(range(start, end + 1))
-
+                    elif parse_type=='freq':
+                        if start < min(freq) or end > max(freq):
+                            raise ValueError(f"范围 {part} 超出有效频率范围 ({min(freq)}-{max(freq)})")
+                        f_list = np.where((freq >= start) & (freq <= end))[0]
+                        if isinstance(f_list, np.ndarray):
+                            target_idx.extend(f_list)
+                        else:
+                            target_idx.append(f_list)
                 # 处理单帧数字
                 else:
-                    frame = int(part)
-                    if frame < 0 or frame > self.max_frame:
-                        raise ValueError(f"帧号 {frame} 超出有效范围 (0-{self.max_frame})")
-                    frames.add(frame)
-            return sorted(frames)
+                    if parse_type == 'frame':
+                        frame = int(part)
+                        if frame < 0 or frame > self.max_frame:
+                            raise ValueError(f"帧号 {frame} 超出有效范围 (0-{self.max_frame})")
+                        frames.add(frame)
+                    elif parse_type == 'freq':
+                        target_idx.append(np.argmin(np.abs(freq - int(part))))
+            return sorted(frames) if parse_type=='frame' else np.unique(target_idx)
+
         except ValueError as e:
-            QMessageBox.warning(
-                self,
-                "输入错误",
-                f"无效输入: {str(e)}\n\n正确格式示例:\n"
-                "• 单帧: 5\n"
-                "• 序列: 1,3,5,7\n"
-                "• 范围: 10-15,20-25\n"
-                "• 混合: 1,3-5,7,9-10\n"
-                f"• 所有帧: all\n\n有效帧范围: 0-{self.max_frame}"
-            )
-            logging.warning(f"帧数输入错误: {str(e)} - 输入内容: {text}")
+            if parse_type=='frame':
+                QMessageBox.warning(
+                    self,
+                    "输入错误",
+                    f"无效输入: {str(e)}\n\n正确格式示例:\n"
+                    "• 单帧: 5\n"
+                    "• 序列: 1,3,5,7\n"
+                    "• 范围: 10-15,20-25\n"
+                    "• 混合: 1,3-5,7,9-10\n"
+                    f"• 所有帧: all\n\n有效帧范围: 0-{self.max_frame}"
+                )
+                logging.warning(f"帧数输入错误: {str(e)} - 输入内容: {text}")
+            if parse_type == 'freq':
+                QMessageBox.warning(
+                    self,
+                    "输入错误",
+                    f"无效输入: {str(e)}\n\n正确格式示例:\n"
+                    "• 单频率（离此频率最近的频率）: 30\n"
+                    "• 范围（再此范围内的频率）:10-15,20-25\n"
+                    "• 混合: 10,30-50,70,90-100\n"
+                    f"• 全频率: all，即: {min(freq)}-{max(freq)}"
+                )
+                logging.warning(f"频率输入错误: {str(e)} - 输入内容: {text}")
             return None
 
     def region_analyze_start(self):
@@ -1815,6 +1853,20 @@ class MainWindow(QMainWindow):
             self.update_status("准备就绪", 'idle')
             return
 
+    # def retransform_EM_data(self):
+    #     """重选频率"""
+    #     if self.data is None and self.processed_data is None:
+    #         logging.warning('请先导入并变换数据')
+    #         return
+    #     try:
+    #         data_aim = next(data for data in reversed(self.processed_data.history) if data.type_processed == "ROI_cwt" or data.type_processed == "Zxx_stft")
+    #     except Exception as e:
+    #         QMessageBox.warning(self,"数据错误","请重选数据焦点或重新变换数据")
+    #         return
+    #     target_idx = self.parse_frame_input(parse_type='freq',freq=data_aim.out_processed['frequencies'])
+    #     if target_idx is not None:
+    #         self.retransform_signal.emit(data_aim,target_idx)
+
     def processed_result(self, data):
         """处理过后的数据都来这里重整再分配"""
         if isinstance(data, ProcessedData):
@@ -1859,6 +1911,8 @@ class MainWindow(QMainWindow):
                 # if self.show_stft_check.isChecked():
                 #     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result)) # 要改
                 #     self.load_image()
+                pass
+            case 'Zxx_stft':
                 pass
             case 'ROI_cwt':
                 result = self.processed_data.data_processed
@@ -2059,7 +2113,8 @@ class MainWindow(QMainWindow):
                     directory = dialog.directory
                     prefix = dialog.text_edit.text().strip()
                     filetype = dialog.type_combo.currentText()
-                    self.mass_export_signal.emit(self.processed_data.data_processed,directory,prefix,filetype)
+                    duration = dialog.duration_input.value()
+                    self.mass_export_signal.emit(self.processed_data.data_processed,directory,prefix,filetype,False,duration)
                 return
             else:
                 QMessageBox.warning(self,'提示','请先变换处理数据')

@@ -27,7 +27,7 @@ class ImageDisplayWindow(QMainWindow):
     draw_result_signal = pyqtSignal(str, int, object)
     params_update_signal = pyqtSignal(dict)
     image_style_change_signal = pyqtSignal(object,dict)
-    image_export_signal = pyqtSignal(np.ndarray, str, str, str, bool)
+    image_export_signal = pyqtSignal(np.ndarray, str, str, str, bool, int)
     def __init__(self, params,parent=None):
         super().__init__(parent)
         self.display_canvas = []
@@ -268,15 +268,10 @@ class ImageDisplayWindow(QMainWindow):
         canvas_id = len(self.display_canvas)
         # self.display_data.append(data)
         data.canvas_num = canvas_id
-        new_canvas = SubImageDisplayWidget(name=f'{canvas_id}-{data.source_name}',canvas_id=canvas_id,data=data,args_dict=self.tool_parameters)
+        new_canvas = SubImageDisplayWidget(name=f'{canvas_id}-{data.source_name}',canvas_id=canvas_id,data=data,args_dict=self.tool_parameters,parent=self)
         self.display_canvas.append(new_canvas)
         self.add_dock(self.display_canvas[-1])
         # self.addDockWidget(Qt.LeftDockWidgetArea, self.display_canvas[-1])
-
-    def handle_dock_closed(self, top_level):
-        """当 Dock 关闭时触发"""
-        if not top_level:  # 当 Dock 不再是顶级窗口时（即被关闭）
-            self.parent().del_canvas(self.canvas_id)
 
     def _remove_single_canvas(self, canvas_id):
         """删除单个画布"""
@@ -363,7 +358,8 @@ class ImageDisplayWindow(QMainWindow):
         if not self.display_canvas:
             logging.warning("请先创建图像画板")
             return
-        self.display_canvas[self.cursor_id].set_drawing_tool(tool_name)
+        for canvas in self.display_canvas:
+            canvas.set_drawing_tool(tool_name)
         self.current_tool = tool_name
         if tool_name == 'Anchor':
             self.anchor_active = not self.anchor_active
@@ -475,19 +471,29 @@ class ImageDisplayWindow(QMainWindow):
             tool_dict.update(dialog.get_value())
             canvas = dialog.canvas_index
             if canvas == -1:
-                self.tool_parameters.update(tool_dict)
-                self.params_update_signal.emit(self.tool_parameters)
+                self.tool_parameters.update(tool_dict) # 水平
+                self.params_update_signal.emit(self.tool_parameters) # 向上
                 if not self.display_canvas:
                     return None
                 for canvas in self.display_canvas:
-                    self.image_style_change_signal.emit(canvas.data, tool_dict)
-                    canvas.set_toolset(self.tool_parameters)
+                    self.image_style_change_signal.emit(canvas.data, tool_dict) # 去处理数据
+                    canvas.set_toolset(self.tool_parameters) # 向下
             else:
                 if not self.display_canvas:
                     return None
                 self.image_style_change_signal.emit(self.display_canvas[canvas].data, tool_dict)
-                self.display_canvas[canvas].set_toolset(self.tool_parameters)
+                self.display_canvas[canvas].set_toolset(tool_dict)
         pass
+
+    def update_canvas_by_stamp(self,data):
+        """根据data溯源所在canvas"""
+        if not self.display_canvas:
+            return
+        try:
+            canvas = next(canvas for canvas in self.display_canvas if canvas.data.timestamp == data.timestamp)
+            canvas.update_after_set()
+        except Exception as e:
+            raise IndexError(f"canvas 未找到:{e}")
 
     def export_canvas_dialog(self):
         """导出画布数据的对话框"""
@@ -518,7 +524,7 @@ class SubImageDisplayWidget(QDockWidget):
     draw_result_signal = pyqtSignal(str,int,object)
     def __init__(self, parent=None,canvas_id = None,name = None, data :ImagingData = None, args_dict :dict = None):
         super().__init__(name, parent)
-
+        self.parent_window = parent
         self.id = canvas_id
         self.data = data
         self.current_image = None
@@ -710,8 +716,13 @@ class SubImageDisplayWidget(QDockWidget):
         self.use_colormap = args_dict["use_colormap"]  # 是否使用伪彩色
         self.min_value = args_dict["min_value"]  # 伪彩色最小值
         self.max_value = args_dict["max_value"]  # 伪彩色最大值
-        if args_dict["auto_boundary_set"]:
+        self.auto_boundary_set = args_dict["auto_boundary_set"]
+        if self.auto_boundary_set:
             self.auto_colormap_range()
+        self.update_after_set()
+
+    def update_after_set(self):
+        """更新设置后的更新"""
         if self.use_colormap and hasattr(self,'graphics_view'):
             self.update_time_slice(self.current_time_idx)
             self.add_colorbar()
@@ -1120,8 +1131,7 @@ class SubImageDisplayWidget(QDockWidget):
 
     def closeEvent(self, event):
         """重写关闭事件"""
-        if self.parent() and hasattr(self.parent(), 'remove_canvas'):
-            self.parent().remove_canvas(self.canvas_id)
+        self.parent_window.del_canvas(self.canvas_id)
         super().closeEvent(event)
 
     """下面是播放和图像更新的设置"""
@@ -1190,38 +1200,28 @@ class SubImageDisplayWidget(QDockWidget):
             raise ValueError('idx out of range(impossible Fault)')
         self.current_time_idx = idx
         self.time_label.setText(f"{self.current_time_idx}/{self.max_time_idx - 1}")
-        if self.data.colormode != self.colormap and self.data.is_temporary:
-            self.update_display_idx(self.data.image_backup[idx])
-        elif self.data.colormode != self.colormap and not self.data.is_temporary:
-            if self.use_colormap:
-                self.update_display_idx(self.data.image_backup)
+        if self.use_colormap:  # 是否伪彩
+            if self.data.colormode == self.colormap:  # 是否模式匹配
+                image_data = self.data.image_data[idx] if self.data.is_temporary else self.data.image_data  # 是否时间分辨
             else:
-                self.update_display_idx(self.data.to_uint8())
-        elif self.data.ROI_applied:
-            self.update_display_idx(self.data.image_ROI[idx])
-        elif not self.data.ROI_applied and self.data.is_temporary:
-            self.update_display_idx(self.data.image_data[idx])
-        elif not self.data.ROI_applied and not self.data.is_temporary:
-            self.update_display_idx(self.data.image_data)
+                image_data = self.data.image_backup[idx] if self.data.is_temporary else self.data.to_uint8()
+        else:
+            image_data = self.data.image_data[idx] if self.data.is_temporary else self.data.image_data
+        self.update_display(image_data)
 
     def display_image(self):
         """显示图像数据 (使用QPixmap)并记录当前时间索引
         ROI_applied 暂时放弃"""
-
-        if not self.use_colormap and self.data.is_temporary and self.data.ROI_applied:
-            image_data = self.data.image_ROI[0]
-        elif not self.use_colormap and self.data.is_temporary and not self.data.ROI_applied:
-            image_data = self.data.image_data[0]
-        elif not self.use_colormap and not self.data.is_temporary and self.data.ROI_applied:
-            image_data = self.data.image_ROI
-        elif not self.use_colormap and not self.data.is_temporary and not self.data.ROI_applied:
-            image_data = self.data.image_data
-        elif self.use_colormap and self.data.is_temporary and not self.data.ROI_applied and self.data.colormode != self.colormap:
-            image_data = self.data.image_backup[0]
-        elif self.use_colormap and not self.data.is_temporary and not self.data.ROI_applied and self.data.colormode != self.colormap:
-            image_data = self.data.image_backup
-        else:
-            raise ValueError('nodata(impossible Fault)')
+        try:
+            if self.use_colormap: # 是否伪彩
+                if self.data.colormode == self.colormap: # 是否模式匹配
+                    image_data = self.data.image_data[0] if self.data.is_temporary else self.data.image_data # 是否时间分辨
+                else:
+                    image_data = self.data.image_backup[0] if self.data.is_temporary else self.data.image_backup
+            else:
+                image_data = self.data.image_data[0] if self.data.is_temporary else self.data.image_data
+        except Exception as e:
+            raise  ValueError(f'nodata(impossible Fault):{e}')
 
         self.graphics_view.resize(self.width(), self.height())
         self.scene.clear()
@@ -1266,7 +1266,7 @@ class SubImageDisplayWidget(QDockWidget):
 
         self.add_colorbar()
 
-    def update_display_idx(self, image_data):
+    def update_display(self, image_data):
         """仅更新图像数据，不改变视图状态"""
         self.current_image = image_data
 

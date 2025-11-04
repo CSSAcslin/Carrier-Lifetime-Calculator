@@ -22,13 +22,13 @@ class DataManager(QObject):
     remove_request_back = pyqtSignal(dict)
     amend_request_back = pyqtSignal(dict)
     data_progress_signal = pyqtSignal(int, int)
+    process_finish_signal = pyqtSignal(object)
     def __init__(self, parent=None):
         super(DataManager, self).__init__(parent)
         self.color_map_manager = ColorMapManager()
         logging.info("图像数据管理线程已启动")
 
-    @staticmethod
-    def to_uint8(data):
+    def to_uint8(self, data):
         """归一化和数字类型调整"""
         data_o = data.image_backup
         min_value = data.imagemin
@@ -39,6 +39,7 @@ class DataManager(QObject):
 
         # 计算数组的最小值和最大值
         data.image_data = ((data_o - min_value)/(max_value- min_value)*255).astype(np.uint8)
+        self.process_finish_signal.emit(data)
         return True
 
     def to_colormap(self,data,params):
@@ -81,9 +82,10 @@ class DataManager(QObject):
             )
             data.image_data = new_data
         data.colormode = colormode
+        self.process_finish_signal.emit(data)
         return True
 
-    @pyqtSlot(np.ndarray, str, str, str, bool)
+    @pyqtSlot(np.ndarray, str, str, str, bool, int)
     def export_data(self, result, output_dir, prefix, format_type='tif',is_temporal=True,duration = 100):
         """
         时频变换后目标频率下的结果导出
@@ -101,7 +103,7 @@ class DataManager(QObject):
         if format_type == 'tif':
             return self.export_as_tif(result, output_dir, prefix,is_temporal)
         elif format_type == 'avi':
-            return self.export_as_avi(result, output_dir, prefix)
+            return self.export_as_avi(result, output_dir, prefix,duration)
         elif format_type == 'png':
             return self.export_as_png(result, output_dir, prefix,is_temporal)
         elif format_type == 'gif':
@@ -156,7 +158,7 @@ class DataManager(QObject):
         logging.info(f'导出TIFF完成: {output_dir}, 共{num_frames}帧')
         return created_files
 
-    def export_as_avi(self, result, output_dir, prefix):
+    def export_as_avi(self, result, output_dir, prefix,duration = 60):
         """支持彩色视频导出"""
         num_frames = result.shape[0]
         self.data_progress_signal.emit(0, num_frames)
@@ -179,7 +181,7 @@ class DataManager(QObject):
 
         # 创建视频
         output_path = os.path.join(output_dir, f"{prefix}.avi")
-        fps = max(10, min(30, num_frames // 10))
+        fps = num_frames // duration
         fourcc = cv2.VideoWriter_fourcc(*'MJPG')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height), isColor=is_color)
 
@@ -642,8 +644,7 @@ class ImagingData:
     """
     timestamp_inherited: float
     image_backup: np.ndarray = None # 原始数据
-    image_data: np.ndarray = None # 归一，放宽，整数化后的数据
-    image_ROI: np.ndarray = None
+    image_data: np.ndarray = None # 归一，放宽，整数化后的数据 （最终显示）
     image_type: str = None
     colormode: str = None # 色彩模式，目前在sub类中实现
     canvas_num: int = field(default=0)
@@ -669,7 +670,7 @@ class ImagingData:
         """初始化ImagingData"""
 
         instance = cls.__new__(cls)
-
+        instance.timestamp = time.time()
         # 设置图像数据
         if isinstance(data_obj, Data):
             # instance.image_data = data_obj.data_origin.copy()
@@ -709,18 +710,18 @@ class ImagingData:
         if self.ROI_mask.dtype == bool:
             # 布尔蒙版：将非 ROI 区域置零
             if self.ndim == 3:
-                self.ROI_mask = copy.deepcopy(self.image_data)
+                self.ROI_mask = copy.deepcopy(self.image_backup)
                 for every_data in self.ROI_mask:
                     every_data[~mask] = self.imagemin
             if self.ndim == 2:
-                self.ROI_mask = copy.deepcopy(self.image_data)
+                self.ROI_mask = copy.deepcopy(self.image_backup)
                 self.ROI_mask[~mask] = self.imagemin
             else:
                 raise ValueError("该数据无法应用ROI蒙版")
         else:
             # 数值蒙版：应用乘法操作
             if self.ndim >= 2:
-                self.image_ROI = self.image_data * self.ROI_mask
+                self.image_data = self.image_backup * self.ROI_mask
             else:
                 raise ValueError("该数据无法应用ROI蒙版")
 

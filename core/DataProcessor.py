@@ -11,6 +11,7 @@ import pywt
 import h5py
 from PIL import Image
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
+from numpy.array_api import complex64
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
 from scipy import signal
@@ -544,7 +545,7 @@ class MassDataProcessor(QObject):
             )
             # 提取范围内所有对应的索引
             if scale_range > 0:
-                low_bound = max(0, target_freq - scale_range / 2.0)
+                low_bound = max(0.0, target_freq - scale_range / 2.0)
                 high_bound = min(f[-1], target_freq + scale_range / 2.0)
                 target_idx = np.where((f >= low_bound) & (f <= high_bound))[0]
                 if len(target_idx) == 0:
@@ -592,6 +593,7 @@ class MassDataProcessor(QObject):
             target_idx = data.out_processed['target_idx']
             out_length = data.out_processed['out_length']
             time_series = data.out_processed['time_series']
+            freq = data.out_processed['frequencies']
             data = next(data for data in reversed(data.history) if data.type_processed == "EM_pre_processed")# [像素数 x 帧数]
             frame_size = data.framesize  # (宽度, 高度)
             unfolded_data = data.out_processed['unfolded_data']
@@ -608,6 +610,7 @@ class MassDataProcessor(QObject):
             # 4. 初始化结果数组
             height, width = frame_size
             stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
+            # zxx_out = np.zeros(((freq.shape[0]-1)*2,out_length, height, width), dtype=complex64)
 
             # 窗函数的选择和生成
             window = self.get_window(window_type, window_size)
@@ -641,6 +644,7 @@ class MassDataProcessor(QObject):
                 y = i // width
                 x = i % width
                 stft_py_out[:, y, x] = magnitude
+                # zxx_out[:,:, y, x] = Zxx
 
                 self.processing_progress_signal.emit(i, total_pixels)
 
@@ -649,6 +653,15 @@ class MassDataProcessor(QObject):
             #     dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
 
             # 6. 发送完整结果
+            # logging.info("这是调试ing")
+            # self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+            #                                                    f'{data.name}@Zxx_stft',
+            #                                                    'Zxx_stft',
+            #                                                    time_point=time_series,
+            #                                                    data_processed=zxx_out,
+            #                                                    out_processed={'frequencies':freq,}
+            #                                                    ))
+            # logging.info("保留了完整的STFT结果")
             self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                                                f'{data.name}@r_stft',
                                                                'ROI_stft',
@@ -791,6 +804,7 @@ class MassDataProcessor(QObject):
                                                                  'ROI_cwt',
                                                                  time_point=times,
                                                                  data_processed=cwt_py_out,
+                                                                 out_processed={'frequencies': data.out_processed['frequencies'], }
                                                                  ))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             return True
@@ -798,144 +812,28 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type':"ROI_cwt",'error':str(e)})
             return False
 
+    @pyqtSlot(DataManager.ProcessedData, np.ndarray)
+    def retransform_data(self,data,target_idx):
+        try:
+            self.processing_progress_signal.emit(0,100)
+            if data.type_processed == "Zxx_stft":
+                new_stft_out = np.mean(np.abs(data.data_processed[target_idx, :, :, :]), axis=0) * 560
+                self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+                                                                     f'{data.name}@r_stft',
+                                                                     'ROI_stft',
+                                                                     time_point=data.time_point,
+                                                                     data_processed=new_stft_out,
+                                                                     ))
+                self.processing_progress_signal.emit(100, 100)
+            else:
+                return
+                self.processing_progress_signal.emit(100, 100)
+        except Exception as e:
+            self.processed_result.emit({'type': "re_transform", 'error': str(e)})
+
+
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
-
-    @pyqtSlot(np.ndarray,str,str,str)
-    def export_EM_data(self, result, output_dir, prefix, format_type='tif'):
-        """
-        时频变换后目标频率下的结果导出
-        支持多种格式: tif, avi, png, gif
-
-        参数:
-            result: 输入数据数组
-            output_dir: 输出目录路径
-            prefix: 文件前缀
-            format_type: 导出格式 ('tif', 'avi', 'png', 'gif')
-        """
-        format_type = format_type.lower()
-
-        # 根据格式类型调用不同的导出函数
-        if format_type == 'tif':
-            return self.export_as_tif(result, output_dir, prefix)
-        elif format_type == 'avi':
-            return self.export_as_avi(result, output_dir, prefix)
-        elif format_type == 'png':
-            return self.export_as_png(result, output_dir, prefix)
-        elif format_type == 'gif':
-            return self.export_as_gif(result, output_dir, prefix)
-        else:
-            logging.error(f"不支持的格式类型: {format_type}")
-            raise ValueError(f"不支持格式: {format_type}。请使用 'tif', 'avi', 'png' 或 'gif'")
-
-    def export_as_tif(self, result, output_dir, prefix):
-        """导出为TIFF格式序列"""
-        num_frames = result.shape[0]
-        num_digits = len(str(num_frames))
-        self.processing_progress_signal.emit(0, num_frames)
-        created_files = []
-
-        for frame_idx in range(num_frames): # 生成带序号的完整文件路径
-            frame_name = f"{prefix}-{frame_idx:0{num_digits+1}d}.tif"
-            output_path = os.path.join(output_dir, frame_name)
-
-            tiff.imwrite(output_path, result[frame_idx], photometric='minisblack')
-            created_files.append(output_path)
-            self.processing_progress_signal.emit(frame_idx + 1, num_frames)
-
-        logging.info(f'完成TIFF导出，目标文件夹{output_dir}, 总数{num_frames}张')
-        return
-
-    def export_as_avi(self, result, output_dir, prefix):
-        """导出为AVI视频格式"""
-        num_frames = result.shape[0]
-        self.processing_progress_signal.emit(0, num_frames)
-
-        # 确保输出目录存在
-        os.makedirs(output_dir, exist_ok=True)
-
-        # 规范化数据到0-255范围 (假设输入是浮点数)
-        # normalized = np.zeros_like(result, dtype=np.uint8)
-        if result.dtype != np.uint8:
-            normalized = ((result - result.min()) / (result.max() - result.min()) * 255).astype(np.uint8)
-        else:
-            normalized = result
-
-        # 创建视频编写器
-        output_path = os.path.join(output_dir, f"{prefix}.avi")
-        height, width = result.shape[1], result.shape[2]
-
-        # 根据帧数调整FPS
-        fps = max(10, min(30, num_frames // 10))
-
-        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height), isColor=False)
-
-        for frame_idx in range(num_frames):
-            out.write(normalized[frame_idx])
-            self.processing_progress_signal.emit(frame_idx + 1, num_frames)
-
-        out.release()
-        logging.info(f'完成AVI导出: {output_path}, 总数{num_frames}帧')
-        return [output_path]
-
-    def export_as_png(self, result, output_dir, prefix):
-        """导出为PNG格式序列"""
-        num_frames = result.shape[0]
-        num_digits = len(str(num_frames))
-        self.processing_progress_signal.emit(0, num_frames)
-        created_files = []
-
-        # 规范化数据
-        normalized = np.zeros_like(result, dtype=np.uint8)
-        if result.dtype != np.uint8:
-            normalized = ((result - result.min()) / (result.max() - result.min()) * 255).astype(np.uint8)
-        else:
-            normalized = result
-
-        for frame_idx in range(num_frames):
-            frame_name = f"{prefix}-{frame_idx:0{num_digits+1}d}.png"
-            output_path = os.path.join(output_dir, frame_name)
-
-            # 使用PIL保存PNG
-            img = Image.fromarray(normalized[frame_idx])
-            img.save(output_path)
-            created_files.append(output_path)
-            self.processing_progress_signal.emit(frame_idx + 1, num_frames)
-
-        logging.info(f'完成PNG导出，目标文件夹{output_dir}, 总数{num_frames}张')
-        return created_files
-
-    def export_as_gif(self, result, output_dir, prefix):
-        """导出为GIF动画"""
-        num_frames = result.shape[0]
-        self.processing_progress_signal.emit(0, num_frames)
-
-        # 规范化数据
-        # normalized = np.zeros_like(result, dtype=np.uint8)
-        if result.dtype != np.uint8:
-            normalized = ((result - result.min()) / (result.max() - result.min()) * 255).astype(np.uint8)
-        else:
-            normalized = result
-
-        # 创建PIL图像列表
-        images = []
-        for frame_idx in range(num_frames):
-            images.append(Image.fromarray(normalized[frame_idx]))
-            self.processing_progress_signal.emit(frame_idx + 1, num_frames)
-
-        # 保存GIF
-        output_path = os.path.join(output_dir, f"{prefix}.gif")
-        images[0].save(
-            output_path,
-            save_all=True,
-            append_images=images[1:],
-            duration=100,  # 每帧持续时间(毫秒)
-            loop=0  # 无限循环
-        )
-
-        logging.info(f'完成GIF导出: {output_path}, 总数{num_frames}帧')
-        return [output_path]
 
     @pyqtSlot(DataManager.ProcessedData)
     def accumulate_amplitude(self,data:DataManager.ProcessedData):

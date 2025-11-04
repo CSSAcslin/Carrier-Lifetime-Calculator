@@ -1008,7 +1008,7 @@ class DataExportDialog(QDialog):
     def _update_type(self):
         """选择到处类型后发生什么"""
         self.current_type = self.type_combo.currentText()
-        if self.current_type == 'gif':
+        if self.current_type == 'gif' or self.current_type == 'avi':
             self.duration_label.setVisible(True)
             self.duration_input.setVisible(True)
         else:
@@ -1336,22 +1336,35 @@ class ROIInfoDialog(QDialog):
             # 添加画布基本信息行
             row_position = self.table.rowCount()
             self.table.insertRow(row_position)
-            self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
-            self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
-            self.table.setItem(row_position, 2, QTableWidgetItem(f"{info['image_size'][1]}×{info['image_size'][0]}"))
-            self.table.setItem(row_position, 3, QTableWidgetItem("这是画布"))
-            self.table.setItem(row_position, 4, QTableWidgetItem(""))
+            # 创建并设置所有单元格
+            items_data = [
+                str(info['canvas_id']),
+                info['image_name'],
+                f"{info['image_size'][1]}×{info['image_size'][0]}",
+                "这是画布本身",
+                ""
+            ]
+
+            for col, text in enumerate(items_data):
+                item = QTableWidgetItem(text)
+                item.setToolTip(text)  # 始终设置ToolTip
+                self.table.setItem(row_position, col, item)
+            # self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
+            # self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
+            # self.table.setItem(row_position, 2, QTableWidgetItem(f"{info['image_size'][1]}×{info['image_size'][0]}"))
+            # self.table.setItem(row_position, 3, QTableWidgetItem("这是画布"))
+            # self.table.setItem(row_position, 4, QTableWidgetItem(""))
 
             # 添加ROI信息行
             for roi in info['ROIs']:
                 row_position = self.table.rowCount()
                 self.table.insertRow(row_position)
-                self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
-                self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
-                self.table.setItem(row_position, 2, QTableWidgetItem(""))
-
-                # ROI类型
-                self.table.setItem(row_position, 3, QTableWidgetItem(roi['type']))
+                # self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
+                # self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
+                # self.table.setItem(row_position, 2, QTableWidgetItem(""))
+                #
+                # # ROI类型
+                # self.table.setItem(row_position, 3, QTableWidgetItem(roi['type']))
 
                 # ROI详情
                 if roi['type'] == 'v_rect':
@@ -1371,7 +1384,18 @@ class ROIInfoDialog(QDialog):
                 else:
                     details = "没有ROI"
 
-                self.table.setItem(row_position, 4, QTableWidgetItem(details))
+                roi_items_data = [
+                    str(info['canvas_id']),
+                    info['image_name'],
+                    "",
+                    roi['type'],
+                    details
+                ]
+                for col, text in enumerate(roi_items_data):
+                    item = QTableWidgetItem(text)
+                    item.setToolTip(text)  # 始终设置ToolTip
+                    self.table.setItem(row_position, col, item)
+                # self.table.setItem(row_position, 4, QTableWidgetItem(details))
 
         # 调整列宽
         self.table.resizeColumnsToContents()
@@ -1432,10 +1456,10 @@ class ColorMapDialog(QDialog):
 
         self.up_boundary_set = QDoubleSpinBox()
         self.up_boundary_set.setRange(0,999999)
-        self.up_boundary_set.setDecimals(1)
+        self.up_boundary_set.setDecimals(3)
         self.low_boundary_set = QDoubleSpinBox()
         self.low_boundary_set.setRange(0,999999)
-        self.low_boundary_set.setDecimals(1)
+        self.low_boundary_set.setDecimals(3)
 
         # 添加到布局
         self.colormap_control_layout.addRow(QLabel("应用区域:"),self.canvas_selector)
@@ -1472,15 +1496,15 @@ class ColorMapDialog(QDialog):
     def _handle_canvas_change(self):
         if self.canvas_selector.currentIndex() >= 1:
             canvas_id = self.canvas_selector.currentIndex()-1
-            canvas_params = self.parent_window.display_canvas[canvas_id].args_dict
+            canvas = self.parent_window.display_canvas[canvas_id]
             self.imagemin = self.parent_window.display_canvas[canvas_id].data.imagemin
             self.imagemax = self.parent_window.display_canvas[canvas_id].data.imagemax
-            self.colormap_toggle.setChecked(canvas_params['use_colormap'])
-            self.colormap_selector.setCurrentText(canvas_params['colormap'])
+            self.colormap_toggle.setChecked(canvas.use_colormap)
+            self.colormap_selector.setCurrentText(canvas.colormap)
             self.up_boundary_set.setValue(self.imagemax)
             self.low_boundary_set.setValue(self.imagemin)
             self.canvas_index = self.canvas_selector.currentIndex() - 1
-            if not canvas_params['auto_boundary_set']:
+            if not canvas.auto_boundary_set:
                 self.boundary_set.setCurrentIndex(1)
             else:
                 self.boundary_set.setCurrentIndex(0)
