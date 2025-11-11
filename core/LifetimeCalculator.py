@@ -442,9 +442,16 @@ class CalculationThread(QObject):
         self.cal_running_status.emit(False)
         self.stop_thread_signal.emit()
 
-    def heat_transfer_calculation(self,origin_data):
+    @pyqtSlot(object)
+    def heat_transfer_calculation(self,data):
         """计算传热系数"""
         self._is_calculating = True
+        origin_data = data.data_processed
+        heat_transfer = np.where(origin_data != 0, 42.72 / origin_data, 0)
+        self.processed_result.emit(ProcessedData(data.timestamp,
+                                                 f'{data.name}@heat',
+                                                 'heat_transfer',
+                                                 data_processed=heat_transfer,))
         pass
 
     def stop(self):

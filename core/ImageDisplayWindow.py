@@ -27,7 +27,7 @@ class ImageDisplayWindow(QMainWindow):
     draw_result_signal = pyqtSignal(str, int, object)
     params_update_signal = pyqtSignal(dict)
     image_style_change_signal = pyqtSignal(object,dict)
-    image_export_signal = pyqtSignal(np.ndarray, str, str, str, bool, int)
+    image_export_signal = pyqtSignal(object, str, str, str, bool, dict)
     def __init__(self, params,parent=None):
         super().__init__(parent)
         self.display_canvas = []
@@ -511,8 +511,14 @@ class ImageDisplayWindow(QMainWindow):
             prefix = dialog.text_edit.text().strip()
             filetype = dialog.type_combo.currentText()
             canvas_id = dialog.canvas_selector.currentIndex()
-            duration = dialog.duration_input.value() if dialog.current_type == 'gif' else 60
-            self.image_export_signal.emit(self.display_canvas[canvas_id].data.image_data,directory,prefix,filetype,self.display_canvas[canvas_id].is_temporal,duration)
+            arg_dict = dialog.get_values()
+            arg_dict.update({'max_bound': self.display_canvas[canvas_id].max_value,
+                             'min_bound': self.display_canvas[canvas_id].min_value,
+                             'cmap': self.display_canvas[canvas_id].colormap})
+            self.image_export_signal.emit(self.display_canvas[canvas_id].data,
+                                          directory,prefix,filetype,
+                                          self.display_canvas[canvas_id].is_temporal,
+                                          arg_dict)
             logging.info(f"开始导出图像数据{info[canvas_id]}")
 
 
@@ -537,6 +543,8 @@ class SubImageDisplayWidget(QDockWidget):
         self.initial_scale = None
         self.min_scale = 0.1
         self.max_scale = 30.0
+        self.min_value = data.imagemin
+        self.max_value = data.imagemax
         self.draw_roi = np.zeros(data.framesize, dtype=np.uint8) # ROI结果（像素）
         self.data_layer = None # 数据层
         self.draw_layer = None # 绘图层
@@ -548,6 +556,7 @@ class SubImageDisplayWidget(QDockWidget):
         self.colorbar_width = 3  # 颜色条宽度
         self.colorbar_padding = 5  # 颜色条边距
         self.color_map_manager = ColorMapManager()  # 伪彩色管理器
+        self.colormap = None
 
         # 工具响应
         self.drawing_tool = None
@@ -572,7 +581,7 @@ class SubImageDisplayWidget(QDockWidget):
             'angle_step':pi/4,
             'fill': False,
             'vector_width':2,
-            'colormap': 'Jet',
+            'colormap': 'jet',
             'use_colormap': False,
             'auto_boundary_set': True,
             'min_value': None,
@@ -727,8 +736,8 @@ class SubImageDisplayWidget(QDockWidget):
             self.update_time_slice(self.current_time_idx)
             self.add_colorbar()
             self.graphics_view.resize(self.width(), self.height())
-            self.graphics_view.resetTransform()
-            self.graphics_view.fitInView(self.data_layer, Qt.KeepAspectRatio)
+            # self.graphics_view.resetTransform()
+            # self.graphics_view.fitInView(self.data_layer, Qt.KeepAspectRatio)
         elif not self.use_colormap and hasattr(self,'graphics_view'):
             self.update_time_slice(self.current_time_idx)
             # logging.info("若未更新，滑动时间轴即可更新")
@@ -738,8 +747,8 @@ class SubImageDisplayWidget(QDockWidget):
                 self.scene.removeItem(self.min_label)
                 self.scene.removeItem(self.max_label)
             self.graphics_view.resize(self.width(), self.height())
-            self.graphics_view.resetTransform()
-            self.graphics_view.fitInView(self.data_layer, Qt.KeepAspectRatio)
+            # self.graphics_view.resetTransform()
+            # self.graphics_view.fitInView(self.data_layer, Qt.KeepAspectRatio)
 
     def auto_colormap_range(self):
         """自动设置伪彩色范围"""
@@ -1131,7 +1140,7 @@ class SubImageDisplayWidget(QDockWidget):
 
     def closeEvent(self, event):
         """重写关闭事件"""
-        self.parent_window.del_canvas(self.canvas_id)
+        self.parent_window.del_canvas(self.id)
         super().closeEvent(event)
 
     """下面是播放和图像更新的设置"""

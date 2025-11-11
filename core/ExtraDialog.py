@@ -885,7 +885,7 @@ class DataExportDialog(QDialog):
         self.setMinimumHeight(450)
         # self.datatypes = datatypes if datatypes else []
         self.is_temporal = is_temporal
-        self.datatypes = ['tif','avi','gif','png']
+        self.datatypes = ['tif','avi','gif','png','plt']
         self.canvas_info = canvas_info
         self.export_type = export_type
 
@@ -962,16 +962,29 @@ class DataExportDialog(QDialog):
         self.type_combo.currentIndexChanged.connect(self._update_type)
 
         # 4. 其他参数
-        self.duration_label = QLabel("时长")
+        self.duration_label = QLabel("视频时长：")
         self.duration_input = QSpinBox()
         self.duration_input.setRange(0,10000)
         self.duration_input.setValue(60)
         form_layout.addRow(self.duration_label, self.duration_input)
         self.duration_label.setVisible(False)
         self.duration_input.setVisible(False)
+        self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("导出图的title，可留空")
+        self.title_label = QLabel("导图标题：")
+        form_layout.addRow(self.title_label , self.title_input)
+        self.title_input.setVisible(False)
+        self.title_label.setVisible(False)
+        self.colorbar_label_label = QLabel("彩棒标签：")
+        self.colorbar_label_input = QLineEdit()
+        self.colorbar_label_input.setPlaceholderText("导出图的右侧的标签，可留空")
+        form_layout.addRow(self.colorbar_label_label , self.colorbar_label_input)
+        self.colorbar_label_label.setVisible(False)
+        self.colorbar_label_input.setVisible(False)
 
+        self.info_label = QLabel('注意：使用avi/gif/png，会对原始数据有压缩！')
         main_layout.addLayout(form_layout)
-        main_layout.addWidget(QLabel('注意：使用avi/gif/png，会对原始数据有压缩！'))
+        main_layout.addWidget(self.info_label)
 
         # 5. 确认/取消按钮
         btn_layout = QHBoxLayout()
@@ -990,10 +1003,10 @@ class DataExportDialog(QDialog):
 
     def datatypes_change(self):
         if self.is_temporal[self.canvas_selector.currentIndex()]:
-            self.datatypes = ['tif','avi','gif','png']
+            self.datatypes = ['tif','avi','gif','png','plt']
             self.update_datatype(self.datatypes)
         if not self.is_temporal[self.canvas_selector.currentIndex()]:
-            self.datatypes = ['tif', 'png']
+            self.datatypes = ['tif', 'png', 'plt']
             self.update_datatype(self.datatypes)
 
     def update_datatype(self, datatypes):
@@ -1011,9 +1024,27 @@ class DataExportDialog(QDialog):
         if self.current_type == 'gif' or self.current_type == 'avi':
             self.duration_label.setVisible(True)
             self.duration_input.setVisible(True)
+            self.title_input.setVisible(False)
+            self.title_label.setVisible(False)
+            self.colorbar_label_label.setVisible(False)
+            self.colorbar_label_input.setVisible(False)
+            self.info_label.setText('注意：使用avi/gif/png，会对原始数据有压缩！')
+        elif self.current_type == 'plt':
+            self.duration_label.setVisible(False)
+            self.duration_input.setVisible(False)
+            self.title_input.setVisible(True)
+            self.title_label.setVisible(True)
+            self.colorbar_label_label.setVisible(True)
+            self.colorbar_label_input.setVisible(True)
+            self.info_label.setText("本方法是用于导出带colorbar结果的tif图")
         else:
             self.duration_label.setVisible(False)
             self.duration_input.setVisible(False)
+            self.title_input.setVisible(False)
+            self.title_label.setVisible(False)
+            self.colorbar_label_label.setVisible(False)
+            self.colorbar_label_input.setVisible(False)
+            self.info_label.setText('注意：使用avi/gif/png，会对原始数据有压缩！')
             return
 
     def browse_directory(self):
@@ -1029,11 +1060,13 @@ class DataExportDialog(QDialog):
     def get_values(self):
         """获取用户输入的值"""
         return {
-            'canvas': self.canvas_selector.currentIndex() if self.export_type == 'canvas' else None,
-            'path': self.path_edit.text().strip(),
-            'filename': self.text_edit.text().strip(),
-            'filetype': self.type_combo.currentText(),
-            'duration': self.duration_input.value() if self.current_type == 'gif' else None,
+            # 'canvas': self.canvas_selector.currentIndex() if self.export_type == 'canvas' else None,
+            # 'path': self.path_edit.text().strip(),
+            # 'filename': self.text_edit.text().strip(),
+            # 'filetype': self.type_combo.currentText(),
+            'duration': self.duration_input.value() if self.current_type in ['gif','avi'] else None,
+            'title': self.title_input.text() if self.current_type in ['plt'] else None,
+            'colorbar_label': self.colorbar_label_input.text() if self.current_type in ['plt'] else None,
         }
 
 # 数据选择查看视窗
@@ -1144,15 +1177,9 @@ class DataViewAndSelectPop(QDialog):
             for col_idx, key in enumerate(keys):
                 value = str(data_dict.get(key, ''))
                 item = QTableWidgetItem(value)
+                item.setToolTip(value)
                 item.setTextAlignment(Qt.AlignCenter)
                 table.setItem(row_idx, col_idx, item)
-
-                # 设置ToolTip
-                if row_idx == 0:
-                    item.setToolTip('当前数据（最新）')
-                    item.setBackground(QColor(212, 237, 205))
-                else:
-                    item.setToolTip('历史数据')
 
             # 在最后一列创建并设置按钮
             button_text = "显示选择" if self.add_canvas else "设为当前"
@@ -1455,10 +1482,10 @@ class ColorMapDialog(QDialog):
         self.boundary_set.currentIndexChanged.connect(self._handle_boundary_set)
 
         self.up_boundary_set = QDoubleSpinBox()
-        self.up_boundary_set.setRange(0,999999)
+        self.up_boundary_set.setRange(-999999,999999)
         self.up_boundary_set.setDecimals(3)
         self.low_boundary_set = QDoubleSpinBox()
-        self.low_boundary_set.setRange(0,999999)
+        self.low_boundary_set.setRange(-999999,999999)
         self.low_boundary_set.setDecimals(3)
 
         # 添加到布局
@@ -1497,8 +1524,8 @@ class ColorMapDialog(QDialog):
         if self.canvas_selector.currentIndex() >= 1:
             canvas_id = self.canvas_selector.currentIndex()-1
             canvas = self.parent_window.display_canvas[canvas_id]
-            self.imagemin = self.parent_window.display_canvas[canvas_id].data.imagemin
-            self.imagemax = self.parent_window.display_canvas[canvas_id].data.imagemax
+            self.imagemin = self.parent_window.display_canvas[canvas_id].min_value
+            self.imagemax = self.parent_window.display_canvas[canvas_id].max_value
             self.colormap_toggle.setChecked(canvas.use_colormap)
             self.colormap_selector.setCurrentText(canvas.colormap)
             self.up_boundary_set.setValue(self.imagemax)

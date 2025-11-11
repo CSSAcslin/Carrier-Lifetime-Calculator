@@ -11,7 +11,7 @@ import pywt
 import h5py
 from PIL import Image
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
-from numpy.array_api import complex64
+from PyQt5.QtWidgets import QApplication
 from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
 from scipy import signal
@@ -570,9 +570,8 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
             return False
 
-
-    @pyqtSlot(DataManager.ProcessedData,float,int,int,int,int,int,str)
-    def python_stft(self,data, target_freq: float,scale_range:int,fps:int, window_size: int, noverlap: int,
+    @pyqtSlot(DataManager.ProcessedData,object,int,int,int,int,int,str)
+    def python_stft(self,data, target_freq,scale_range:int,fps:int, window_size: int, noverlap: int,
                     custom_nfft: int, window_type: str):
         """
         执行逐像素STFT分析
@@ -589,8 +588,10 @@ class MassDataProcessor(QObject):
             if 'out_length' not in data.out_processed:
                 raise ValueError("请先进行质量评估")
 
-
-            target_idx = data.out_processed['target_idx']
+            if isinstance(target_freq, float):
+                target_idx = data.out_processed['target_idx']
+            else:
+                target_idx = target_freq
             out_length = data.out_processed['out_length']
             time_series = data.out_processed['time_series']
             freq = data.out_processed['frequencies']
@@ -610,7 +611,6 @@ class MassDataProcessor(QObject):
             # 4. 初始化结果数组
             height, width = frame_size
             stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
-            # zxx_out = np.zeros(((freq.shape[0]-1)*2,out_length, height, width), dtype=complex64)
 
             # 窗函数的选择和生成
             window = self.get_window(window_type, window_size)
@@ -804,7 +804,6 @@ class MassDataProcessor(QObject):
                                                                  'ROI_cwt',
                                                                  time_point=times,
                                                                  data_processed=cwt_py_out,
-                                                                 out_processed={'frequencies': data.out_processed['frequencies'], }
                                                                  ))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             return True
@@ -831,18 +830,17 @@ class MassDataProcessor(QObject):
         except Exception as e:
             self.processed_result.emit({'type': "re_transform", 'error': str(e)})
 
-
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
 
-    @pyqtSlot(DataManager.ProcessedData)
-    def accumulate_amplitude(self,data:DataManager.ProcessedData):
+    @pyqtSlot(object)
+    def accumulate_amplitude(self,data):
         """累计时间振幅图"""
         self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                          f'{data.name}@atam',
                                          "Accumulated_time_amplitude_map",
                                          time_point=data.time_point,
-                                         data_processed=np.mean(data.data_processed, axis=0)))
+                                         data_processed=np.mean(data.data_processed if isinstance(data,DataManager.ProcessedData) else data.data_origin, axis=0)))
         logging.info("累计时间振幅计算已完成")
 
     @staticmethod
@@ -977,6 +975,56 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type':"Single_channel_signal",'error':str(e)})
             return False
 
+    @pyqtSlot(object)
+    def twoD_fourier_transform(self,data,):
+        """
+            对3D时序视频数据进行2D傅里叶变换
+
+            参数:
+            video_data: 形状为 (帧数, 高度, 宽度) 的numpy数组
+
+            返回:
+            magnitude_spectra: 傅里叶幅度谱数组
+            phase_spectra: 傅里叶相位谱数组
+            """
+        if isinstance(data, DataManager.ProcessedData):
+            data_3d = data.data_processed
+        else:
+            data_3d = data.data_origin
+            pass
+        try:
+            if data.timelength == 1:
+                frames = 1
+                height, width = data.datashape
+            else:
+                frames, height, width = data.datashape
+            magnitude_spectra = np.zeros((frames, height, width))
+            phase_spectra = np.zeros((frames, height, width))
+            self.processing_progress_signal.emit(1,frames)
+            for i in range(frames):
+                # 2D傅里叶变换
+                f = np.fft.fft2(data_3d[i])
+                fshift = np.fft.fftshift(f)  # 将低频移到中心
+
+                # 幅度谱
+                magnitude_spectra[i] = np.abs(fshift)
+
+                # 相位谱
+                phase_spectra[i] = np.angle(fshift)
+                self.processing_progress_signal.emit(i, frames)
+
+            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+                                       f'{data.name}@2DFT',
+                                       "2D_Fourier_transform",
+                                       time_point = data.time_point,
+                                       data_processed=np.squeeze(fshift),
+                                       out_processed={'magnitude_spectra': np.squeeze(magnitude_spectra),
+                                                      'phase_spectra': np.squeeze(phase_spectra)}))
+            return True
+        except Exception as e:
+            self.processed_result.emit({'type': "2D_Fourier_transform", 'error': str(e)})
+            return False
+
     def stop(self):
         """请求中止处理"""
         self.abort = True
@@ -1021,7 +1069,7 @@ class MassDataProcessor(QObject):
 
         return np.array(amplitudes), np.array(durations)
 
-    # 上升/下降时间常数拟合
+    # 上升/下降时间常数拟合(未启用)
     def fit_exponential_time(data, thr, mode='up', n=5):
         """
         拟合指数时间常数

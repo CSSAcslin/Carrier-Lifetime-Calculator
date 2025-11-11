@@ -13,6 +13,8 @@ from dataclasses import dataclass, field, fields
 import matplotlib.cm as cm
 from matplotlib.colors import LinearSegmentedColormap
 from PIL import Image
+import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 
 
@@ -85,8 +87,8 @@ class DataManager(QObject):
         self.process_finish_signal.emit(data)
         return True
 
-    @pyqtSlot(np.ndarray, str, str, str, bool, int)
-    def export_data(self, result, output_dir, prefix, format_type='tif',is_temporal=True,duration = 100):
+    @pyqtSlot(object, str, str, str, bool, dict)
+    def export_data(self, data, output_dir, prefix, format_type='tif',is_temporal=True,arg_dict=None):
         """
         时频变换后目标频率下的结果导出
         支持多种格式: tif, avi, png, gif
@@ -98,16 +100,29 @@ class DataManager(QObject):
             format_type: 导出格式 ('tif', 'avi', 'png', 'gif')
         """
         format_type = format_type.lower()
+        duration = arg_dict['duration'] if arg_dict is not None else 60
+        cmap = arg_dict['cmap'] if arg_dict is not None else 'jet'
+        max_bound = arg_dict['max_bound'] if arg_dict is not None else 255
+        min_bound = arg_dict['min_bound'] if arg_dict is not None else 0
+        title = arg_dict['title'] if arg_dict is not None else ''
+        colorbar_label = arg_dict['colorbar_label'] if arg_dict is not None else ''
 
         # 根据格式类型调用不同的导出函数
         if format_type == 'tif':
+            result = data.image_data
             return self.export_as_tif(result, output_dir, prefix,is_temporal)
         elif format_type == 'avi':
+            result = data.image_data
             return self.export_as_avi(result, output_dir, prefix,duration)
         elif format_type == 'png':
+            result = data.image_data
             return self.export_as_png(result, output_dir, prefix,is_temporal)
         elif format_type == 'gif':
+            result = data.image_data
             return self.export_as_gif(result, output_dir, prefix, duration)
+        elif format_type == 'plt':
+            result = data.image_backup
+            return self.export_as_plt(result, output_dir, prefix,is_temporal, cmap, max_bound,min_bound,title,colorbar_label)
         else:
             logging.error(f"不支持的格式类型: {format_type}")
             raise ValueError(f"不支持格式: {format_type}。请使用 'tif', 'avi', 'png' 或 'gif'")
@@ -240,7 +255,7 @@ class DataManager(QObject):
         return created_files
 
     def export_as_gif(self, result, output_dir, prefix,duration = 60):
-        """优化彩色GIF导出"""
+        """彩色GIF导出"""
         num_frames = result.shape[0]
         self.data_progress_signal.emit(0, num_frames)
 
@@ -282,6 +297,113 @@ class DataManager(QObject):
         logging.info(f'导出GIF完成: {output_path}, 共{num_frames}帧')
         return [output_path]
 
+    def export_as_plt(self, result , output_dir, prefix, is_temporal = True, cmap = 'viridis',
+                      max_bound = 255, min_bound = 0 ,title = '', colorbar_label = ''):
+        """使用matplotlib的彩色导出"""
+        mpl.use('Agg')
+
+        # 默认配置
+        config = {
+            'title': title,
+            'xlabel': '',
+            'ylabel': '',
+            'cmap': cmap,
+            'dpi': 300,
+            'figsize': (8, 6),
+            'colorbar_label': colorbar_label,
+            'vmin': min_bound,
+            'vmax': max_bound,
+            'aspect': 'equal'
+        }
+        # config = {**default_config, **heatmap_config} # 新合并写法，多学学
+
+        created_files = []
+
+        def create_heatmap_frame(data, frame_idx=None):
+            """创建单帧热图"""
+            # 创建图形
+            fig, ax = plt.subplots(figsize=config['figsize'])
+
+            # 绘制热图
+            im = ax.imshow(data, cmap=config['cmap'],
+                           vmin=config['vmin'], vmax=config['vmax'],
+                           aspect=config['aspect'])
+
+            # 设置标题和标签
+            if config['title']:
+                if frame_idx is not None:
+                    ax.set_title(f"{config['title']} - Frame {frame_idx}")
+                else:
+                    ax.set_title(config['title'])
+            #
+            # if config['xlabel']:
+            #     ax.set_xlabel(config['xlabel'])
+            # if config['ylabel']:
+            #     ax.set_ylabel(config['ylabel'])
+
+            # 添加colorbar
+            cbar = fig.colorbar(im, ax=ax)
+            if config['colorbar_label']:
+                cbar.set_label(config['colorbar_label'])
+
+            # 设置紧凑布局
+            plt.tight_layout()
+
+            # 生成文件名
+            if frame_idx is not None:
+                num_digits = len(str(result.shape[0]))
+                frame_name = f"{prefix}-{frame_idx:0{num_digits}d}_heatmap.tif"
+            else:
+                frame_name = f"{prefix}_heatmap.tif"
+
+            output_path = os.path.join(output_dir, frame_name)
+
+            # 保存图像
+            plt.savefig(output_path, dpi=config['dpi'], bbox_inches='tight',
+                        pad_inches=0.2, format='tiff')
+            plt.close(fig)  # 关闭图形释放内存
+
+            return output_path
+
+        # 处理时间序列数据
+        if is_temporal and result.ndim == 3:
+            num_frames = result.shape[0]
+            self.data_progress_signal.emit(0, num_frames)
+
+            for frame_idx in range(num_frames):
+                frame_data = result[frame_idx]
+
+                # 确保数据是2D的
+                if frame_data.ndim > 2:
+                    frame_data = frame_data.squeeze()
+
+                output_path = create_heatmap_frame(frame_data, frame_idx)
+                created_files.append(output_path)
+                self.data_progress_signal.emit(frame_idx + 1, num_frames)
+
+        # 处理单帧数据
+        else:
+            num_frames = 1
+            self.data_progress_signal.emit(0, 1)
+
+            # 处理多维数据
+            if result.ndim > 2:
+                # 如果是时间序列但不需要分帧，取第一帧或平均值
+                if result.ndim == 3 and not is_temporal:
+                    frame_data = result[0] if result.shape[0] > 1 else result.mean(axis=0)
+                else:
+                    frame_data = result.squeeze()
+            else:
+                frame_data = result
+
+            output_path = create_heatmap_frame(frame_data)
+            created_files.append(output_path)
+            self.data_progress_signal.emit(1, 1)
+
+        self.data_progress_signal.emit(num_frames+1, num_frames)
+        logging.info(f'导出热图TIFF完成: {output_dir}, 共{len(created_files)}帧')
+        return created_files
+
 @dataclass
 class Data:
     """
@@ -311,7 +433,7 @@ class Data:
     name : str = None
     timestamp : float = field(init=False, default_factory=time.time)
     ROI_applied : bool = field(init=False, default=False)
-    history : ClassVar[deque] = deque(maxlen=3)
+    history : ClassVar[deque] = deque(maxlen=10)
     serial_number: int = field(init=False)
     _counter : int = field(init=False, repr=False, default=0)
     _amend_counter : int = field(init=False, default=0)
@@ -334,6 +456,7 @@ class Data:
         self.datatype = self.data_origin.dtype
         self.datamax = self.data_origin.max()
         self.datamin = self.data_origin.min()
+        self.ndim = self.data_origin.ndim
 
     def get_data_mean(self):
         return self.data_origin.mean()
@@ -548,6 +671,7 @@ class ProcessedData:
             self.datamax = self.data_processed.max()
             self.datatype = self.data_processed.dtype
             self.datamean = self.data_processed.mean()
+            self.ndim = self.data_processed.ndim
 
         # 添加到历史记录
         ProcessedData.history.append(copy.deepcopy(self))
@@ -817,8 +941,8 @@ class ColorMapManager:
 
     def __init__(self):
         self.colormaps = {
-            "Jet": self.jet_colormap,
-            "Hot": self.hot_colormap,
+            "jet": self.jet_colormap,
+            "hot": self.hot_colormap,
             # "Cool": self.cool_colormap,
             # "Spring": self.spring_colormap,
             # "Summer": self.summer_colormap,
@@ -838,25 +962,25 @@ class ColorMapManager:
 
         # 创建Matplotlib兼容的colormap
         self.matplotlib_cmaps = {
-            "Jet": cm.jet,
-            "Hot": cm.hot,
-            "Cool": cm.cool,
-            "Spring": cm.spring,
-            "Summer": cm.summer,
-            "Autumn": cm.autumn,
-            "Winter": cm.winter,
-            "Bone": cm.bone,
-            "Copper": cm.copper,
-            "Greys": cm.gray,
-            "Viridis": cm.viridis,
-            "Plasma": cm.plasma,
-            "Inferno": cm.inferno,
-            "Magma": cm.magma,
-            "Cividis": cm.cividis,
-            "Rainbow": self.create_rainbow_cmap(),
-            "Turbo": cm.turbo,
+            "jet": cm.jet,
+            "hot": cm.hot,
+            "cool": cm.cool,
+            "spring": cm.spring,
+            "summer": cm.summer,
+            "autumn": cm.autumn,
+            "winter": cm.winter,
+            "bone": cm.bone,
+            "copper": cm.copper,
+            "gray": cm.gray,
+            "viridis": cm.viridis,
+            "plasma": cm.plasma,
+            "inferno": cm.inferno,
+            "magma": cm.magma,
+            "cividis": cm.cividis,
+            "turbo": cm.turbo,
             'CMRmap':cm.CMRmap,
             'gnuplot2':cm.gnuplot2,
+            "Rainbow*": self.create_rainbow_cmap(),
         }
 
     def get_colormap_names(self):
@@ -866,7 +990,7 @@ class ColorMapManager:
     def apply_colormap(self, image_data, colormap_name, min_val=None, max_val=None):
         """应用伪彩色映射到图像数据"""
         if colormap_name not in self.matplotlib_cmaps:
-            colormap_name = "Jet"  # 默认使用Jet
+            colormap_name = "jet"  # 默认使用jet
 
         cmap = self.matplotlib_cmaps[colormap_name]
 
