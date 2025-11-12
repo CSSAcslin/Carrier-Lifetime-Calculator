@@ -32,7 +32,7 @@ class MainWindow(QMainWindow):
     # cal
     start_reg_cal_signal = pyqtSignal(Data, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(Data, float, str)
-    start_heat_cal_signal = pyqtSignal(object, float)
+    start_heat_cal_signal = pyqtSignal(object)
     start_dif_cal_signal = pyqtSignal(dict, float, float,float,str)
     # mass
     load_avi_EM_signal = pyqtSignal(str)
@@ -962,22 +962,22 @@ class MainWindow(QMainWindow):
         else:
             dialog = DataViewAndSelectPop(datadict=self.get_data_all(), processed_datadict=self.get_processed_data_all(),add_canvas=True)
             if dialog.exec_():
-                selected_timestamp = dialog.get_selected_timestamp()
-                if self.data is not None:
+                selected_timestamp, selected_table = dialog.get_selected_timestamp()
+                if selected_table == 'data':
                     for data in self.data.history:
                         if data.timestamp == selected_timestamp:
                             data_display = ImagingData.create_image(data)
                             data_display.colormode = self.tool_params['colormap'] if self.tool_params['use_colormap'] else None
                             logging.info("数据选择成功（原初）")
-                            continue
-                if self.processed_data is not None:
+                            break
+                else:
                     for data in self.processed_data.history:
                         if data.timestamp == selected_timestamp:
                             data_display = ImagingData.create_image(data)
                             data_display.colormode = self.tool_params['colormap'] if self.tool_params[
                                 'use_colormap'] else None
                             logging.info("数据选择成功（处理）")
-                            continue
+                            break
         if data_display is not None:
             self.image_display.add_canvas(data_display)
         # else:
@@ -1612,11 +1612,32 @@ class MainWindow(QMainWindow):
         if not self.is_thread_active("calc_thread"):
             self.cal_thread_open()
         self.calc_thread.start()
+        dialog = DataViewAndSelectPop(datadict=self.get_data_all(), processed_datadict=self.get_processed_data_all(),
+                                      add_canvas=False)
+        aim_data = None
+        if dialog.exec_():
+            selected_timestamp, selected_table = dialog.get_selected_timestamp()
+            if selected_table == 'data':
+                for data in self.data.history:
+                    if data.timestamp == selected_timestamp:
+                        aim_data = data
+                        logging.info(f"数据选择成功（初始导入）：{data.name}")
+                        break
+            else:
+                for data in self.processed_data.history:
+                    if data.timestamp == selected_timestamp:
+                        aim_data = data
+                        logging.info(f"数据选择成功（处理过）：{data.name}")
+                        break
+            if aim_data is None:
+                QMessageBox.warning(self,"数据错误","没有选取数据")
+                return False
+        else:
+            return False
         self.update_status('计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
-        model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
-        self.heat_transfer_calculation.emit(self.processed_data)
-        return None
+        self.start_heat_cal_signal.emit(aim_data)
+        return True
 
     def diffusion_calculation_start(self):
         """扩散系数计算"""
@@ -2190,7 +2211,7 @@ class MainWindow(QMainWindow):
 
         dialog = DataViewAndSelectPop(datadict=self.get_data_all())
         if dialog.exec_():
-            selected_timestamp = dialog.get_selected_timestamp()
+            selected_timestamp,_ = dialog.get_selected_timestamp()
             self.data = self.data.find_history(selected_timestamp)
             logging.info(f"当前数据焦点已更新至{self.data.name}")
 
@@ -2204,7 +2225,7 @@ class MainWindow(QMainWindow):
 
         dialog = DataViewAndSelectPop(processed_datadict=self.get_processed_data_all())
         if dialog.exec_():
-            selected_timestamp = dialog.get_selected_timestamp()
+            selected_timestamp,_ = dialog.get_selected_timestamp()
             self.processed_data = self.processed_data.find_history(selected_timestamp)
             logging.info(f"当前数据焦点已更新至{self.processed_data.name}")
 

@@ -100,12 +100,13 @@ class DataManager(QObject):
             format_type: 导出格式 ('tif', 'avi', 'png', 'gif')
         """
         format_type = format_type.lower()
-        duration = arg_dict['duration'] if arg_dict is not None else 60
-        cmap = arg_dict['cmap'] if arg_dict is not None else 'jet'
-        max_bound = arg_dict['max_bound'] if arg_dict is not None else 255
-        min_bound = arg_dict['min_bound'] if arg_dict is not None else 0
-        title = arg_dict['title'] if arg_dict is not None else ''
-        colorbar_label = arg_dict['colorbar_label'] if arg_dict is not None else ''
+        arg_dict = arg_dict or {}  # 如果arg_dict为None，设为空字典 ，学学，这get多优雅
+        duration = arg_dict.get('duration', 60)
+        cmap = arg_dict.get('cmap', 'jet')
+        max_bound = arg_dict.get('max_bound', 255)
+        min_bound = arg_dict.get('min_bound', 0)
+        title = arg_dict.get('title', '')
+        colorbar_label = arg_dict.get('colorbar_label', '')
 
         # 根据格式类型调用不同的导出函数
         if format_type == 'tif':

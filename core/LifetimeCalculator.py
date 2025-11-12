@@ -446,8 +446,11 @@ class CalculationThread(QObject):
     def heat_transfer_calculation(self,data):
         """计算传热系数"""
         self._is_calculating = True
-        origin_data = data.data_processed
-        heat_transfer = np.where(origin_data != 0, 42.72 / origin_data, 0)
+        if isinstance(data, ProcessedData):
+            origin_data = data.data_processed
+        else:
+            origin_data = data.data_origin
+        heat_transfer = np.where(origin_data >= 0.01, 42.72 / origin_data, 0)
         self.processed_result.emit(ProcessedData(data.timestamp,
                                                  f'{data.name}@heat',
                                                  'heat_transfer',

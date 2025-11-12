@@ -1121,20 +1121,20 @@ class DataViewAndSelectPop(QDialog):
         main_layout.addLayout(bottom_layout)
 
         # 创建按钮框
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self)
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Cancel, Qt.Horizontal, self)
 
-        # 根据add_canvas设置按钮状态
-        if self.add_canvas:
-            self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
-            self.button_box.button(QDialogButtonBox.Ok).setText("确定")
-        else:
-            self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
-            self.button_box.button(QDialogButtonBox.Ok).setText("选择")
+        # 根据add_canvas设置按钮状态(现在不要这个按钮了)
+        # if self.add_canvas:
+        #     self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
+        #     self.button_box.button(QDialogButtonBox.Ok).setText("确定")
+        # else:
+        #     self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+        #     self.button_box.button(QDialogButtonBox.Ok).setText("选择")
 
         main_layout.addWidget(self.button_box)
 
         # 连接按钮信号
-        self.button_box.accepted.connect(self.accept)
+        # self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
 
     def create_table_tab(self, data_list, tab_name):
@@ -1200,11 +1200,15 @@ class DataViewAndSelectPop(QDialog):
         """处理行按钮点击事件"""
         # 确定数据来自哪个表格
         table_index = self.tables.index(table)
-        data_list = self.datadict if table_index == 0 and self.datadict !=[] else self.processed_datadict
+        if table_index == 0 and self.datadict != []:
+            data_list = self.datadict
+            self.selected_table = 'data'
+        else:
+            data_list = self.processed_datadict
+            self.selected_table = 'processed_data'
 
         self.selected_index = row_index
         selected_data = data_list[row_index]
-        self.selected_table = table_index
 
         # 获取名称和时间戳
         name = selected_data.get('name')
@@ -1214,11 +1218,13 @@ class DataViewAndSelectPop(QDialog):
         # 更新状态显示
         self.selected_data_label.setText(self.selected_name)
 
-        # 如果add_canvas为True，执行显示操作
-        if self.add_canvas:
-            self.on_show_selected()
-            # 启用确定按钮
-            self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+        # 如果add_canvas为True，执行显示操作，暂无作用
+        # if self.add_canvas:
+        #     self.on_show_selected()
+        #     # 启用确定按钮
+        #     self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+
+        self.accept()
 
     def on_cell_clicked(self, row_index, col_index, table):
         """处理单元格点击事件"""
@@ -1232,8 +1238,8 @@ class DataViewAndSelectPop(QDialog):
         pass
 
     def get_selected_timestamp(self):
-        """获取选择的数据信息"""
-        return self.selected_timestamp
+        """获取选择的数据信息,(timestamp,selected_type(data or processed_data))"""
+        return self.selected_timestamp, self.selected_table
 
 # 帮助dialog
 class CustomHelpDialog(QDialog):
