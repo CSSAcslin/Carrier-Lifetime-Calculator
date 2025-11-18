@@ -8,8 +8,9 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QRadioButton, QSpinBox, QLineEdit, QPushButton,
                              QLabel, QMessageBox, QFormLayout, QDoubleSpinBox, QColorDialog, QComboBox, QCheckBox,
                              QFileDialog, QWhatsThis, QTextBrowser, QTableWidget, QDialogButtonBox, QTableWidgetItem,
-                             QHeaderView, QAbstractItemView, QTabWidget, QWidget)
-from PyQt5.QtCore import Qt, QEvent, QTimer
+                             QHeaderView, QAbstractItemView, QTabWidget, QWidget, QListWidget, QListWidgetItem,
+                             QSizePolicy)
+from PyQt5.QtCore import Qt, QEvent, QTimer, QModelIndex
 import HelpContentHTML
 import markdown
 from markdown.extensions.codehilite import CodeHiliteExtension
@@ -888,6 +889,7 @@ class DataExportDialog(QDialog):
         self.datatypes = ['tif','avi','gif','png','plt']
         self.canvas_info = canvas_info
         self.export_type = export_type
+        self.current_type = 'tif'
 
         self.init_ui()
         # self.setStyleSheet(self.style_sheet())  # 设置样式表
@@ -1330,6 +1332,7 @@ class ROIInfoDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.canvas_id = None
         self.roi_type = None
         self.setWindowTitle("图像与ROI信息（双击选择）")
         self.setMinimumSize(600, 400)
@@ -1343,18 +1346,18 @@ class ROIInfoDialog(QDialog):
 
         # 创建表格
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["画布ID", "图像名称", "图像尺寸", "ROI类型", "ROI详情"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["画布ID", "图像名称", "图像尺寸", "ROI类型", "ROI详情",'操作'])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.doubleClicked.connect(self.handle_row_double_click)
+        self.table.doubleClicked.connect(self.handle_click)
 
         layout.addWidget(self.table)
 
         # 添加按钮
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
+        button_box = QDialogButtonBox(QDialogButtonBox.Cancel)
+        # button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
 
@@ -1362,10 +1365,10 @@ class ROIInfoDialog(QDialog):
 
     def load_data(self):
         """加载所有画布的信息到表格"""
-        canvas_info = self.parent_window.get_all_canvas_info()
+        self.canvas_info = self.parent_window.get_all_canvas_info()
         self.table.setRowCount(0)
 
-        for info in canvas_info:
+        for info in self.canvas_info:
             # 添加画布基本信息行
             row_position = self.table.rowCount()
             self.table.insertRow(row_position)
@@ -1382,22 +1385,11 @@ class ROIInfoDialog(QDialog):
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)  # 始终设置ToolTip
                 self.table.setItem(row_position, col, item)
-            # self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
-            # self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
-            # self.table.setItem(row_position, 2, QTableWidgetItem(f"{info['image_size'][1]}×{info['image_size'][0]}"))
-            # self.table.setItem(row_position, 3, QTableWidgetItem("这是画布"))
-            # self.table.setItem(row_position, 4, QTableWidgetItem(""))
 
             # 添加ROI信息行
             for roi in info['ROIs']:
                 row_position = self.table.rowCount()
                 self.table.insertRow(row_position)
-                # self.table.setItem(row_position, 0, QTableWidgetItem(str(info['canvas_id'])))
-                # self.table.setItem(row_position, 1, QTableWidgetItem(info['image_name']))
-                # self.table.setItem(row_position, 2, QTableWidgetItem(""))
-                #
-                # # ROI类型
-                # self.table.setItem(row_position, 3, QTableWidgetItem(roi['type']))
 
                 # ROI详情
                 if roi['type'] == 'v_rect':
@@ -1429,20 +1421,174 @@ class ROIInfoDialog(QDialog):
                     item.setToolTip(text)  # 始终设置ToolTip
                     self.table.setItem(row_position, col, item)
                 # self.table.setItem(row_position, 4, QTableWidgetItem(details))
+                button_text = "ROI设置"
+                button = QPushButton(button_text)
+
+                # 使用lambda表达式捕获当前行索引和表格
+                button.clicked.connect(lambda checked, r=row_position: self.handle_click(r))
+                self.table.setCellWidget(row_position, 5, button)
 
         # 调整列宽
         self.table.resizeColumnsToContents()
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
 
-    def handle_row_double_click(self, index):
+    def handle_click(self, index: QModelIndex|int):
         """双击行时选择对应的画布"""
-        row = index.row()
+        if isinstance(index, QModelIndex):
+            row = index.row()
+        else:
+            row = index
         canvas_id_item = self.table.item(row, 0)
+        roi_type_item = self.table.item(row, 3)
         self.roi_type = self.table.item(row, 3).text()
-        if canvas_id_item:
-            canvas_id = int(canvas_id_item.text())
-            self.parent_window.set_cursor_id(canvas_id)
-            self.accept()
+        if not canvas_id_item:
+            return None
+        self.canvas_id = int(canvas_id_item.text())
+        # 查找对应的画布信息
+        canvas_info = None
+        for info in self.canvas_info:
+            if info['canvas_id'] == self.canvas_id:
+                canvas_info = info
+                break
+
+        # 判断是画布行还是ROI行
+        if roi_type_item and roi_type_item.text() != "这是画布本身":
+            # 这是ROI行
+            roi_type = roi_type_item.text()
+
+            # 查找对应的ROI信息
+            roi_info = None
+            for roi in canvas_info['ROIs']:
+                if roi['type'] == roi_type:
+                    # 根据类型和详细信息匹配ROI
+                    roi_info = roi
+                    break
+
+            if roi_info:
+                # 返回ROI和画布信息
+                self.selected_roi_info = {
+                    'type': roi_type,
+                    'canvas_info': {
+                        'canvas_id': canvas_info['canvas_id'],
+                        'image_name': canvas_info['image_name'],
+                        'image_size': canvas_info['image_size']
+                    },
+                    'roi_info': roi_info
+                }
+        # self.parent_window.set_cursor_id(canvas_id) # 忘记这个有没有用了
+
+        self.accept()
+
+# ROI编辑处理对话框
+class ROIProcessedDialog(QDialog):
+    def __init__(self, draw_type, canvas_id, roi, roi_info,data_type = None, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("ROI设置对话框")
+        self.setMinimumSize(250, 400)
+        self.draw_type = draw_type
+        self.canvas_id = canvas_id
+        self.roi_info = roi_info
+        self.data_type = data_type
+
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("所选ROI信息："))
+        self.infolist = QListWidget()
+        self.infolist.setAlternatingRowColors(True)  # 交替行颜色
+        self.infolist.setSelectionMode(QListWidget.NoSelection)  # 不可选择
+        self.infolist.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        layout.addWidget(self.infolist)
+
+        form_layout = QFormLayout()
+        self.crop_check = QCheckBox()
+        self.inverse_check = QCheckBox()
+        self.reset_value = QDoubleSpinBox()
+        self.reset_value.setValue(1)
+        self.zoom_check = QCheckBox()
+        self.zoom_check.setText("插值放大|倍数")
+        self.zoom_check.setEnabled(False)
+        self.zoom_factor = QDoubleSpinBox()
+        self.zoom_factor.setValue(1)
+        self.zoom_factor.setEnabled(False)
+        self.fast_check = QCheckBox()
+        self.fast_check.setEnabled(False)
+        self.crop_check.toggled.connect(lambda checked: self.zoom_check.setEnabled(checked))
+        self.zoom_check.toggled.connect(lambda checked: self.zoom_factor.setEnabled(checked))
+        form_layout.addRow(QLabel("截取数据:"),self.crop_check)
+        form_layout.addRow(QLabel("注释："), QLabel('选择后选区数据\n会被裁剪提取出来'))
+        form_layout.addRow(QLabel("选区反转:"),self.inverse_check)
+        form_layout.addRow(QLabel("注释："), QLabel('默认操作都是针对选区的，\n该选项会反转选区'))
+        form_layout.addRow(QLabel("选区赋值:"),self.reset_value)
+        form_layout.addRow(QLabel("注释："), QLabel('为原值的倍数，\n填0相当于去掉原值'))
+        form_layout.addRow(QLabel("选区放大："),QLabel("是否进行插值放大以及放大的倍数"))
+        form_layout.addRow(self.zoom_check, self.zoom_factor)
+        form_layout.addRow(QLabel("便捷操作:"),self.fast_check)
+        layout.addLayout(form_layout)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        self.update_list()
+        self.setLayout(layout)
+
+
+    def update_list(self):
+        fast_text = ''
+        if self.draw_type == 'v_rect':
+            type_text = "ROI类型：矢量矩形选区"
+            # x, y = self.roi_info['ROIs']['position']
+            w, h = self.roi_info['roi_info']['size']
+            text1 = f"该ROI尺寸为：{w}×{h} pixels"
+            text2 = f"该ROI所属数据：{self.roi_info['canvas_info']['image_name']}"
+            crop_text = f"是否支持截取数据：是（注意是否有便捷操作）"
+            inverse_text = f"是否支持选区反转：否"
+            reset_text = f"是否支持选区赋值：是"
+            zoom_text = f"是否支持选区插值放大：是（需截取数据）"
+            self.inverse_check.setEnabled(False)
+            if self.data_type == 'Accumulated_time_amplitude_map':
+                fast_text = f'支持的便捷操作: 单通道计算快速实现（母函数截取数据）'
+                self.fast_check.setEnabled(True)
+                self.fast_check.setChecked(True)
+        elif self.draw_type == 'v_line':
+            type_text = "ROI类型：矢量直线选区"
+            x1, y1 = self.roi_info['roi_info']['start']
+            x2, y2 = self.roi_info['roi_info']['end']
+            text1 = f"该ROI起点: ({x1}, {y1}), 终点: ({x2}, {y2}), 宽度: {self.roi_info['roi_info']['width']}"
+            text2 = f"该ROI所属数据：{self.roi_info['canvas_info']['image_name']}"
+            crop_text = f"是否支持截取数据：否"
+            inverse_text = f"是否支持选区反转：否"
+            reset_text = f"是否支持选区赋值：否"
+            zoom_text = f"是否支持选区插值放大：否"
+            fast_text = f'矢量直线目前不支持高级设置，请直接点ok'
+            self.reset_value.setEnabled(False)
+            self.crop_check.setEnabled(False)
+            self.inverse_check.setEnabled(False)
+            self.zoom_check.setEnabled(False)
+            self.zoom_factor.setEnabled(False)
+        else : #self.draw_type == 'pixel_roi'
+            type_text = "ROI类型：像素绘制选区"
+            # x, y = self.roi_info['ROIs']['position']
+            n = self.roi_info['roi_info']['counts']
+            text1 = f"该ROI共覆盖：{n}个 pixels"
+            text2 = f"该ROI所属数据：{self.roi_info['canvas_info']['image_name']}"
+            crop_text = f"是否支持截取数据：是"
+            inverse_text = f"是否支持选区反转：是"
+            reset_text = f"是否支持选区赋值：是"
+            zoom_text = f"是否支持选区插值放大：是"
+        self.infolist.addItem(QListWidgetItem(type_text))
+        self.infolist.addItem(QListWidgetItem(text1))
+        self.infolist.addItem(QListWidgetItem(text2))
+        self.infolist.addItem(QListWidgetItem(crop_text))
+        self.infolist.addItem(QListWidgetItem(inverse_text))
+        self.infolist.addItem(QListWidgetItem(reset_text))
+        self.infolist.addItem(QListWidgetItem(zoom_text))
+        if fast_text:
+            self.infolist.addItem(QListWidgetItem(fast_text))
+        self.infolist.adjustSize()
 
 # 伪色彩管理弹窗
 class ColorMapDialog(QDialog):
@@ -1572,3 +1718,4 @@ class ColorMapDialog(QDialog):
             'auto_boundary_set':self.auto_boundary_set,
             'min_value':self.low_boundary_set.value() if not self.auto_boundary_set else None,
             'max_value':self.up_boundary_set.value() if not self.auto_boundary_set else None,}
+

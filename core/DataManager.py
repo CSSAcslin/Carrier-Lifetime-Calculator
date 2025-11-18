@@ -15,16 +15,18 @@ from matplotlib.colors import LinearSegmentedColormap
 from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-
+from scipy.ndimage.interpolation import zoom
 
 
 class DataManager(QObject):
-    save_request_back = pyqtSignal(dict)
-    read_request_back = pyqtSignal(dict)
-    remove_request_back = pyqtSignal(dict)
-    amend_request_back = pyqtSignal(dict)
+    # save_request_back = pyqtSignal(dict)
+    # read_request_back = pyqtSignal(dict)
+    # remove_request_back = pyqtSignal(dict)
+    # amend_request_back = pyqtSignal(dict)
     data_progress_signal = pyqtSignal(int, int)
     process_finish_signal = pyqtSignal(object)
+    processed_result = pyqtSignal(object)
+
     def __init__(self, parent=None):
         super(DataManager, self).__init__(parent)
         self.color_map_manager = ColorMapManager()
@@ -40,11 +42,11 @@ class DataManager(QObject):
             return True
 
         # 计算数组的最小值和最大值
-        data.image_data = ((data_o - min_value)/(max_value- min_value)*255).astype(np.uint8)
+        data.image_data = ((data_o - min_value) / (max_value - min_value) * 255).astype(np.uint8)
         self.process_finish_signal.emit(data)
         return True
 
-    def to_colormap(self,data,params):
+    def to_colormap(self, data, params):
         """伪色彩实现（其实仅在生成视图时才会更新）"""
         logging.info("样式应用中，预览会同步更新")
         self.color_map_manager = ColorMapManager()
@@ -60,16 +62,16 @@ class DataManager(QObject):
             data.colormode = colormode
             return False
         if data.is_temporary:
-            T,H,W = data.imageshape
-            self.data_progress_signal.emit(0,T)
-            new_data = np.zeros((T,H,W, 4), dtype=np.uint8)
-            for i,image in enumerate(data.image_backup):
+            T, H, W = data.imageshape
+            self.data_progress_signal.emit(0, T)
+            new_data = np.zeros((T, H, W, 4), dtype=np.uint8)
+            for i, image in enumerate(data.image_backup):
                 new_data[i] = self.color_map_manager.apply_colormap(
-                                                                    image,
-                                                                    colormode,
-                                                                    min_value,
-                                                                    max_value
-                                                                )
+                    image,
+                    colormode,
+                    min_value,
+                    max_value
+                )
                 self.data_progress_signal.emit(i, T)
             data.image_data = new_data
             self.data_progress_signal.emit(T, T)
@@ -88,7 +90,7 @@ class DataManager(QObject):
         return True
 
     @pyqtSlot(object, str, str, str, bool, dict)
-    def export_data(self, data, output_dir, prefix, format_type='tif',is_temporal=True,arg_dict=None):
+    def export_data(self, data, output_dir, prefix, format_type='tif', is_temporal=True, arg_dict=None):
         """
         时频变换后目标频率下的结果导出
         支持多种格式: tif, avi, png, gif
@@ -111,19 +113,20 @@ class DataManager(QObject):
         # 根据格式类型调用不同的导出函数
         if format_type == 'tif':
             result = data.image_data
-            return self.export_as_tif(result, output_dir, prefix,is_temporal)
+            return self.export_as_tif(result, output_dir, prefix, is_temporal)
         elif format_type == 'avi':
             result = data.image_data
-            return self.export_as_avi(result, output_dir, prefix,duration)
+            return self.export_as_avi(result, output_dir, prefix, duration)
         elif format_type == 'png':
             result = data.image_data
-            return self.export_as_png(result, output_dir, prefix,is_temporal)
+            return self.export_as_png(result, output_dir, prefix, is_temporal)
         elif format_type == 'gif':
             result = data.image_data
             return self.export_as_gif(result, output_dir, prefix, duration)
         elif format_type == 'plt':
             result = data.image_backup
-            return self.export_as_plt(result, output_dir, prefix,is_temporal, cmap, max_bound,min_bound,title,colorbar_label)
+            return self.export_as_plt(result, output_dir, prefix, is_temporal, cmap, max_bound, min_bound, title,
+                                      colorbar_label)
         else:
             logging.error(f"不支持的格式类型: {format_type}")
             raise ValueError(f"不支持格式: {format_type}。请使用 'tif', 'avi', 'png' 或 'gif'")
@@ -144,7 +147,7 @@ class DataManager(QObject):
         normalized = ((data - data_min) / (data_max - data_min) * 255).astype(np.uint8)
         return normalized
 
-    def export_as_tif(self, result, output_dir, prefix,is_temporal=True):
+    def export_as_tif(self, result, output_dir, prefix, is_temporal=True):
         """支持彩色TIFF导出"""
         created_files = []
         if is_temporal:
@@ -169,12 +172,12 @@ class DataManager(QObject):
             photometric = 'minisblack' if result.ndim == 2 else 'rgb'
             tiff.imwrite(output_path, result, photometric=photometric)
             created_files.append(output_path)
-            self.data_progress_signal.emit(num_frames+1, num_frames)
+            self.data_progress_signal.emit(num_frames + 1, num_frames)
 
         logging.info(f'导出TIFF完成: {output_dir}, 共{num_frames}帧')
         return created_files
 
-    def export_as_avi(self, result, output_dir, prefix,duration = 60):
+    def export_as_avi(self, result, output_dir, prefix, duration=60):
         """支持彩色视频导出"""
         num_frames = result.shape[0]
         self.data_progress_signal.emit(0, num_frames)
@@ -213,7 +216,7 @@ class DataManager(QObject):
         logging.info(f'导出AVI完成: {output_path}, 共{num_frames}帧')
         return [output_path]
 
-    def export_as_png(self, result, output_dir, prefix,is_temporal=True):
+    def export_as_png(self, result, output_dir, prefix, is_temporal=True):
         """支持彩色PNG导出"""
         created_files = []
         # 归一化处理
@@ -250,12 +253,12 @@ class DataManager(QObject):
                 img = Image.fromarray(normalized, 'RGBA')
             img.save(output_path)
             created_files.append(output_path)
-            self.data_progress_signal.emit(num_frames+1, num_frames)
+            self.data_progress_signal.emit(num_frames + 1, num_frames)
 
         logging.info(f'导出PNG完成: {output_dir}, 共{num_frames}帧')
         return created_files
 
-    def export_as_gif(self, result, output_dir, prefix,duration = 60):
+    def export_as_gif(self, result, output_dir, prefix, duration=60):
         """彩色GIF导出"""
         num_frames = result.shape[0]
         self.data_progress_signal.emit(0, num_frames)
@@ -298,8 +301,8 @@ class DataManager(QObject):
         logging.info(f'导出GIF完成: {output_path}, 共{num_frames}帧')
         return [output_path]
 
-    def export_as_plt(self, result , output_dir, prefix, is_temporal = True, cmap = 'viridis',
-                      max_bound = 255, min_bound = 0 ,title = '', colorbar_label = ''):
+    def export_as_plt(self, result, output_dir, prefix, is_temporal=True, cmap='viridis',
+                      max_bound=255, min_bound=0, title='', colorbar_label=''):
         """使用matplotlib的彩色导出"""
         mpl.use('Agg')
 
@@ -401,9 +404,83 @@ class DataManager(QObject):
             created_files.append(output_path)
             self.data_progress_signal.emit(1, 1)
 
-        self.data_progress_signal.emit(num_frames+1, num_frames)
+        self.data_progress_signal.emit(num_frames + 1, num_frames)
         logging.info(f'导出热图TIFF完成: {output_dir}, 共{len(created_files)}帧')
         return created_files
+
+    @pyqtSlot(object, np.ndarray, float, bool, bool, float)
+    def ROI_processed(self, data, mask, multiply_factor, is_crop=False,is_zoom=False,zoom_factor=1.0):
+        """ROI处理方法"""
+        data_roi = []
+        if isinstance(data, Data):
+            aim_data = data.data_origin.copy()
+            out_processed = None
+        elif isinstance(data, ProcessedData):
+            aim_data = data.data_processed.copy()
+            out_processed = data.out_processed
+        else:
+            raise ValueError("不可能错误，数据类型有误")
+        total_frames = data.timelength
+        self.data_progress_signal.emit(0, total_frames)
+        if is_crop:
+            true_coords = np.argwhere(mask)
+            # 计算边界框
+            min_y, min_x = true_coords.min(axis=0)
+            max_y, max_x = true_coords.max(axis=0)
+            # 初始化裁剪后的数组
+            processed_frame = np.zeros(((max_y - min_y + 1), (max_x - min_x + 1)))
+            mask = mask[min_y:max_y + 1, min_x:max_x + 1]
+            if len(aim_data.shape) == 2:
+                processed_frame = aim_data[min_y:max_y + 1, min_x:max_x + 1]
+                processed_frame = np.where(
+                    mask,
+                    processed_frame * multiply_factor,
+                    processed_frame
+                )
+                data_roi.append(processed_frame)
+            else: # shape=3
+                aim_data = aim_data[:,min_y:max_y + 1, min_x:max_x + 1]
+                for i, frame in enumerate(aim_data):
+                    processed_frame = np.where(
+                        mask,
+                        frame * multiply_factor,
+                        frame
+                    )
+                    data_roi.append(processed_frame)
+
+                    self.data_progress_signal.emit(i, total_frames)
+        else:
+            processed_frame = np.zeros(data.framesize)
+            if len(aim_data.shape) == 2:
+                processed_frame = np.where(
+                    mask,
+                    aim_data * multiply_factor,
+                    aim_data
+                )
+                data_roi.append(processed_frame)
+            else:
+                for i, frame in enumerate(aim_data):
+                    processed_frame = np.where(
+                        mask,
+                        frame * multiply_factor,
+                        frame
+                    )
+                    data_roi.append(processed_frame)
+
+                    self.data_progress_signal.emit(i, total_frames)
+
+        data_processed = np.squeeze(np.array(data_roi))
+        if is_zoom:
+            data_processed = zoom(data_processed, zoom_factor, order=3)
+
+        self.processed_result.emit(ProcessedData(data.timestamp,
+                                                 f'{data.name}@ROIed',
+                                                 'Roi_applied',
+                                                 time_point=data.time_point,
+                                                 data_processed=data_processed,
+                                                 out_processed=out_processed))
+        self.data_progress_signal.emit(total_frames + 1, total_frames)
+
 
 @dataclass
 class Data:
@@ -426,34 +503,35 @@ class Data:
         self.datamax；
         self.datamin；
     """
-    data_origin : np.ndarray
-    time_point : np.ndarray
-    format_import : str
-    image_import : np.ndarray
-    parameters : dict = None
-    name : str = None
-    timestamp : float = field(init=False, default_factory=time.time)
-    ROI_applied : bool = field(init=False, default=False)
-    history : ClassVar[deque] = deque(maxlen=10)
+    data_origin: np.ndarray
+    time_point: np.ndarray
+    format_import: str
+    image_import: np.ndarray
+    parameters: dict = None
+    name: str = None
+    timestamp: float = field(init=False, default_factory=time.time)
+    ROI_applied: bool = field(init=False, default=False)
+    history: ClassVar[deque] = deque(maxlen=10)
     serial_number: int = field(init=False)
-    _counter : int = field(init=False, repr=False, default=0)
-    _amend_counter : int = field(init=False, default=0)
+    _counter: int = field(init=False, repr=False, default=0)
+    _amend_counter: int = field(init=False, default=0)
 
     def __post_init__(self):
         Data._counter += 1
-        self.serial_number = Data._counter # 生成序号
+        self.serial_number = Data._counter  # 生成序号
         self._recalculate()
 
         if self.name is None:
             self.name = f"{self.format_import}_{self.serial_number}"
         else:
             self.name = f"{self.name}_{self.serial_number}"
-        Data.history.append(copy.deepcopy(self)) # 实例存储
+        Data.history.append(copy.deepcopy(self))  # 实例存储
 
     def _recalculate(self):
         self.datashape = self.data_origin.shape
-        self.timelength = self.datashape[0] if self.data_origin.ndim == 3 else 1 # 默认不存在单像素点数据
-        self.framesize = (self.datashape[1], self.datashape[2]) if self.data_origin.ndim == 3 else (self.datashape[0], self.datashape[1])
+        self.timelength = self.datashape[0] if self.data_origin.ndim == 3 else 1  # 默认不存在单像素点数据
+        self.framesize = (self.datashape[1], self.datashape[2]) if self.data_origin.ndim == 3 else (self.datashape[0],
+                                                                                                    self.datashape[1])
         self.datatype = self.data_origin.dtype
         self.datamax = self.data_origin.max()
         self.datamin = self.data_origin.min()
@@ -491,7 +569,7 @@ class Data:
 
         self.ROI_mask = mask
 
-            # 根据蒙版类型应用不同的处理
+        # 根据蒙版类型应用不同的处理
         if self.ROI_mask.dtype == bool:
             # 布尔蒙版：将非 ROI 区域置零
             if self.ndim == 3:
@@ -527,7 +605,7 @@ class Data:
             format_import=current_values['format_import'],
             image_import=current_values['image_import'],
             parameters=current_values.get('parameters'),
-            name= f"{current_values.get('name')}@"
+            name=f"{current_values.get('name')}@"
         )
         return new_instance
 
@@ -634,6 +712,7 @@ class Data:
         """清空所有历史记录"""
         cls.history.clear()
 
+
 @dataclass
 class ProcessedData:
     """
@@ -648,25 +727,25 @@ class ProcessedData:
     ROI_applied 是否应用ROI蒙版 \n
     history 历史，无限保留，考虑和绘图挂钩: ClassVar[Dict[str, 'ProcessedData']] = {}\n
     """
-    timestamp_inherited : float
-    name : str
-    type_processed : str
-    time_point : np.ndarray = None
+    timestamp_inherited: float
+    name: str
+    type_processed: str
+    time_point: np.ndarray = None
     data_processed: np.ndarray = None
     out_processed: dict = None
-    timestamp : float = field(init=False, default_factory=time.time)
-    ROI_applied : bool = False
+    timestamp: float = field(init=False, default_factory=time.time)
+    ROI_applied: bool = False
     history: ClassVar[deque] = deque(maxlen=30)
 
     def __post_init__(self):
         if self.data_processed is not None:
             self.datashape = self.data_processed.shape if self.data_processed is not None else None
             self.timelength = self.datashape[0] if self.data_processed.ndim == 3 else 1  # 默认不存在单像素点数据
-            if self.data_processed.ndim == 3 :
+            if self.data_processed.ndim == 3:
                 self.framesize = (self.datashape[1], self.datashape[2])
-            elif self.data_processed.ndim == 2 :
+            elif self.data_processed.ndim == 2:
                 self.framesize = (self.datashape[0], self.datashape[1])
-            elif self.data_processed.ndim == 1 :
+            elif self.data_processed.ndim == 1:
                 self.framesize = (self.datashape[0])
             self.datamin = self.data_processed.min()
             self.datamax = self.data_processed.max()
@@ -687,7 +766,7 @@ class ProcessedData:
 
         self.ROI_mask = mask
 
-            # 根据蒙版类型应用不同的处理
+        # 根据蒙版类型应用不同的处理
         if self.ROI_mask.dtype == bool:
             # 布尔蒙版：将非 ROI 区域置零
             if self.ndim == 3:
@@ -720,6 +799,7 @@ class ProcessedData:
         except Exception as e:
             print(f"查找历史记录时出错: {e}")
             return None
+
     # @classmethod
     # def remove_from_history(cls, name: str):
     #     """从历史记录中删除指定名称的处理数据"""
@@ -730,6 +810,7 @@ class ProcessedData:
     def clear_history(cls):
         """清空所有历史记录"""
         cls.history.clear()
+
     #
     # @classmethod
     # def get_by_name(cls, name: str) -> Optional['ProcessedData']:
@@ -761,6 +842,7 @@ class ProcessedData:
             f"Range: [{self.datamin:.2f}, {self.datamax:.2f}]>"
         )
 
+
 @dataclass
 class ImagingData:
     """
@@ -768,20 +850,21 @@ class ImagingData:
     timestamp_inherited 原始数据来源\n
     """
     timestamp_inherited: float
-    image_backup: np.ndarray = None # 原始数据
-    image_data: np.ndarray = None # 归一，放宽，整数化后的数据 （最终显示）
+    image_backup: np.ndarray = None  # 原始数据
+    image_data: np.ndarray = None  # 归一，放宽，整数化后的数据 （最终显示）
     image_type: str = None
-    colormode: str = None # 色彩模式，目前在sub类中实现
+    colormode: str = None  # 色彩模式，目前在sub类中实现
     canvas_num: int = field(default=0)
-    is_temporary: bool = field(init=False ,default=False)
-    timestamp : float = field(init=False, default_factory=time.time)
+    is_temporary: bool = field(init=False, default=False)
+    timestamp: float = field(init=False, default_factory=time.time)
 
     def __post_init__(self):
         self.image_data = self.to_uint8(self.image_backup)
         self.imageshape = self.image_data.shape
         self.ndim = self.image_data.ndim
         self.totalframes = self.imageshape[0] if self.ndim == 3 else 1
-        self.framesize = (self.imageshape[1], self.imageshape[2]) if self.ndim == 3 else (self.imageshape[0], self.imageshape[1])
+        self.framesize = (self.imageshape[1], self.imageshape[2]) if self.ndim == 3 else (self.imageshape[0],
+                                                                                          self.imageshape[1])
         # 不考虑数据点只有一个的情况
         self.is_temporary = True if self.ndim == 3 else False
         self.imagemin = self.image_backup.min()
@@ -791,7 +874,7 @@ class ImagingData:
         self.ROI_applied = False
 
     @classmethod
-    def create_image(cls, data_obj: Union['Data', 'ProcessedData'],*arg:str) -> 'ImagingData':
+    def create_image(cls, data_obj: Union['Data', 'ProcessedData'], *arg: str) -> 'ImagingData':
         """初始化ImagingData"""
 
         instance = cls.__new__(cls)
@@ -807,7 +890,7 @@ class ImagingData:
         elif isinstance(data_obj, ProcessedData):
             if arg:
                 # instance.image_data = data_obj.out_processed[arg].copy()
-                instance.image_backup =  data_obj.out_processed[arg].copy()
+                instance.image_backup = data_obj.out_processed[arg].copy()
             else:
                 # instance.image_data = data_obj.data_processed.copy()
                 instance.image_backup = data_obj.data_processed.copy()
@@ -815,7 +898,6 @@ class ImagingData:
             instance.source_type = "ProcessedData"
             instance.source_name = data_obj.name
             instance.source_format = data_obj.type_processed
-
 
         # 调用后初始化
         instance.__post_init__()
@@ -831,7 +913,7 @@ class ImagingData:
 
         self.ROI_mask = mask
 
-            # 根据蒙版类型应用不同的处理
+        # 根据蒙版类型应用不同的处理
         if self.ROI_mask.dtype == bool:
             # 布尔蒙版：将非 ROI 区域置零
             if self.ndim == 3:
@@ -852,7 +934,7 @@ class ImagingData:
 
         self.ROI_applied = True
 
-    def to_uint8(self,data = None):
+    def to_uint8(self, data=None):
         """归一化和数字类型调整"""
         if data is None:
             data = self.image_backup
@@ -865,7 +947,7 @@ class ImagingData:
 
         # if self.source_format == "ROI_stft" or self.source_format == "ROI_cwt":
         #     return ((data - np.min(data))/(np.max(data)- np.min(data))*255).astype(np.uint8)
-        result = ((data - min_val)/(max_val- min_val)*255).astype(np.uint8)
+        result = ((data - min_val) / (max_val - min_val) * 255).astype(np.uint8)
         # 通用线性变换公式
         # 使用64位浮点保证精度，避免中间步骤溢出
         # scaled = (data.astype(np.float64) - min_val) * (255.0 / (max_val - min_val))
@@ -937,6 +1019,7 @@ class ImagingData:
             f"Range: [{self.imagemin:.2f}, {self.imagemax:.2f}]>"
         )
 
+
 class ColorMapManager:
     """伪彩色映射管理器"""
 
@@ -979,8 +1062,8 @@ class ColorMapManager:
             "magma": cm.magma,
             "cividis": cm.cividis,
             "turbo": cm.turbo,
-            'CMRmap':cm.CMRmap,
-            'gnuplot2':cm.gnuplot2,
+            'CMRmap': cm.CMRmap,
+            'gnuplot2': cm.gnuplot2,
             "Rainbow*": self.create_rainbow_cmap(),
         }
 
@@ -1073,6 +1156,3 @@ class ColorMapManager:
 
     # 其他colormap实现类似，这里省略以节省空间...
     # 实际使用中我们使用matplotlib的实现
-
-
-

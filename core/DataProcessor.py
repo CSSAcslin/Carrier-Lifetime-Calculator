@@ -653,15 +653,6 @@ class MassDataProcessor(QObject):
             #     dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
 
             # 6. 发送完整结果
-            # logging.info("这是调试ing")
-            # self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
-            #                                                    f'{data.name}@Zxx_stft',
-            #                                                    'Zxx_stft',
-            #                                                    time_point=time_series,
-            #                                                    data_processed=zxx_out,
-            #                                                    out_processed={'frequencies':freq,}
-            #                                                    ))
-            # logging.info("保留了完整的STFT结果")
             self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                                                f'{data.name}@r_stft',
                                                                'ROI_stft',
@@ -985,6 +976,7 @@ class MassDataProcessor(QObject):
 
             返回:
             magnitude_spectra: 傅里叶幅度谱数组
+            magnitude_log: 幅度谱的log（默认主参数）
             phase_spectra: 傅里叶相位谱数组
             """
         if isinstance(data, DataManager.ProcessedData):
@@ -999,6 +991,7 @@ class MassDataProcessor(QObject):
             else:
                 frames, height, width = data.datashape
             magnitude_spectra = np.zeros((frames, height, width))
+            magnitude_log = np.zeros((frames, height, width))
             phase_spectra = np.zeros((frames, height, width))
             self.processing_progress_signal.emit(1,frames)
             for i in range(frames):
@@ -1013,13 +1006,17 @@ class MassDataProcessor(QObject):
                 phase_spectra[i] = np.angle(fshift)
                 self.processing_progress_signal.emit(i, frames)
 
+                magnitude_log[i] = np.log(magnitude_spectra[i]+1)
+
             self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
                                        f'{data.name}@2DFT',
                                        "2D_Fourier_transform",
                                        time_point = data.time_point,
-                                       data_processed=np.squeeze(fshift),
-                                       out_processed={'magnitude_spectra': np.squeeze(magnitude_spectra),
+                                       data_processed=np.squeeze(magnitude_log),
+                                       out_processed={'twoD_FFT':np.squeeze(fshift),
+                                                      'magnitude_spectra': np.squeeze(magnitude_spectra),
                                                       'phase_spectra': np.squeeze(phase_spectra)}))
+            self.processing_progress_signal.emit(frames +1, frames)
             return True
         except Exception as e:
             self.processed_result.emit({'type': "2D_Fourier_transform", 'error': str(e)})

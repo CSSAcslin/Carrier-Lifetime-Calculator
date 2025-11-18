@@ -46,7 +46,8 @@ class MainWindow(QMainWindow):
     atam_signal = pyqtSignal(object)
     tDgf_signal = pyqtSignal(ProcessedData,int,float,bool)
     tDFT_signal = pyqtSignal(object)
-    retransform_signal = pyqtSignal(ProcessedData, np.ndarray)
+    # retransform_signal = pyqtSignal(ProcessedData, np.ndarray)
+    roi_processed_signal = pyqtSignal(object,np.ndarray,float,bool,bool,float)
 
     def __init__(self):
         super().__init__()
@@ -131,8 +132,8 @@ class MainWindow(QMainWindow):
             'thr_known' : False, # 是否已知阈值
         }
         self.tool_params = {'pen_size': 2,
-            'pen_color': QColor(Qt.black),
-            'fill_color': QColor(Qt.black),
+            'pen_color': QColor(Qt.green),
+            'fill_color': QColor(Qt.darkGreen),
             'vector_color': QColor(Qt.yellow),
             'angle_step':pi/4,
             'fill': False, # 未实装
@@ -363,8 +364,8 @@ class MainWindow(QMainWindow):
         time_step_layout.addWidget(self.time_unit_combo)
         time_step_layout.addWidget(QLabel("/帧"))
         left_layout.addLayout(time_step_layout)
-        left_layout.addWidget(QLabel("     (最小分辨率：.001 fs)"))
-        left_layout.addSpacing(5)
+        # left_layout.addWidget(QLabel("     (最小分辨率：.001 fs)"))
+        left_layout.addSpacing(10)
         space_step_layout = QHBoxLayout()
         space_step_layout.addWidget(QLabel("空间单位:"))
         self.space_step_input = QDoubleSpinBox()
@@ -378,7 +379,7 @@ class MainWindow(QMainWindow):
         space_step_layout.addWidget(self.space_unit_combo)
         space_step_layout.addWidget(QLabel("/像素"))
         left_layout.addLayout(space_step_layout)
-        left_layout.addWidget(QLabel('     (最小分辨率：.001 nm)'))
+        # left_layout.addWidget(QLabel('     (最小分辨率：.001 nm)'))
         self.parameter_panel.setLayout(left_layout)
 
     # 分析总体设置
@@ -658,9 +659,9 @@ class MainWindow(QMainWindow):
         plt_settings_edit = edit_menu.addAction("绘图设置")
         plt_settings_edit.triggered.connect(self.plt_settings_edit_dialog)
 
-        # ROI绘图
-        ROI_function = self.menu.addAction("ROI选取")
-        ROI_function.triggered.connect(self.roi_select_dialog)
+        # # ROI绘图
+        # ROI_function = self.menu.addAction("ROI选取")
+        # ROI_function.triggered.connect(self.roi_select_dialog)
 
         # 历史数据管理
         data_menu = self.menu.addMenu('历史数据')
@@ -852,6 +853,8 @@ class MainWindow(QMainWindow):
         self.dat_thread.data_progress_signal.connect(self.update_progress)
         self.dat_thread.process_finish_signal.connect(self.image_display.update_canvas_by_stamp)
         self.mass_export_signal.connect(self.dat_thread.export_data)
+        self.roi_processed_signal.connect(self.dat_thread.ROI_processed)
+        self.dat_thread.processed_result.connect(self.processed_result)
 
     def cal_thread_open(self):
         """计算线程相关 以及信号槽连接都放在这里了"""
@@ -953,7 +956,7 @@ class MainWindow(QMainWindow):
         if self.data is None and self.processed_data is None:
             logging.warning('请先导入或处理数据')
             return
-        self.update_progress(999999)
+        self.update_progress(-1)
         data_display = None
         if assign_data is not None:
             data_display = ImagingData.create_image(assign_data)
@@ -1312,29 +1315,29 @@ class MainWindow(QMainWindow):
             logging.info("绘图已更新")
         self.update_status("准备就绪", 'idle')
 
-    def roi_select_dialog(self):
-        """ROI选取功能（即将抛弃）"""
-        if self.data is None or self.processed_data is None:
-            logging.warning("无数据，请先加载数据文件")
-            return
-        roi_dialog = ROIdrawDialog(base_layer_array=self.data.data_origin[0],parent=self)
-        self.update_status("ROI绘制ing", 'working')
-        if roi_dialog.exec_() == QDialog.Accepted:
-            if roi_dialog.action_type == "mask":
-                self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
-                logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
-                if self.fuction_select.currentIndex() == 2:
-                    pass
-                else:
-                    data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
-                    self.data.update(data_amend)
-                    # self.time_label.setText(self.image_display.update_time_slice(self.idx))
-            elif roi_dialog.action_type == "vector":
-                self.vector_array = roi_dialog.vector_line.getPixelValues(self.data,self.space_unit,self.time_unit)
-                logging.info(f'成功绘制ROI，大小{self.vector_array.shape}')
-
-
-        self.update_status("准备就绪", 'idle')
+    # def roi_select_dialog(self):
+    #     """ROI选取功能（即将抛弃）"""
+    #     if self.data is None or self.processed_data is None:
+    #         logging.warning("无数据，请先加载数据文件")
+    #         return
+    #     roi_dialog = ROIdrawDialog(base_layer_array=self.data.data_origin[0],parent=self)
+    #     self.update_status("ROI绘制ing", 'working')
+    #     if roi_dialog.exec_() == QDialog.Accepted:
+    #         if roi_dialog.action_type == "mask":
+    #             self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
+    #             logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
+    #             if self.fuction_select.currentIndex() == 2:
+    #                 pass
+    #             else:
+    #                 data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
+    #                 self.data.update(data_amend)
+    #                 # self.time_label.setText(self.image_display.update_time_slice(self.idx))
+    #         elif roi_dialog.action_type == "vector":
+    #             self.vector_array = roi_dialog.vector_line.getPixelValues(self.data,self.space_unit,self.time_unit)
+    #             logging.info(f'成功绘制ROI，大小{self.vector_array.shape}')
+    #
+    #
+    #     self.update_status("准备就绪", 'idle')
 
     def start_calculation(self):
         """开始计算时调用此方法"""
@@ -1634,7 +1637,7 @@ class MainWindow(QMainWindow):
                 return False
         else:
             return False
-        self.update_status('计算进行中...', 'working')
+        self.update_status('传热系数计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
         self.start_heat_cal_signal.emit(aim_data)
         return True
@@ -1926,24 +1929,32 @@ class MainWindow(QMainWindow):
         if self.data is None and self.processed_data is None:
             logging.warning("无数据可处理，请先加载数据")
             return
-        elif self.processed_data is None and self.data is not None:
-            data = self.data
-        else:
-            data = self.processed_data
-        self.tDFT_signal.emit(data)
-    # def retransform_EM_data(self):
-    #     """重选频率"""
-    #     if self.data is None and self.processed_data is None:
-    #         logging.warning('请先导入并变换数据')
-    #         return
-    #     try:
-    #         data_aim = next(data for data in reversed(self.processed_data.history) if data.type_processed == "ROI_cwt" or data.type_processed == "Zxx_stft")
-    #     except Exception as e:
-    #         QMessageBox.warning(self,"数据错误","请重选数据焦点或重新变换数据")
-    #         return
-    #     target_idx = self.parse_frame_input(parse_type='freq',freq=data_aim.out_processed['frequencies'])
-    #     if target_idx is not None:
-    #         self.retransform_signal.emit(data_aim,target_idx)
+        dialog = DataViewAndSelectPop(datadict=self.get_data_all(),
+                                      processed_datadict=self.get_processed_data_all(),
+                                      add_canvas=False)
+        aim_data = None
+        if dialog.exec_():
+            selected_timestamp, selected_table = dialog.get_selected_timestamp()
+            if selected_table == 'data':
+                for data in self.data.history:
+                    if data.timestamp == selected_timestamp:
+                        aim_data = data
+                        logging.info(f"数据选择成功（初始导入）：{data.name}")
+                        break
+            else:
+                for data in self.processed_data.history:
+                    if data.timestamp == selected_timestamp:
+                        aim_data = data
+                        logging.info(f"数据选择成功（处理过）：{data.name}")
+                        break
+            if aim_data is None:
+                QMessageBox.warning(self, "数据错误", "没有选取数据")
+                return False
+        if not self.avi_thread.isRunning():
+            self.avi_thread.start()
+        self.update_status('二维傅里叶变换计算进行中...', 'working')
+        self.tDFT_signal.emit(aim_data)
+        return True
 
     def processed_result(self, data):
         """处理过后的数据都来这里重整再分配"""
@@ -1956,6 +1967,7 @@ class MainWindow(QMainWindow):
             self.cwt_process_btn.setEnabled(True)
             self.tDgf_btn.setEnabled(True)
             QMessageBox.warning(self,"运算错误",f"在{data['type']}处理中报错：\n{data['error']}")
+            self.update_progress(-1) # 进度条重置
             return False
         self.processed_data = data
         # 各处理后响应
@@ -1990,8 +2002,6 @@ class MainWindow(QMainWindow):
                 #     self.data.image_import = (result - np.min(result)) / (np.max(result) - np.min(result)) # 要改
                 #     self.load_image()
                 pass
-            case 'Zxx_stft':
-                pass
             case 'ROI_cwt':
                 result = self.processed_data.data_processed
                 self.cwt_process_btn.setEnabled(True)
@@ -2015,10 +2025,11 @@ class MainWindow(QMainWindow):
             case '2D_Fourier_transform':
                 pass
 
-    def draw_result(self,draw_type:str,canvas_id:int,result):
+    def draw_result(self,draw_type:str,canvas_id:int,result,roi_info = None):
         """canvas绘图结果处理"""
         timestamp = self.image_display.display_canvas[canvas_id].data.timestamp_inherited
         draw_data = None
+        data_type = None
         if self.data is not None:
             for data in self.data.history:
                 if data.timestamp == timestamp:
@@ -2026,37 +2037,50 @@ class MainWindow(QMainWindow):
                     break
         if self.processed_data is not None and draw_data is None:
             draw_data = next(data for data in self.processed_data.history if data.timestamp == timestamp)
-        if draw_type == "v_rect":
-            # ((x, y), width, height)
-            x,y,w,h = result[0][0],result[0][1],result[1],result[2]
-            if w == 0 or h == 0:
-                return
-            if hasattr(draw_data,'type_processed') and draw_data.type_processed == 'Accumulated_time_amplitude_map':
-                try:
-                    source_data = next(data for data in self.processed_data.history if data.timestamp == draw_data.timestamp_inherited)
-                except: # 如果不行就从data里找
-                    source_data = next(
-                        data for data in self.data.history if data.timestamp == draw_data.timestamp_inherited)
-                if isinstance(source_data, Data):
-                    roi_data = source_data.data_origin[:,y:y+h,x:x+w]
-                elif isinstance(source_data, ProcessedData):
-                    roi_data = source_data.data_processed[:,y:y+h,x:x+w]
-                else:
-                    logging.error("roi应用错误（不可能错误）")
-                    roi_data = None
+            data_type = draw_data.type_processed
+        crop_roi = False
+        dialog = ROIProcessedDialog(draw_type, canvas_id, result,roi_info,data_type, self)
+        if dialog.exec_():
+            logging.info("ROI已确认选取")
+            if dialog.crop_check.isChecked():
+                crop_roi = True
+            if draw_type == "v_rect":
+                x,y,w,h = result[0][0],result[0][1],result[1],result[2]
+                if w == 0 or h == 0:
+                    return
+                if crop_roi:
+                    self.bool_mask = np.zeros(draw_data.framesize, dtype=bool)
+                    self.bool_mask[y:y+h, x:x+w] = True
+                    self.roi_processed_signal.emit(draw_data, self.bool_mask, dialog.reset_value.value(), crop_roi, dialog.zoom_check.isChecked(), dialog.zoom_factor.value())
+                if dialog.fast_check.isChecked():
+                    if hasattr(draw_data,'type_processed') and draw_data.type_processed == 'Accumulated_time_amplitude_map':
+                        try:
+                            source_data = next(data for data in self.processed_data.history if data.timestamp == draw_data.timestamp_inherited)
+                        except: # 如果不行就从data里找
+                            source_data = next(data for data in self.data.history if data.timestamp == draw_data.timestamp_inherited)
+                        if isinstance(source_data, Data):
+                            roi_data = source_data.data_origin[:,y:y+h,x:x+w]
+                        elif isinstance(source_data, ProcessedData):
+                            roi_data = source_data.data_processed[:,y:y+h,x:x+w]
+                        else:
+                            logging.error("roi应用错误（不可能错误）")
+                            roi_data = None
 
-                self.processed_data = ProcessedData(draw_data.timestamp,
-                                                f"{draw_data.name}@ROIed",
-                                                "Roi_applied",
-                                                time_point=draw_data.time_point,
-                                                data_processed=roi_data,
-                                                out_processed=draw_data.out_processed,
-                                                ROI_applied=True)
-        elif draw_type == "v_line":
-            self.vector_array = result.getPixelValues(draw_data, self.space_unit, self.time_unit)
-        elif draw_type == "pixel_roi":
-            draw_ROI = result[0]
-            self.bool_mask = result[1]
+                        self.processed_data = ProcessedData(draw_data.timestamp,
+                                                        f"{draw_data.name}@ROIed",
+                                                        "Roi_applied",
+                                                        time_point=draw_data.time_point,
+                                                        data_processed=roi_data,
+                                                        out_processed=draw_data.out_processed,
+                                                        ROI_applied=True)
+            elif draw_type == "v_line":
+                self.vector_array = result.getPixelValues(draw_data, self.space_unit, self.time_unit)
+            elif draw_type == "pixel_roi":
+                self.bool_mask = result[1]
+                if dialog.inverse_check.isChecked():
+                    self.bool_mask = ~self.bool_mask
+                self.roi_processed_signal.emit(draw_data, self.bool_mask, dialog.reset_value.value(),crop_roi, dialog.zoom_check.isChecked(), dialog.zoom_factor.value())
+            logging.info("ROI已确认选取")
     '''其他功能'''
     def is_thread_active(self, thread_name: str) -> bool:
         """检查指定名称的线程是否存在且正在运行"""

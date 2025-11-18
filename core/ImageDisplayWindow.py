@@ -24,7 +24,7 @@ import matplotlib.cm as cm
 class ImageDisplayWindow(QMainWindow):
     """图像显示管理"""
     add_canvas_signal = pyqtSignal()
-    draw_result_signal = pyqtSignal(str, int, object)
+    draw_result_signal = pyqtSignal(str, int, object,dict)
     params_update_signal = pyqtSignal(dict)
     image_style_change_signal = pyqtSignal(object,dict)
     image_export_signal = pyqtSignal(object, str, str, str, bool, dict)
@@ -299,7 +299,7 @@ class ImageDisplayWindow(QMainWindow):
         if not self.display_canvas:
             return False
         # 删除最后添加的画布
-        if not canvas_id:
+        if canvas_id is False: # 不能改为not 否则0也会被判定
             canvas_id = self.display_canvas[-1].id
         # 删除所有画布
         elif canvas_id == -1: # 全部清除
@@ -371,13 +371,14 @@ class ImageDisplayWindow(QMainWindow):
             self.anchor_active = False
 
     def cursor(self):
-        self.display_canvas[self.cursor_id].set_drawing_tool(None)
-        for action in self.actions_all.values():
-            action.setChecked(False)
+        if not self.display_canvas:
+            self.display_canvas[self.cursor_id].set_drawing_tool(None)
             self.anchor_active = False
-            # 清除所有画板的十字标
+                # 清除所有画板的十字标
             for canvas in self.display_canvas:
                 canvas.set_anchor_mode(self.anchor_active)
+        for action in self.actions_all.values():
+            action.setChecked(False)
 
     def get_draw_roi(self,canvas_id):
         """获取绘制的roi"""
@@ -449,15 +450,15 @@ class ImageDisplayWindow(QMainWindow):
 
         dialog = ROIInfoDialog(self)
         if dialog.exec_():
+            aim_id = dialog.canvas_id
             if dialog.roi_type == 'pixel_roi':
-                self.draw_result_signal.emit('pixel_roi',self.cursor_id,self.get_draw_roi(self.cursor_id))
-            elif dialog.roi_type == 'vector_line':
-                self.draw_result_signal.emit('v_line', self.cursor_id, self.display_canvas[self.cursor_id].vector_line)
-            elif dialog.roi_type == 'vector_rect':
-                pass
+                self.draw_result_signal.emit('pixel_roi',aim_id,self.get_draw_roi(aim_id),dialog.selected_roi_info)
+            elif dialog.roi_type == 'v_line':
+                self.draw_result_signal.emit('v_line', aim_id, self.display_canvas[aim_id].vector_line,dialog.selected_roi_info)
+            elif dialog.roi_type == 'v_rect':
+                self.draw_result_signal.emit('v_rect', aim_id, self.display_canvas[aim_id].v_rect_roi,dialog.selected_roi_info)
             else:
                 pass
-            logging.info("ROI已确认选取")
 
     def set_color_style_dialog(self):
         """这是设置伪彩色的"""
@@ -527,7 +528,7 @@ class SubImageDisplayWidget(QDockWidget):
     mouse_position_signal = pyqtSignal(int, int, int, object,float)
     mouse_clicked_signal = pyqtSignal(int, int)
     current_canvas_signal = pyqtSignal(int)
-    draw_result_signal = pyqtSignal(str,int,object)
+    draw_result_signal = pyqtSignal(str,int,object,dict)
     def __init__(self, parent=None,canvas_id = None,name = None, data :ImagingData = None, args_dict :dict = None):
         super().__init__(name, parent)
         self.parent_window = parent
@@ -575,8 +576,8 @@ class SubImageDisplayWidget(QDockWidget):
         # 绘图设置
         self.args_dict = args_dict if args_dict else {
             'pen_size': 1,
-            'pen_color': QColor(Qt.black),
-            'fill_color': QColor(Qt.black),
+            'pen_color': QColor(Qt.green),
+            'fill_color': QColor(Qt.darkGreen),
             'vector_color': QColor(Qt.yellow),
             'angle_step':pi/4,
             'fill': False,
@@ -1011,7 +1012,7 @@ class SubImageDisplayWidget(QDockWidget):
 
                     # 创建ROI信息
                     self.v_rect_roi = ((x, y), width+1, height+1)
-                    self.draw_result_signal.emit('v_rect',self.id,self.v_rect_roi)
+                    # self.draw_result_signal.emit('v_rect',self.id,self.v_rect_roi, {})
                     # 移除临时绘图项
                     self.scene.removeItem(self.rect_item)
                     self.rect_item = None
