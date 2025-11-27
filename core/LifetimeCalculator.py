@@ -237,21 +237,121 @@ class LifetimeCalculator:
         return lifetime, fit_curve, mask, phy_signal, r_squared
 
     @staticmethod
-    def apply_custom_kernel(data, kernel_type='smooth'):
+    def apply_custom_kernel(data, kernel_type='smooth',half_size = 2):
         """
-        应用自定义卷积核
+         应用自定义卷积核
+        参数:
+            data: 输入数据（2D数组）
+            kernel_type: 卷积核类型，可选 'smooth', 'gaussian', 'sharpen', 'edge', 'laplacian', 'average'
+            half_size: 半卷积核大小（奇数，默认2）
+
+        返回:
+            卷积后的数据
         """
+        # 确保卷积核大小为奇数
+        size = half_size * 2 - 1
         if kernel_type == 'smooth':
-            kernel = np.array([
-                [0.1, 0.1, 0.1],
-                [0.1, 0.2, 0.1],
-                [0.1, 0.1, 0.1]
-            ])
+            if size == 3:
+                kernel = np.array([
+                    [0.1, 0.1, 0.1],
+                    [0.1, 0.2, 0.1],
+                    [0.1, 0.1, 0.1]
+                ])
+            else:
+                kernel = np.zeros((size, size))
+                center = size // 2
+
+                # 计算最大距离（从中心到角落）
+                max_dist = np.sqrt(2 * (center ** 2))
+
+                # 填充核值
+                for i in range(size):
+                    for j in range(size):
+                        # 计算到中心的距离
+                        dist = np.sqrt((i - center) ** 2 + (j - center) ** 2)
+
+                        # 线性插值计算权重
+                        if dist == 0:  # 中心点
+                            weight = 2
+                        else:
+                            # 从中心权重线性递减到边缘权重
+                            weight = 2 - 1 * (dist / max_dist)
+
+                        kernel[i, j] = weight
+
+                # 归一化核，使所有元素和为1
+                kernel /= np.sum(kernel)
+
+        elif kernel_type == 'gaussian':
+            # 高斯核
+            sigma = max(0.3 * ((size - 1) * 0.5 - 1) + 0.8, 0.1)  # 自动计算sigma
+
+            ax = np.linspace(-(size - 1) / 2., (size - 1) / 2., size)
+            xx, yy = np.meshgrid(ax, ax)
+            kernel = np.exp(-0.5 * (xx ** 2 + yy ** 2) / sigma ** 2)
+            kernel = kernel / np.sum(kernel)  # 归一化
+
+        elif kernel_type == 'sharpen':
+            # 锐化核
+            if size == 3:
+                kernel = np.array([
+                    [0, -1, 0],
+                    [-1, 5, -1],
+                    [0, -1, 0]
+                ])
+            else:
+                # 对于其他尺寸，创建中心突出、周围负值的核
+                kernel = -np.ones((size, size)) / (size * size - 1)
+                center = size // 2
+                kernel[center, center] = 2  # 中心权重
+
+        elif kernel_type == 'edge':
+            # 边缘检测核（Sobel变体）
+            if size == 3:
+                kernel = np.array([
+                    [-1, -1, -1],
+                    [-1, 8, -1],
+                    [-1, -1, -1]
+                ])
+            else:
+                # 对于大尺寸，使用拉普拉斯近似
+                kernel = np.ones((size, size))
+                center = size // 2
+                kernel[center, center] = - (size * size - 1)
+
+        elif kernel_type == 'laplacian':
+            # 拉普拉斯算子（二阶微分）
+            if size == 3:
+                kernel = np.array([
+                    [0, 1, 0],
+                    [1, -4, 1],
+                    [0, 1, 0]
+                ])
+            else:
+                # 扩展的拉普拉斯核
+                kernel = np.zeros((size, size))
+                center = size // 2
+                # 设置中心值
+                kernel[center, center] = -4
+                # 设置四邻域
+                if center > 0:
+                    kernel[center - 1, center] = 1
+                    kernel[center + 1, center] = 1
+                    kernel[center, center - 1] = 1
+                    kernel[center, center + 1] = 1
+
+        elif kernel_type == 'average':
+            kernel = np.ones((size, size)) / (size * size)
+
         else:  # 默认不处理
             return data
 
         # 边界处理采用镜像模式
-        return convolve(data, kernel, mode='mirror')
+        try:
+            return convolve(data, kernel, mode='mirror')
+        except Exception as e:
+            logging.error(f"卷积操作失败: {e}")
+            return data
 
     @staticmethod
     def gaussian_func(x, a, mu, sigma):
@@ -287,7 +387,7 @@ class CalculationThread(QObject):
         logging.info('计算线程已载入')
         self._is_calculating = False
 
-    @pyqtSlot(dict, float, tuple, str, int, str)
+    @pyqtSlot(object, float, tuple, str, int, str)
     def region_analyze(self,data,time_unit,center,shape,size,model_type):
         """分析选定区域"""
         logging.info("开始计算选区载流子寿命...")
@@ -322,8 +422,8 @@ class CalculationThread(QObject):
             self.cal_running_status.emit(False)
             self.stop_thread_signal.emit()
 
-    @pyqtSlot(dict, float, str)
-    def distribution_analyze(self,data,time_unit,model_type):
+    @pyqtSlot(object, float, str, str, int, str, int)
+    def distribution_analyze(self,data,time_unit,model_type,pre_cov = None,pre_size = None,post_cov = None,post_size = None):
         """分析全图载流子寿命"""
         self._is_calculating = True
         self.cal_running_status.emit(True)
@@ -331,51 +431,35 @@ class CalculationThread(QObject):
 
             time_points = data.time_point * time_unit
             data_type = data.parameters['data_type'] if data.parameters is not None and 'data_type' in data.parameters else None
+            aim_data = data.data_origin
+            T = data.timelength
 
-            # 计算每个像素的寿命
-            height, width = data.framesize
-            lifetime_map = np.zeros((height, width))
-            logging.info("开始计算载流子寿命...")
+            if pre_cov is not None:
+                for t in range(T):
+                    frame = aim_data[t, :, :]
+                    smoothed_frame = LifetimeCalculator.apply_custom_kernel(frame, kernel_type=pre_cov,half_size=pre_size)
+                    aim_data[t, :, :] = smoothed_frame
+                    self.calculating_progress_signal.emit(t, T)
+                self.calculating_progress_signal.emit(T,T)
+                logging.info("预卷积完成，下面开始计算")
 
-            loading_bar_value =0 #进度条
-            total_l = height * width
-            for i in range(height):
-                if self._is_calculating :# 线程关闭控制（目前仅针对长时计算）
-                    for j in range(width):
-                        time_series = data.data_origin[:, i, j]
-                        # 用皮尔逊系数判断噪音(滑动窗口法)
-                        window_size = min(10, len(time_points) // 2)
-                        pr = []
-                        for k in range(len(time_series) - window_size):
-                            window = time_series[k:k + window_size]
-                            time_window = time_points[k:k + window_size]
-                            r, _ = pearsonr(time_window, window)
-                            pr.append(r)
-                            if abs(r) >= 0.8:
-                                _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(data_type, time_series, time_points, model_type)
-                                continue
-                            else:
-                                pass
-                        if np.all(np.abs(pr) < 0.8):
-                            lifetime = np.nan
-                        else:
-                            pass
-                        lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
-                        loading_bar_value += 1
-                        self.calculating_progress_signal.emit(loading_bar_value, total_l)
-                else:
-                    logging.info("计算终止")
-                    self.calculating_progress_signal.emit(total_l, total_l) # 进度条更新
-                    self.cal_running_status.emit(False)
-                    self.stop_thread_signal.emit() # 目前来说，计算终止也会关闭线程，后续可考虑分开命令
-                    return
-            logging.info("计算完成!")
+            lifetime_map = self.lifetime_map_cal(aim_data,data_type,time_points,model_type)
+            if isinstance(lifetime_map, np.ndarray):
+                pass
+            else:
+                raise Exception(lifetime_map)
+
             # 显示结果
-            smoothed_map = LifetimeCalculator.apply_custom_kernel(lifetime_map)
+            if post_cov is not None:
+                lifetime_map_cov = LifetimeCalculator.apply_custom_kernel(lifetime_map,post_cov,post_size)
+                logging.info("后卷积完成")
+            else:
+                lifetime_map_cov = lifetime_map
             self.processed_result.emit(ProcessedData(data.timestamp,
                                                       f'{data.name}@d-lft',
                                                       'lifetime_distribution',
-                                                      data_processed=smoothed_map))
+                                                      data_processed=lifetime_map_cov,
+                                                     out_processed={'lifetime_map': lifetime_map,}))
             self._is_calculating = False
             self.cal_running_status.emit(False)
             self.stop_thread_signal.emit()
@@ -385,7 +469,7 @@ class CalculationThread(QObject):
             self.cal_running_status.emit(False)
             self.stop_thread_signal.emit()
 
-
+    @pyqtSlot(object, float, float, float, str)
     def diffusion_calculation(self,frame_data,time_unit,space_unit,timestamp,name):
         # 存储拟合方差结果 [时间, 方差]
         self._is_calculating = True
@@ -442,20 +526,138 @@ class CalculationThread(QObject):
         self.cal_running_status.emit(False)
         self.stop_thread_signal.emit()
 
-    @pyqtSlot(object)
-    def heat_transfer_calculation(self,data):
+    @pyqtSlot(object, float, str, str, int, str, int)
+    def heat_transfer_calculation(self,data,time_unit,model_type,pre_cov = None,pre_size = None,post_cov = None,post_size = None):
         """计算传热系数"""
         self._is_calculating = True
+        self.cal_running_status.emit(True)
+        try:
+            if isinstance(data, ProcessedData):
+                aim_data = data.data_processed
+                if data.type_processed == "lifetime_distribution":
+                    heat_transfer = np.where(aim_data >= 0.1, 42.72 / aim_data, 0)
+                    if post_cov is not None:
+                        heat_transfer_cov = LifetimeCalculator.apply_custom_kernel(heat_transfer, post_cov, post_size)
+                        logging.info("后卷积完成")
+                    else:
+                        heat_transfer_cov = heat_transfer
+                    self.processed_result.emit(ProcessedData(data.timestamp,
+                                                             f'{data.name}@heat',
+                                                             'heat_transfer',
+                                                             data_processed=heat_transfer_cov,
+                                                             out_processed={'heat_transfer_map': heat_transfer, }))
+                    self._is_calculating = False
+                    self.cal_running_status.emit(False)
+                    self.stop_thread_signal.emit()
+                    return True
+            else:
+                aim_data = data.data_origin
+            time_points = data.time_point * time_unit
+            data_type = data.parameters['data_type'] if data.parameters is not None and 'data_type' in data.parameters else None
+            T = data.timelength
+
+            if pre_cov is not None:
+                for t in range(T):
+                    frame = aim_data[t, :, :]
+                    smoothed_frame = LifetimeCalculator.apply_custom_kernel(frame, kernel_type=pre_cov,half_size=pre_size)
+                    aim_data[t, :, :] = smoothed_frame
+                    self.calculating_progress_signal.emit(t, T)
+                self.calculating_progress_signal.emit(T,T)
+                logging.info("预卷积完成，下面开始传热计算")
+
+            # 拟合计算
+            lifetime_map = self.lifetime_map_cal(aim_data,data_type,time_points,model_type)
+            if isinstance(lifetime_map, np.ndarray):
+                pass
+            else:
+                raise Exception(lifetime_map)
+            heat_transfer = np.where(lifetime_map >= 0.1, 42.72 / lifetime_map, 0)
+
+            # 后卷积
+            if post_cov is not None:
+                heat_transfer_cov = LifetimeCalculator.apply_custom_kernel(heat_transfer,post_cov,post_size)
+                logging.info("后卷积完成")
+            else:
+                heat_transfer_cov = heat_transfer
+            self.processed_result.emit(ProcessedData(data.timestamp,
+                                                     f'{data.name}@heat',
+                                                     'heat_transfer',
+                                                     data_processed=heat_transfer_cov,
+                                                     out_processed={'heat_transfer_map': heat_transfer, }))
+            self._is_calculating = False
+            self.cal_running_status.emit(False)
+            self.stop_thread_signal.emit()
+
+        except Exception as e:
+            self.update_status.emit(f'传热计算出错:{e}', 'error')
+            self._is_calculating = False
+            self.cal_running_status.emit(False)
+            self.stop_thread_signal.emit()
+
+    @pyqtSlot(object,str)
+    def easy_process(self,data,ptype):
         if isinstance(data, ProcessedData):
             origin_data = data.data_processed
         else:
             origin_data = data.data_origin
-        heat_transfer = np.where(origin_data >= 0.01, 42.72 / origin_data, 0)
-        self.processed_result.emit(ProcessedData(data.timestamp,
-                                                 f'{data.name}@heat',
-                                                 'heat_transfer',
-                                                 data_processed=heat_transfer,))
-        pass
+        time_point = data.time_point
+        if ptype == 'avg':
+            data_processed = np.mean(origin_data, axis=(1, 2))
+            new_data = ProcessedData(data.timestamp,
+                                     f'{data.name}@avg',
+                                     'signal_average',
+                                     time_point=time_point,
+                                     data_processed=np.column_stack((time_point, data_processed)),)
+        else:
+            return False
+
+        self.processed_result.emit(new_data)
+        return True
+
+    def lifetime_map_cal(self,aim_data,data_type,time_points,model_type):
+        """纯寿命热图计算"""
+        try:
+            T, height, width = aim_data.shape
+            lifetime_map = np.zeros((height, width))
+            logging.info("开始拟合热图...")
+
+            loading_bar_value = 0  # 进度条
+            total_l = height * width
+            for i in range(height):
+                if self._is_calculating:  # 线程关闭控制（目前仅针对长时计算）
+                    for j in range(width):
+                        time_series = aim_data[:, i, j]
+                        # 用皮尔逊系数判断噪音(滑动窗口法)
+                        window_size = min(10, len(time_points) // 2)
+                        pr = []
+                        for k in range(len(time_series) - window_size):
+                            window = time_series[k:k + window_size]
+                            time_window = time_points[k:k + window_size]
+                            r, _ = pearsonr(time_window, window)
+                            pr.append(r)
+                            if abs(r) >= 0.8:
+                                _, lifetime, r_squared, _ = LifetimeCalculator.calculate_lifetime(data_type, time_series,
+                                                                                                  time_points, model_type)
+                                continue
+                            else:
+                                pass
+                        if np.all(np.abs(pr) < 0.8):
+                            lifetime = np.nan
+                        else:
+                            pass
+                        lifetime_map[i, j] = lifetime if not np.isnan(lifetime) else 0
+                        loading_bar_value += 1
+                        self.calculating_progress_signal.emit(loading_bar_value, total_l)
+                else:
+                    logging.info("计算终止")
+                    self.calculating_progress_signal.emit(total_l, total_l)  # 进度条更新
+                    self.cal_running_status.emit(False)
+                    self.stop_thread_signal.emit()  # 目前来说，计算终止也会关闭线程，后续可考虑分开命令
+                    return "线程终止"
+            logging.info("计算完成!")
+            return lifetime_map
+        except Exception as e:
+            return e
 
     def stop(self):
         self._is_calculating = False

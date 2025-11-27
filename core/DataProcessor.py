@@ -114,11 +114,10 @@ class DataProcessor:
                                 },
                                 name=name)
 
-
     def amend_data(self, data, mask = None):
         """函数修改方法
         输入修改的源数据，导出修改的数据包"""
-        data_origin = data.data_origin
+        data_origin = data
         # if isinstance(data, dict): # 加roi来的
         #     data_origin = data.data_origin
         # elif isinstance(data, np.ndarray): # 坏点修复来的
@@ -315,8 +314,8 @@ class MassDataProcessor(QObject):
         self.abortion = False
 
     """avi"""
-    @pyqtSlot(str)
-    def load_avi(self,path):
+    @pyqtSlot(str,int)
+    def load_avi(self,path,fps):
         """
         处理AVI视频文件，返回包含视频数据和元信息的字典
         返回字典:
@@ -336,7 +335,6 @@ class MassDataProcessor(QObject):
             raise IOError(f"无法打开视频文件: {path}")
 
         # 获取视频元信息
-        fps = cap.get(cv2.CAP_PROP_FPS)
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -383,8 +381,8 @@ class MassDataProcessor(QObject):
         self.mass_finished.emit(avi_data)
 
     """TIF"""
-    @pyqtSlot(str)
-    def load_tiff(self,path):
+    @pyqtSlot(str,int)
+    def load_tiff(self,path,fps):
         try:
             tiff_files = []
             file_name = os.path.basename(path)
@@ -439,17 +437,17 @@ class MassDataProcessor(QObject):
 
             # 生成时间点
             if is_continuous:
-                time_points = (np.array(frame_numbers) - frame_numbers[0])
+                time_points = (np.array(frame_numbers) - frame_numbers[0]) / fps
                 logging.info("使用文件名数字作为时间序列")
             else:
-                time_points = np.arange(len(frames))
+                time_points = np.arange(len(frames)) / fps
                 logging.info("使用默认顺序作为时间序列")
 
             tiff_data = DataManager.Data(frames_array,
                                          time_points,
                                          'tiff',
                                          normalized_frames,
-                                         parameters={
+                                         parameters={'fps':fps,
                                                     'frame_size': (width, height),
                                                     'original_files': tiff_files},
                                          name = file_name)
@@ -507,8 +505,10 @@ class MassDataProcessor(QObject):
             processed = DataManager.ProcessedData(data.timestamp,
                                                   f'{data.name}@EM_pre',
                                                   'EM_pre_processed',
+                                                  time_point=data.time_point,
                                                   data_processed=processed_data,
                                                   out_processed={
+                                                      'fps' : data.parameters['fps'],
                                                       'bg_frame': bg_frame,
                                                       'unfolded_data': unfolded_data,
                                                   })
@@ -801,25 +801,6 @@ class MassDataProcessor(QObject):
         except Exception as e:
             self.processed_result.emit({'type':"ROI_cwt",'error':str(e)})
             return False
-
-    @pyqtSlot(DataManager.ProcessedData, np.ndarray)
-    def retransform_data(self,data,target_idx):
-        try:
-            self.processing_progress_signal.emit(0,100)
-            if data.type_processed == "Zxx_stft":
-                new_stft_out = np.mean(np.abs(data.data_processed[target_idx, :, :, :]), axis=0) * 560
-                self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
-                                                                     f'{data.name}@r_stft',
-                                                                     'ROI_stft',
-                                                                     time_point=data.time_point,
-                                                                     data_processed=new_stft_out,
-                                                                     ))
-                self.processing_progress_signal.emit(100, 100)
-            else:
-                return
-                self.processing_progress_signal.emit(100, 100)
-        except Exception as e:
-            self.processed_result.emit({'type': "re_transform", 'error': str(e)})
 
     def normalize_data(self, data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))

@@ -437,6 +437,8 @@ class DataManager(QObject):
                     processed_frame * multiply_factor,
                     processed_frame
                 )
+                if is_zoom:
+                    processed_frame = zoom(processed_frame, zoom_factor, order=3)
                 data_roi.append(processed_frame)
             else: # shape=3
                 aim_data = aim_data[:,min_y:max_y + 1, min_x:max_x + 1]
@@ -446,8 +448,9 @@ class DataManager(QObject):
                         frame * multiply_factor,
                         frame
                     )
+                    if is_zoom:
+                        processed_frame = zoom(processed_frame, zoom_factor, order=3)
                     data_roi.append(processed_frame)
-
                     self.data_progress_signal.emit(i, total_frames)
         else:
             processed_frame = np.zeros(data.framesize)
@@ -457,6 +460,8 @@ class DataManager(QObject):
                     aim_data * multiply_factor,
                     aim_data
                 )
+                if is_zoom:
+                    processed_frame = zoom(processed_frame, zoom_factor, order=3)
                 data_roi.append(processed_frame)
             else:
                 for i, frame in enumerate(aim_data):
@@ -465,20 +470,20 @@ class DataManager(QObject):
                         frame * multiply_factor,
                         frame
                     )
+                    if is_zoom:
+                        processed_frame = zoom(processed_frame, zoom_factor, order=3)
                     data_roi.append(processed_frame)
-
                     self.data_progress_signal.emit(i, total_frames)
 
         data_processed = np.squeeze(np.array(data_roi))
-        if is_zoom:
-            data_processed = zoom(data_processed, zoom_factor, order=3)
 
         self.processed_result.emit(ProcessedData(data.timestamp,
                                                  f'{data.name}@ROIed',
                                                  'Roi_applied',
                                                  time_point=data.time_point,
                                                  data_processed=data_processed,
-                                                 out_processed=out_processed))
+                                                 out_processed=out_processed),
+                                                 ROI_applied = True)
         self.data_progress_signal.emit(total_frames + 1, total_frames)
 
 
@@ -546,7 +551,8 @@ class Data:
     def get_data_median(self):
         return np.median(self.data_origin)
 
-    def update(self, **kwargs):
+    def update_data(self, **kwargs):
+        """数据更新（目前仅仅坏点修复需要）"""
         Data._amend_counter += 1
         if 'data_origin' in kwargs:
             return self._create_new_instance(**kwargs)
@@ -557,6 +563,7 @@ class Data:
 
         # 更新历史记录
         self._update_history()
+        logging.info("生成了新的数据，请注意查看")
         return self
 
     def apply_ROI(self, mask: np.ndarray):
@@ -855,6 +862,7 @@ class ImagingData:
     image_type: str = None
     colormode: str = None  # 色彩模式，目前在sub类中实现
     canvas_num: int = field(default=0)
+    fps: int = field(default=None)
     is_temporary: bool = field(init=False, default=False)
     timestamp: float = field(init=False, default_factory=time.time)
 
@@ -887,6 +895,8 @@ class ImagingData:
             instance.source_type = "Data"
             instance.source_name = data_obj.name
             instance.source_format = data_obj.format_import
+
+            instance.fps = data_obj.parameters['fps'] if 'fps' in data_obj.parameters else None
         elif isinstance(data_obj, ProcessedData):
             if arg:
                 # instance.image_data = data_obj.out_processed[arg].copy()
@@ -898,6 +908,7 @@ class ImagingData:
             instance.source_type = "ProcessedData"
             instance.source_name = data_obj.name
             instance.source_format = data_obj.type_processed
+            instance.fps = data_obj.out_processed['fps'] if 'fps' in data_obj.out_processed else None
 
         # 调用后初始化
         instance.__post_init__()

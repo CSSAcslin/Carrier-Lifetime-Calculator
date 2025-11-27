@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QSizePolicy)
 from PyQt5.QtCore import Qt, QEvent, QTimer, QModelIndex
 import HelpContentHTML
+from DataManager import Data,ProcessedData
 import markdown
 from markdown.extensions.codehilite import CodeHiliteExtension
 from markdown.extensions.fenced_code import FencedCodeExtension
@@ -159,10 +160,11 @@ class BadFrameDialog(QDialog):
             return
 
         n_frames = self.n_frames_spin.value()
+        aim_data = self.parent().data.data_origin
 
         # 修复数据
         fixed_data = self.parent().data_processor.fix_bad_frames(
-            self.parent().data.data_origin,
+            aim_data,
             self.bad_frames,
             n_frames
         )
@@ -170,7 +172,7 @@ class BadFrameDialog(QDialog):
         # 重新处理显示数据
         data_amend = self.parent().data_processor.amend_data(fixed_data)
 
-        self.parent().data.update(data_amend)
+        self.parent().data.update_data(**data_amend)
 
         self.accept()
         QMessageBox.information(self, "修复完成", f"已修复 {len(self.bad_frames)} 个坏帧")

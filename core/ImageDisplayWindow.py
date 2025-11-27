@@ -306,10 +306,16 @@ class ImageDisplayWindow(QMainWindow):
             all_ids = [c.id for c in self.display_canvas]
             for cid in all_ids:
                 self._remove_single_canvas(cid)
+            self.parent.canvas_signal_connect()
             return True
 
         # 删除单个canvas_id画布
-        return self._remove_single_canvas(canvas_id)
+        self._remove_single_canvas(canvas_id)
+        for i, canvas in enumerate(self.display_canvas):
+            if canvas.id > canvas_id:
+                canvas.id -= 1
+        self.parent.canvas_signal_connect()
+        return True
 
     def add_dock(self, dock):
         """根据区域数量更新布局"""
@@ -1161,7 +1167,7 @@ class SubImageDisplayWidget(QDockWidget):
 
             # 计算帧间隔时间（毫秒）
             total_time = 15000  # 15秒
-            frame_interval = max(1, total_time // self.max_time_idx)
+            frame_interval = max(1, 1000 // self.data.fps) if self.data.fps is not None else max(1, total_time // self.max_time_idx)
             self.play_timer.start(frame_interval)
 
     def pause_auto_play(self):

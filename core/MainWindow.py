@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea,
                              QFileDialog, QSlider, QSpinBox, QDoubleSpinBox, QGroupBox,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget,
-                             QStatusBar, QScrollBar
+                             QStatusBar, QScrollBar, QFrame
                              )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject, QElapsedTimer
 from astropy.utils.console import ProgressBar
@@ -30,13 +30,13 @@ class MainWindow(QMainWindow):
     """主窗口"""
     # 线程激活信号
     # cal
-    start_reg_cal_signal = pyqtSignal(Data, float, tuple, str, int, str)
-    start_dis_cal_signal = pyqtSignal(Data, float, str)
-    start_heat_cal_signal = pyqtSignal(object)
-    start_dif_cal_signal = pyqtSignal(dict, float, float,float,str)
+    start_reg_cal_signal = pyqtSignal(object, float, tuple, str, int, str)
+    start_dis_cal_signal = pyqtSignal(object, float, str, str, int, str, int)
+    start_heat_cal_signal = pyqtSignal(object, float, str, str, int, str, int)
+    start_dif_cal_signal = pyqtSignal(object, float, float, float, str)
     # mass
-    load_avi_EM_signal = pyqtSignal(str)
-    load_tif_EM_signal = pyqtSignal(str)
+    load_avi_EM_signal = pyqtSignal(str,int)
+    load_tif_EM_signal = pyqtSignal(str,int)
     pre_process_signal = pyqtSignal(Data,int,bool)
     stft_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, int, int, str)
     stft_python_signal = pyqtSignal(ProcessedData,object, int, int, int, int, int, str)
@@ -46,7 +46,7 @@ class MainWindow(QMainWindow):
     atam_signal = pyqtSignal(object)
     tDgf_signal = pyqtSignal(ProcessedData,int,float,bool)
     tDFT_signal = pyqtSignal(object)
-    # retransform_signal = pyqtSignal(ProcessedData, np.ndarray)
+    easy_process = pyqtSignal(object, str)
     roi_processed_signal = pyqtSignal(object,np.ndarray,float,bool,bool,float)
 
     def __init__(self):
@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
 
         # 模式选择
         self.fuction_select = QComboBox()
-        self.fuction_select.addItems(['请选择分析模式','超快成像动态分析','EM-iSCAT','科学分析（Simulation）'])
+        self.fuction_select.addItems(['请选择分析模式','超快成像动态分析','EM-iSCAT','其他方法'])
         left_layout0.addWidget(self.fuction_select)
         self.funtion_stack = QStackedWidget()
         nothing_group = self.QGroupBoxCreator(style="inner")
@@ -298,11 +298,11 @@ class MainWindow(QMainWindow):
 
         # 文件类型为tiff
         EM_iSCAT_group = self.QGroupBoxCreator(style="inner")
+        v_layout = QVBoxLayout()
         type_choose = QHBoxLayout()
-        file_types = QVBoxLayout()
         self.file_type_selector = QComboBox()
         self.file_type_selector.addItems(['avi格式', 'tiff格式'])
-        file_types.addWidget(self.file_type_selector)
+        type_choose.addWidget(self.file_type_selector)
         self.file_type_stack = QStackedWidget()
         avi_group = self.QGroupBoxCreator(style = "noborder") # avi 选择
         avi_layout = QVBoxLayout()
@@ -316,9 +316,16 @@ class MainWindow(QMainWindow):
         tiff_layout.addWidget(self.EMtiff_folder_btn)
         tiff_group.setLayout(tiff_layout)
         self.file_type_stack.addWidget(tiff_group)
-        type_choose.addLayout(file_types)
         type_choose.addWidget(self.file_type_stack)
-        EM_iSCAT_group.setLayout(type_choose)
+        fps_layout = QHBoxLayout()
+        fps_layout.addWidget(QLabel("视频帧率:"))
+        self.fps_input = QSpinBox()
+        self.fps_input.setRange(1,100000)
+        self.fps_input.setValue(300)
+        fps_layout.addWidget(self.fps_input)
+        v_layout.addLayout(fps_layout)
+        v_layout.addLayout(type_choose)
+        EM_iSCAT_group.setLayout(v_layout)
         self.funtion_stack.addWidget(EM_iSCAT_group)
 
         # 科学分析模块
@@ -415,11 +422,29 @@ class MainWindow(QMainWindow):
         # 载流子寿命分布图参数板
         heatmap_group = self.QGroupBoxCreator(style = "inner")
         heatmap_layout = QVBoxLayout()
+        heatmap_layout.addStretch(1)
         heatmap_layout.addLayout(lifetime_layout)
-        self.analyze_btn = QPushButton("开始分析")
-        heatmap_layout.addWidget(self.analyze_btn)
-        self.heat_transfer_btn = QPushButton("传热系数")
-        heatmap_layout.addWidget(self.heat_transfer_btn)
+        cov_layout = QFormLayout()
+        self.pre_cov_combo = QComboBox()
+        self.pre_cov_combo.addItems(['不使用','smooth', 'gaussian', 'sharpen', 'edge', 'laplacian', 'average'])
+        self.pre_cov_size = QSpinBox()
+        self.pre_cov_size.setRange(2,1000)
+        cov_layout.addRow(QLabel("预处理卷积选择：\n（计算前卷积）"),self.pre_cov_combo)
+        cov_layout.addRow(QLabel("卷积核尺寸：\n（实际大小为尺寸*2-1）"),self.pre_cov_size)
+        self.post_cov_combo = QComboBox()
+        self.post_cov_combo.addItems(['不使用','smooth', 'gaussian', 'sharpen', 'edge', 'laplacian', 'average'])
+        self.post_cov_size = QSpinBox()
+        self.post_cov_size.setRange(2,1000)
+        cov_layout.addRow(QLabel("后处理卷积选择：\n（结果卷积）"),self.post_cov_combo)
+        cov_layout.addRow(QLabel("卷积核尺寸：\n（实际大小为尺寸*2-1）"),self.post_cov_size)
+        heatmap_layout.addLayout(cov_layout)
+        btn_layout = QHBoxLayout()
+        self.analyze_btn = QPushButton("寿命热图")
+        btn_layout.addWidget(self.analyze_btn)
+        self.heat_transfer_btn = QPushButton("传热系数热图")
+        btn_layout.addWidget(self.heat_transfer_btn)
+        heatmap_layout.addLayout(btn_layout)
+        heatmap_layout.addStretch(1)
         heatmap_group.setLayout(heatmap_layout)
         self.FS_mode_stack.addWidget(heatmap_group)
         # 特定区域寿命分析功能参数板
@@ -598,6 +623,31 @@ class MainWindow(QMainWindow):
         EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout)
         self.between_stack.addWidget(EM_iSCAT_GROUP)
 
+        # 其他方法模块
+        Other_GROUP = self.QGroupBoxCreator(style='noborder')
+        Other_layout = QVBoxLayout()
+        other_inner_layout1 = QHBoxLayout()
+        self.roi_fast_btn = QPushButton("ROI快速选择")
+        other_inner_layout1.addWidget(QLabel("画布选择："))
+        self.roi_pick = QComboBox()
+        other_inner_layout1.addWidget(self.roi_pick)
+        self.roi_pick.addItem("无画布数据")
+        Other_layout.addLayout(other_inner_layout1)
+        Other_layout.addWidget(self.roi_fast_btn)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        Other_layout.addWidget(separator)
+        self.data_name_label = QLabel()
+        self.signal_extract = QPushButton("时序信号快速提取")
+        Other_layout.addWidget(self.signal_extract)
+        self.tDFT_btn2 = QPushButton("二维傅里叶变换")
+        Other_layout.addWidget(self.tDFT_btn2)
+        self.atam_btn2 = QPushButton("累计时间振幅图")
+        Other_layout.addWidget(self.atam_btn2)
+        Other_GROUP.setLayout(Other_layout)
+        self.between_stack.addWidget(Other_GROUP)
+
         left_layout1.addWidget(self.between_stack)
         # left_layout1.addStretch(1)
         self.modes_panel.setLayout(left_layout1)
@@ -632,6 +682,11 @@ class MainWindow(QMainWindow):
             self.between_stack.setCurrentIndex(2)
             self.EM_thread_open()
             self.stop_thread(type=0)
+            self.update_status('准备就绪')
+        if self.fuction_select.currentIndex() == 3:
+            self.between_stack.setCurrentIndex(3)
+            self.cal_thread_open()
+            self.EM_thread_open()
             self.update_status('准备就绪')
 
     def setup_menus(self):
@@ -871,6 +926,7 @@ class MainWindow(QMainWindow):
         self.cal_thread.stop_thread_signal.connect(self.stop_thread)
         self.cal_thread.cal_running_status.connect(self.btn_safety)
         self.cal_thread.update_status.connect(self.update_status)
+        self.easy_process.connect(self.cal_thread.easy_process)
 
     def EM_thread_open(self):
         """加载EM文件的线程开启"""
@@ -891,7 +947,6 @@ class MainWindow(QMainWindow):
         self.atam_signal.connect(self.mass_data_processor.accumulate_amplitude)
         self.tDgf_signal.connect(self.mass_data_processor.twoD_gaussian_fit)
         self.tDFT_signal.connect(self.mass_data_processor.twoD_fourier_transform)
-        # self.retransform_signal.connect(self.mass_data_processor.retransform_data)
 
         # self.avi_thread.start()
 
@@ -919,13 +974,17 @@ class MainWindow(QMainWindow):
         self.cwt_process_btn.clicked.connect(self.process_EM_cwt)
         self.EM_output_btn.clicked.connect(self.export_EM_data)
         self.atam_btn.clicked.connect(self.process_atam)
+        self.atam_btn2.clicked.connect(self.process_atam)
         self.tDgf_btn.clicked.connect(self.process_tDgf)
         # self.retransform_btn.clicked.connect(self.retransform_EM_data)
         self.roi_signal_btn.clicked.connect(self.roi_signal_avg)
         self.tDFT_btn.clicked.connect(self.process_tDFT)
+        self.tDFT_btn2.clicked.connect(self.process_tDFT)
         self.vector_signal_btn.clicked.connect(self.vectorROI_signal_show)
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
         self.diffusion_coefficient_btn.clicked.connect(self.result_display.plot_variance_evolution)
+        self.roi_fast_btn.clicked.connect(self.fast_roi_result)
+        self.signal_extract.clicked.connect(self.process_signal_avg)
         self.export_image_btn.clicked.connect(self.export_image)
         self.export_data_btn.clicked.connect(self.export_data)
         # 成像绘制信号
@@ -944,11 +1003,13 @@ class MainWindow(QMainWindow):
         self.result_display.tab_type_changed.connect(self._handle_result_tab)
 
     def canvas_signal_connect(self):
+        self.roi_pick.clear()
         for canvas in self.image_display.display_canvas:
             canvas.mouse_position_signal.connect(self._handle_hover)
             canvas.mouse_clicked_signal.connect(self._handle_click)
             canvas.current_canvas_signal.connect(self.image_display.set_cursor_id)
             canvas.draw_result_signal.connect(self.draw_result)
+            self.roi_pick.addItem(canvas.windowTitle())
 
     '''上面是初始化预设，下面是功能响应'''
     def add_new_canvas(self, assign_data = None):
@@ -1191,7 +1252,8 @@ class MainWindow(QMainWindow):
         logging.info(f"已选择AVI文件: {file_path}")
         self.update_status("正在加载AVI文件...",'working')
 
-        self.load_avi_EM_signal.emit(file_path)
+        self.load_avi_EM_signal.emit(file_path,self.fps_input.value())
+        self.EM_params['EM_fps'] = self.fps_input.value()
 
     def load_tiff_folder_EM(self):
         """加载TIFF文件夹(FS-iSCAT)"""
@@ -1210,8 +1272,9 @@ class MainWindow(QMainWindow):
 
         for f in os.listdir(folder_path):
             if f.lower().endswith(('.tif', '.tiff')):
-                self.load_tif_EM_signal.emit(folder_path)
+                self.load_tif_EM_signal.emit(folder_path,self.fps_input.value())
                 self.update_status("正在加载tiff文件...",'working')
+                self.EM_params['EM_fps'] = self.fps_input.value()
                 return
             else:
                 self.update_status("文件夹中没有TIFF文件",'warning')
@@ -1273,7 +1336,7 @@ class MainWindow(QMainWindow):
 
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
-        if self.data is None or self.processed_data is None:
+        if self.data is None and self.processed_data is None:
             logging.warning("无数据，请先加载数据文件")
             return
 
@@ -1603,7 +1666,11 @@ class MainWindow(QMainWindow):
         self.update_status('长时计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
-        self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type)
+        pre_cov = self.pre_cov_combo.currentText() if self.pre_cov_combo.currentIndex() != 0 else None
+        post_cov = self.post_cov_combo.currentText() if self.post_cov_combo.currentIndex() != 0 else None
+        pre_size = self.pre_cov_size.value() if self.pre_cov_combo.currentIndex() != 0 else None
+        post_size = self.post_cov_size.value() if self.post_cov_combo.currentIndex() != 0 else None
+        self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type,pre_cov,pre_size,post_cov,post_size)
         return None
 
     def heat_transfer_start(self):
@@ -1612,34 +1679,20 @@ class MainWindow(QMainWindow):
             return logging.warning('无数据载入')
         # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
+        aim_data = self.data_pick()
+        if aim_data is None:
+            return False
         if not self.is_thread_active("calc_thread"):
             self.cal_thread_open()
         self.calc_thread.start()
-        dialog = DataViewAndSelectPop(datadict=self.get_data_all(), processed_datadict=self.get_processed_data_all(),
-                                      add_canvas=False)
-        aim_data = None
-        if dialog.exec_():
-            selected_timestamp, selected_table = dialog.get_selected_timestamp()
-            if selected_table == 'data':
-                for data in self.data.history:
-                    if data.timestamp == selected_timestamp:
-                        aim_data = data
-                        logging.info(f"数据选择成功（初始导入）：{data.name}")
-                        break
-            else:
-                for data in self.processed_data.history:
-                    if data.timestamp == selected_timestamp:
-                        aim_data = data
-                        logging.info(f"数据选择成功（处理过）：{data.name}")
-                        break
-            if aim_data is None:
-                QMessageBox.warning(self,"数据错误","没有选取数据")
-                return False
-        else:
-            return False
         self.update_status('传热系数计算进行中...', 'working')
         self.time_unit = float(self.time_step_input.value())
-        self.start_heat_cal_signal.emit(aim_data)
+        model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
+        pre_cov = self.pre_cov_combo.currentText() if self.pre_cov_combo.currentIndex() != 0 else None
+        post_cov = self.post_cov_combo.currentText() if self.post_cov_combo.currentIndex() != 0 else None
+        pre_size = self.pre_cov_size.value() if self.pre_cov_combo.currentIndex() != 0 else None
+        post_size = self.post_cov_size.value() if self.post_cov_combo.currentIndex() != 0 else None
+        self.start_heat_cal_signal.emit(aim_data,self.time_unit,model_type,pre_cov,pre_size,post_cov,post_size)
         return True
 
     def diffusion_calculation_start(self):
@@ -1857,41 +1910,67 @@ class MainWindow(QMainWindow):
         # self.data['EM_masked'] = EM_masked
         self.result_display.plot_time_series(data.time_point , average_series)
 
+    def process_signal_avg(self):
+        """广义信号平均"""
+        if self.data is None and self.processed_data is None:
+            logging.warning("无数据可处理，请先加载数据")
+            return False
+        aim_data = self.data_pick()
+        if aim_data is None:
+            return False
+        if not self.avi_thread.isRunning():
+            self.avi_thread.start()
+        if not self.calc_thread.isRunning():
+            self.calc_thread.start()
+        self.update_status('计算进行中...', 'working')
+        self.easy_process.emit(aim_data,'avg')
+        return None
+
     def process_atam(self):
         """累计时间振幅图"""
         if self.data is None  and self.processed_data is None :
             logging.warning('请先导入数据')
-            return
-        if self.processed_data is None:
-            if self.data.ndim not in [2,3]:
-                logging.info("数据无法被处理，请重选数据焦点")
-                return False
-            self.atam_signal.emit(self.data)
-            self.atam_btn.setEnabled(False)
-            logging.info(f"累计时间振幅图，对意料之外的数据{self.data.name}进行处理")
             return False
-        elif self.processed_data.type_processed == 'ROI_stft' or self.processed_data.type_processed =='ROI_cwt':
-            data = self.processed_data
-        else:
-            data = next(
-                (data for data in reversed(self.processed_data.history) if
-                 data.type_processed == "ROI_cwt" or data.type_processed == "ROI_stft"),
-                None)
-        if data is not None:
-            if self.processed_data.ndim not in [2,3]:
-                logging.info("数据无法被处理，请重选数据焦点")
+        aim_data = self.data_pick()
+        if aim_data is None:
+            return False
+            if aim_data.ndim not in [2, 3]:
+                logging.info("数据无法被处理，请重选数据")
                 return False
-            self.atam_signal.emit(data)
+            self.atam_signal.emit(aim_data)
             self.atam_btn.setEnabled(False)
             return True
-        else:
-            if self.processed_data.ndim not in [2,3]:
-                logging.info("数据无法被处理，请重选数据焦点")
-                return False
-            self.atam_signal.emit(self.processed_data)
-            self.atam_btn.setEnabled(False)
-            logging.info(f"累计时间振幅图，对意料之外的数据{self.processed_data.name}进行处理")
-            return False
+        return False
+        # if self.processed_data is None:
+        #     if self.data.ndim not in [2,3]:
+        #         logging.info("数据无法被处理，请重选数据焦点")
+        #         return False
+        #     self.atam_signal.emit(self.data)
+        #     self.atam_btn.setEnabled(False)
+        #     logging.info(f"累计时间振幅图，对意料之外的数据{self.data.name}进行处理")
+        #     return False
+        # elif self.processed_data.type_processed == 'ROI_stft' or self.processed_data.type_processed =='ROI_cwt':
+        #     data = self.processed_data
+        # else:
+        #     data = next(
+        #         (data for data in reversed(self.processed_data.history) if
+        #          data.type_processed == "ROI_cwt" or data.type_processed == "ROI_stft"),
+        #         None)
+        # if data is not None:
+        #     if self.processed_data.ndim not in [2,3]:
+        #         logging.info("数据无法被处理，请重选数据焦点")
+        #         return False
+        #     self.atam_signal.emit(data)
+        #     self.atam_btn.setEnabled(False)
+        #     return True
+        # else:
+        #     if self.processed_data.ndim not in [2,3]:
+        #         logging.info("数据无法被处理，请重选数据焦点")
+        #         return False
+        #     self.atam_signal.emit(self.processed_data)
+        #     self.atam_btn.setEnabled(False)
+        #     logging.info(f"累计时间振幅图，对意料之外的数据{self.processed_data.name}进行处理")
+        #     return False
 
     def process_tDgf(self):
         """单通道二维高斯拟合以及信号显示"""
@@ -1928,7 +2007,18 @@ class MainWindow(QMainWindow):
         """二维傅里叶变换"""
         if self.data is None and self.processed_data is None:
             logging.warning("无数据可处理，请先加载数据")
-            return
+            return None
+        aim_data = self.data_pick()
+        if aim_data is None:
+            return False
+        if not self.avi_thread.isRunning():
+            self.avi_thread.start()
+        self.update_status('二维傅里叶变换计算进行中...', 'working')
+        self.tDFT_signal.emit(aim_data)
+        return True
+
+    def data_pick(self,need_all = True):
+        """数据选择代码"""
         dialog = DataViewAndSelectPop(datadict=self.get_data_all(),
                                       processed_datadict=self.get_processed_data_all(),
                                       add_canvas=False)
@@ -1949,12 +2039,9 @@ class MainWindow(QMainWindow):
                         break
             if aim_data is None:
                 QMessageBox.warning(self, "数据错误", "没有选取数据")
-                return False
-        if not self.avi_thread.isRunning():
-            self.avi_thread.start()
-        self.update_status('二维傅里叶变换计算进行中...', 'working')
-        self.tDFT_signal.emit(aim_data)
-        return True
+                return None
+            return aim_data
+        return None
 
     def processed_result(self, data):
         """处理过后的数据都来这里重整再分配"""
@@ -1975,10 +2062,8 @@ class MainWindow(QMainWindow):
         match process_type:
             case "ROI_lifetime":
                 self.result_display.display_lifetime_curve(self.processed_data,self.time_unit_combo.currentText())
-                pass
             case 'lifetime_distribution':
                 self.result_display.display_distribution_map(self.processed_data)
-                pass
             # 中间还有一个取向量ROI的，先不管他
             case 'diffusion':
                 self.result_display.display_diffusion_coefficient(self.processed_data)
@@ -2024,6 +2109,11 @@ class MainWindow(QMainWindow):
                     self.update_result_display(thr*10, reuse_current=False)
             case '2D_Fourier_transform':
                 pass
+            case 'signal_average':
+                # self.result_display.display_lifetime_curve(self.processed_data, self.time_unit_combo.currentText())
+                pass
+            case 'Roi_applied':
+                logging.info("ROI应用完成")
 
     def draw_result(self,draw_type:str,canvas_id:int,result,roi_info = None):
         """canvas绘图结果处理"""
@@ -2081,6 +2171,25 @@ class MainWindow(QMainWindow):
                     self.bool_mask = ~self.bool_mask
                 self.roi_processed_signal.emit(draw_data, self.bool_mask, dialog.reset_value.value(),crop_roi, dialog.zoom_check.isChecked(), dialog.zoom_factor.value())
             logging.info("ROI已确认选取")
+
+    def fast_roi_result(self):
+        """roi快速选取，仅支持pixel_roi"""
+        canvas_id = self.roi_pick.currentIndex()
+        _, bool_mask = self.image_display.get_draw_roi(canvas_id)
+        timestamp = self.image_display.display_canvas[canvas_id].data.timestamp_inherited
+        draw_data = None
+        if self.data is not None:
+            for data in self.data.history:
+                if data.timestamp == timestamp:
+                    draw_data = data
+                    break
+        if self.processed_data is not None and draw_data is None:
+            draw_data = next(data for data in self.processed_data.history if data.timestamp == timestamp)
+            # data_type = draw_data.type_processed
+        self.roi_processed_signal.emit(draw_data, self.bool_mask, 1, True,
+                                       False, 0)
+        logging.info(f"像素roi已快速选取，数据名{draw_data.name}")
+
     '''其他功能'''
     def is_thread_active(self, thread_name: str) -> bool:
         """检查指定名称的线程是否存在且正在运行"""
@@ -2098,9 +2207,11 @@ class MainWindow(QMainWindow):
         if cal_run:
             self.analyze_btn.setEnabled(False)
             self.analyze_region_btn.setEnabled(False)
+            self.heat_transfer_btn.setEnabled(False)
         elif not cal_run:
             self.analyze_btn.setEnabled(True)
             self.analyze_region_btn.setEnabled(True)
+            self.heat_transfer_btn.setEnabled(True)
         return
 
     def stop_thread(self,type = 0):
@@ -2263,7 +2374,6 @@ class MainWindow(QMainWindow):
         if ProcessedData is not None:
             ProcessedData.clear_history()
             logging.info('处理数据已清除')
-
 
     '''以下控制台命令更新'''
     def stop_calculation(self):
