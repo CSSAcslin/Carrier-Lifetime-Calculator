@@ -25,6 +25,8 @@ import logging
 from ROIdrawDialog import ROIdrawDialog
 import resources_rc
 from DataManager import *
+import markdown
+
 
 class MainWindow(QMainWindow):
     """主窗口"""
@@ -738,6 +740,12 @@ class MainWindow(QMainWindow):
         fs_help.triggered.connect(lambda: self.help_show('超快成像分析帮助',["general","lifetime"]))
         EM_help = help_menu.addAction('电化学调制iSCAT')
         EM_help.triggered.connect(lambda: self.help_show('电化学调制分析帮助',["general","stft","cwt"]))
+
+        update_log = self.menu.addAction('更新日志')
+        # update_log.triggered.connect(self.show_update_log)
+
+        update_action = self.menu.addAction('检查更新')
+        # update_action.triggered.connect(self.update_check)
 
     @staticmethod
     def QGroupBoxCreator(title="",style="default"):

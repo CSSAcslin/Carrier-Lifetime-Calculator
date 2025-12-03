@@ -482,8 +482,10 @@ class DataManager(QObject):
                                                  'Roi_applied',
                                                  time_point=data.time_point,
                                                  data_processed=data_processed,
-                                                 out_processed=out_processed),
-                                                 ROI_applied = True)
+                                                 out_processed=out_processed,
+                                                 ROI_applied = True,
+                                                 ROI_mask= mask,
+                                                 ))
         self.data_progress_signal.emit(total_frames + 1, total_frames)
 
 
@@ -742,6 +744,7 @@ class ProcessedData:
     out_processed: dict = None
     timestamp: float = field(init=False, default_factory=time.time)
     ROI_applied: bool = False
+    ROI_mask: np.ndarray = None
     history: ClassVar[deque] = deque(maxlen=30)
 
     def __post_init__(self):
@@ -896,7 +899,10 @@ class ImagingData:
             instance.source_name = data_obj.name
             instance.source_format = data_obj.format_import
 
-            instance.fps = data_obj.parameters['fps'] if 'fps' in data_obj.parameters else None
+            try:
+                instance.fps = data_obj.parameters['fps']
+            except:
+                instance.fps = 10
         elif isinstance(data_obj, ProcessedData):
             if arg:
                 # instance.image_data = data_obj.out_processed[arg].copy()
@@ -908,8 +914,10 @@ class ImagingData:
             instance.source_type = "ProcessedData"
             instance.source_name = data_obj.name
             instance.source_format = data_obj.type_processed
-            instance.fps = data_obj.out_processed['fps'] if 'fps' in data_obj.out_processed else None
-
+            try:
+                instance.fps = data_obj.out_processed['fps']
+            except:
+                instance.fps = 10
         # 调用后初始化
         instance.__post_init__()
         return instance
