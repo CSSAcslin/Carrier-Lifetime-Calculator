@@ -61,24 +61,14 @@ class LifetimeCalculator:
         
 
         # 获得具有实际意义的信号序列
-        phy_signal = None
-        if data_type == 'central negative':
-            phy_signal = -time_series
+        if data_type != 'sif':
+            phy_signal = np.abs(time_series)
             max_idx = np.argmax(phy_signal)
             if not from_start_cal:
-                decay_signal = abs(phy_signal[max_idx:]) # 全部正置 且从最大值之后开始拟合
+                decay_signal = phy_signal[max_idx:] # 全部正置 且从最大值之后开始拟合
                 decay_time = time_points[max_idx:] - time_points[max_idx]
             else:
-                decay_signal= abs(phy_signal)
-                decay_time = time_points
-        elif data_type == 'central positive':
-            phy_signal = time_series
-            max_idx = np.argmax(phy_signal)
-            if not from_start_cal:
-                decay_signal = abs(phy_signal[max_idx:]) # 全部正置 且从最大值之后开始拟合
-                decay_time = time_points[max_idx:] - time_points[max_idx]
-            else:
-                decay_signal = abs(phy_signal)
+                decay_signal = phy_signal
                 decay_time = time_points
         elif data_type == 'sif':
             phy_signal = time_series

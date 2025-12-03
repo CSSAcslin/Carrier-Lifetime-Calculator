@@ -247,7 +247,6 @@ class ResultDisplayWidget(QTabWidget):
         lifetime = data.out_processed['lifetime']
         r_squared = data.out_processed['r_squared']
         fit_curve = data.out_processed['fit_curve']
-        boundary = data.out_processed['boundary']
         model_type = data.out_processed['model_type']
         time_point = data.time_point
 
@@ -261,7 +260,7 @@ class ResultDisplayWidget(QTabWidget):
 
         ax = figure.add_subplot(111)
         if set_axis:
-            max_bound = boundary['max']
+            max_bound = np.max(phy_signal)
             min_bound = 0
             ax.set_ylim(min_bound, max_bound)
 
