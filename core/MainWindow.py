@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         }
         self.cal_set_params = {
             'from_start_cal': False,
-            'r_squared_min': 0.6,
+            'r_squared_min': 0.4,
             'peak_min': 0.0,
             'peak_max': 100.0,
             'tau_min': 1e-3,
@@ -1777,6 +1777,7 @@ class MainWindow(QMainWindow):
             return
 
     def process_EM_stft(self):
+
         """EM的数据处理"""
         # if self.stft_program_select.currentIndex() == 0:
         #     type = "python"
@@ -1814,6 +1815,7 @@ class MainWindow(QMainWindow):
             return
 
     def quality_EM_cwt(self):
+        """小波变换的质量评价"""
         if self.processed_data is None:
             logging.warning("没有数据可以计算，请先加载并预处理数据")
             return
@@ -1942,12 +1944,12 @@ class MainWindow(QMainWindow):
         aim_data = self.data_pick()
         if aim_data is None:
             return False
-            if aim_data.ndim not in [2, 3]:
-                logging.info("数据无法被处理，请重选数据")
-                return False
-            self.atam_signal.emit(aim_data)
-            self.atam_btn.setEnabled(False)
-            return True
+        if aim_data.ndim not in [2, 3]:
+            logging.info("数据无法被处理，请重选数据")
+            return False
+        self.atam_signal.emit(aim_data)
+        self.atam_btn.setEnabled(False)
+        return True
         return False
         # if self.processed_data is None:
         #     if self.data.ndim not in [2,3]:
@@ -2071,13 +2073,13 @@ class MainWindow(QMainWindow):
             case "ROI_lifetime":
                 self.result_display.display_lifetime_curve(self.processed_data,self.time_unit_combo.currentText())
             case 'lifetime_distribution':
-                self.result_display.display_distribution_map(self.processed_data)
+                self.result_display.display_distribution_map(self.processed_data,'指数衰减寿命分布图')
             # 中间还有一个取向量ROI的，先不管他
             case 'diffusion':
                 self.result_display.display_diffusion_coefficient(self.processed_data)
                 pass
             case 'heat_transfer':
-                self.result_display.display_distribution_map(self.processed_data) # 临时之举
+                self.result_display.display_distribution_map(self.processed_data,'传热系数分布图') # 临时之举
                 pass
             case 'EM_pre_processed':
                 pass
@@ -2184,6 +2186,8 @@ class MainWindow(QMainWindow):
         """roi快速选取，仅支持pixel_roi"""
         canvas_id = self.roi_pick.currentIndex()
         _, bool_mask = self.image_display.get_draw_roi(canvas_id)
+        if bool_mask is None: # 不再赋给 self.bool_mask
+            logging.warning("没有有效蒙版")
         timestamp = self.image_display.display_canvas[canvas_id].data.timestamp_inherited
         draw_data = None
         if self.data is not None:
@@ -2194,7 +2198,7 @@ class MainWindow(QMainWindow):
         if self.processed_data is not None and draw_data is None:
             draw_data = next(data for data in self.processed_data.history if data.timestamp == timestamp)
             # data_type = draw_data.type_processed
-        self.roi_processed_signal.emit(draw_data, self.bool_mask, 1, True,
+        self.roi_processed_signal.emit(draw_data, bool_mask, 1, True,
                                        False, 0)
         logging.info(f"像素roi已快速选取，数据名{draw_data.name}")
 

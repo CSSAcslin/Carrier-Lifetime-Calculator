@@ -414,7 +414,7 @@ class DataManager(QObject):
         data_roi = []
         if isinstance(data, Data):
             aim_data = data.data_origin.copy()
-            out_processed = None
+            out_processed = data.parameters
         elif isinstance(data, ProcessedData):
             aim_data = data.data_processed.copy()
             out_processed = data.out_processed
@@ -898,11 +898,8 @@ class ImagingData:
             instance.source_type = "Data"
             instance.source_name = data_obj.name
             instance.source_format = data_obj.format_import
-
-            try:
-                instance.fps = data_obj.parameters['fps']
-            except:
-                instance.fps = 10
+            # instance.fps = getattr(data_obj, 'parameters', {}).get('fps', 10) # 优雅
+            instance.fps = (getattr(data_obj, 'parameters') or {}).get('fps', 10) # 改进版
         elif isinstance(data_obj, ProcessedData):
             if arg:
                 # instance.image_data = data_obj.out_processed[arg].copy()
@@ -914,10 +911,8 @@ class ImagingData:
             instance.source_type = "ProcessedData"
             instance.source_name = data_obj.name
             instance.source_format = data_obj.type_processed
-            try:
-                instance.fps = data_obj.out_processed['fps']
-            except:
-                instance.fps = 10
+            instance.fps = (getattr(data_obj, 'out_processed') or {}).get('fps', 10)
+
         # 调用后初始化
         instance.__post_init__()
         return instance

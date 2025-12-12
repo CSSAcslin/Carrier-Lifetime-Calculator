@@ -246,7 +246,11 @@ class DataProcessor:
                                 np.stack(self.sif_sorted_times,axis=0),
                                 'sif',
                                 np.stack(normalized, axis=0),
-                                name=name)
+                                name=name,
+                                parameters={
+                                    'data_type': 'sif',
+                                }
+                                )
 
     @staticmethod
     def normalize_data(
@@ -471,9 +475,19 @@ class MassDataProcessor(QObject):
                 data_origin = data.data_origin
             total_frames = data.timelength
 
-            # 计算背景帧 (前n帧的平均)
+            # 计算背景帧 (前n帧的平均) 并添加遇0处理
             self.processing_progress_signal.emit(10, 100)
             bg_frame = np.median(data_origin[:bg_num], axis=0)
+            bg_frame_safe = bg_frame.copy()
+            epsilon = 1e-10
+            zero_mask = np.abs(bg_frame_safe) < epsilon
+            if np.any(zero_mask):
+                # 用非零最小值替换零值
+                non_zero_min = np.min(np.abs(bg_frame_safe[~zero_mask]))
+                if non_zero_min > 0:
+                    bg_frame_safe[zero_mask] = non_zero_min
+                else:
+                    bg_frame_safe[zero_mask] = 1.0
             self.processing_progress_signal.emit(20, 100)
 
             # 2. 所有帧减去背景
@@ -486,7 +500,7 @@ class MassDataProcessor(QObject):
                     return None
 
                 # 减去背景帧
-                processed_data[i] = (data_origin[i] - bg_frame ) / bg_frame
+                processed_data[i] = (data_origin[i] - bg_frame_safe ) / bg_frame_safe
 
                 # 每隔10%的进度更新一次
                 if i % max(1, total_frames // 10) == 0:

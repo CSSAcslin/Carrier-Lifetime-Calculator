@@ -359,6 +359,7 @@ class ImageDisplayWindow(QMainWindow):
             canvas.clear_vector_line()
             canvas.clear_vector_rect()
             canvas.clear_draw_layer()
+            canvas.reset_view()
 
     def set_tools(self,tool_name:str):
         if not self.display_canvas:
@@ -786,9 +787,10 @@ class SubImageDisplayWidget(QDockWidget):
 
     def clear_vector_rect(self):
         """清除矢量矩形"""
-        if self.rect_item:
+        if self.v_rect_roi:
             self.scene.removeItem(self.rect_item)
             self.rect_item = None
+            self.v_rect_roi = None
 
     def clear_draw_layer(self):
         """清除绘制层"""
@@ -796,6 +798,7 @@ class SubImageDisplayWidget(QDockWidget):
             self.top_pixmap.fill(Qt.transparent)
             self.draw_layer.setPixmap(self.top_pixmap)
             self.temp_pixmap = None
+            self.draw_roi = np.zeros(self.data.framesize, dtype=np.uint8)
 
     def wheel_event(self, event: QWheelEvent):
         """滚轮缩放实现"""

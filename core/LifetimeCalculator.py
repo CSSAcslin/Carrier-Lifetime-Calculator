@@ -20,8 +20,8 @@ class LifetimeCalculator:
     """
     _cal_params = {
         'from_start_cal':False,
-        'r_squared_min': 0.6,
-        'peak_range': (0.0, 10.0),
+        'r_squared_min': 0.4,
+        'peak_range': (0.0, 1000.0),
         'tau_range': (1e-3, 1e2)
     }
 
@@ -61,7 +61,7 @@ class LifetimeCalculator:
         
 
         # 获得具有实际意义的信号序列
-        if data_type != 'sif':
+        if data_type in ['central negative', 'central positive']:
             phy_signal = np.abs(time_series)
             max_idx = np.argmax(phy_signal)
             if not from_start_cal:
@@ -185,7 +185,7 @@ class LifetimeCalculator:
         global lifetime, fit_curve, phy_signal, r_squared
         y, x = center
         h, w = data.framesize
-        data_type = data.parameters['data_type'] if data.parameters is not None and 'data_type' in data.parameters else None
+        data_type = ((getattr(data,'parameters')if isinstance(data, Data) else getattr(data,'out_processed')) or {}).get('data_type', None)
 
         # 创建区域掩模
         if shape == 'square':

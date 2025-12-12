@@ -216,7 +216,7 @@ class ResultDisplayWidget(QTabWidget):
                 reuse_current=True
             )
 
-    def display_distribution_map(self, data, reuse_current=False):
+    def display_distribution_map(self, data, ax_title = None,reuse_current=False):
         """显示寿命热图"""
         self.current_mode = "heatmap"
         lifetime_map = data.data_processed
@@ -228,8 +228,9 @@ class ResultDisplayWidget(QTabWidget):
         ax = figure.add_subplot(111)
         # 显示热图
         im = ax.imshow(lifetime_map, cmap=cmap)
+        ax_title = '指数衰减寿命分布热图' if ax_title is None else ax_title
         figure.colorbar(im, ax=ax, label='lifetime')
-        ax.set_title("载流子寿命分布图")
+        ax.set_title(ax_title)
         ax.axis('off')
         figure.tight_layout()
         canvas.draw()
@@ -305,7 +306,7 @@ class ResultDisplayWidget(QTabWidget):
 
         ax.set_xlabel(f'时间/{time_unit}')
         ax.set_ylabel('信号强度')
-        ax.set_title('载流子寿命曲线')
+        ax.set_title('寿命拟合曲线')
         ax.legend()
         ax.grid(show_grid)
 
