@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QStackedWidget, QDockWidget,
                              QStatusBar, QScrollBar, QFrame
                              )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject, QElapsedTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject, QElapsedTimer, QSettings, QCoreApplication
 from astropy.utils.console import ProgressBar
 from fontTools.ttx import process
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -25,7 +25,7 @@ import logging
 from ROIdrawDialog import ROIdrawDialog
 import resources_rc
 from DataManager import *
-import markdown
+from UpdateModule import *
 
 
 class MainWindow(QMainWindow):
@@ -53,8 +53,14 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        # 基本信息初始化
+        self.current_version = "0.11.1"  # 当前程序版本
+        self.repo_owner = "CSSAcslin"  # 程序作者
+        self.repo_name = "Carrier-Lifetime-Calculator"  # 程序仓库名
+        self.PAT = ""
 
         # 参数初始化
+        self.settings = QSettings()
         self.data = None
         self.processed_data = None
         self.time_points = None
@@ -67,7 +73,7 @@ class MainWindow(QMainWindow):
 
         # 界面加载
         self.init_ui()
-        self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carrier_lifetime.log")
+        self.log_file = self.setup_log_path()
         self.setup_menus()
         self.setup_logging()
         self.log_startup_message()
@@ -84,20 +90,26 @@ class MainWindow(QMainWindow):
         self._is_calculating = False
         # 信号连接
         self.signal_connect()
+        # 更新检查
+        self.auto_update_check()
         # 线程开启
         self.data_thread_open()
         self.data_thread.start() # 本线程默认不关闭
 
+    """参数配置相关功能"""
     def init_params(self):
         """初始化参数库"""
-        self.main_params = {
+        # 基础参数
+        self.basic_params = self._load_param_group('main', {
             'time_step': 1.000,
             'space_step': 1.000,
             'region_size': 5,
             'bg_nums': 300,
-        }
-        self.plot_params = {
-            'current_mode': 'heatmap',  # 'heatmap' 或 'curve'
+        })
+
+        # 绘图参数
+        self.plot_params = self._load_param_group('plot', {
+            'current_mode': 'heatmap',
             'line_style': '--',
             'line_width': 2,
             'marker_style': 's',
@@ -108,46 +120,158 @@ class MainWindow(QMainWindow):
             'contour_levels': 10,
             'set_axis': True,
             '_from_start_cal': False
-        }
-        self.cal_set_params = {
+        })
+
+        # 计算设置参数
+        self.cal_set_params = self._load_param_group('cal_set', {
             'from_start_cal': False,
             'r_squared_min': 0.4,
             'peak_min': 0.0,
             'peak_max': 100.0,
             'tau_min': 1e-3,
             'tau_max': 1e3
-        }
-        self.EM_params = {
+        })
+
+        # 电学测量参数
+        self.EM_params = self._load_param_group('EM', {
             'EM_fps': 360,
             'target_freq': 30.0,
-            'type': None,
-            'stft_window_size': 128,  # 加窗大小
-            'stft_noverlap': 120,  # 重叠点数
+            'type': '',
+            'stft_window_size': 128,
+            'stft_noverlap': 120,
             'stft_window_type': 'hann',
-            'stft_scale_range': 1,  # 取频率范围（以target frequency为中心）
-            'custom_nfft': 360,  # 变换长度，默认为调制频率
+            'stft_scale_range': 1,
+            'custom_nfft': 360,
             'cwt_type': 'morl',
-            'cwt_total_scales': 256,  # 频率处理点数
-            'cwt_scale_range': 10.0,  # 取频率范围（以target frequency为中心）
-            'scs_thr': 2.5, # 单通道阈值
-            'scs_zoom': 2 , # 单通道选区放大倍数
-            'thr_known' : False, # 是否已知阈值
-        }
-        self.tool_params = {'pen_size': 2,
-            'pen_color': QColor(Qt.green),
-            'fill_color': QColor(Qt.darkGreen),
-            'vector_color': QColor(Qt.yellow),
-            'angle_step':pi/4,
-            'fill': False, # 未实装
-            'vector_width':2,
-            'colormap':'Jet',
-            'use_colormap':False,
-            'auto_boundary_set': True,
-            'min_value':None,
-            'max_value':None,}
+            'cwt_total_scales': 256,
+            'cwt_scale_range': 10.0,
+            'scs_thr': 2.5,
+            'scs_zoom': 2,
+            'thr_known': False,
+        })
 
+        # 工具参数
+        self.tool_params = self._load_param_group('tool', {
+            'pen_size': 2,
+            'pen_color': '#008000',  # Qt.green
+            'fill_color': '#006400',  # Qt.darkGreen
+            'vector_color': '#FFFF00',  # Qt.yellow
+            'angle_step': 0.7853981633974483,  # pi/4
+            'fill': False,
+            'vector_width': 2,
+            'colormap': 'Jet',
+            'use_colormap': False,
+            'auto_boundary_set': True,
+            'min_value': '',
+            'max_value': '',
+        })
+
+        self.save_params()
+        self.save_timer = QTimer()
+        self.save_timer.timeout.connect(self.save_params)
+        self.save_timer.start(1000)  # 每10秒自动保存一次
+
+    def _load_param_group(self, group_name, defaults):
+        """加载参数组，如果没有则使用默认值"""
+        params = {}
+        self.settings.beginGroup(group_name)
+
+        for key, default_value in defaults.items():
+            # 尝试从QSettings读取
+            saved_value = self.settings.value(key, default_value)
+
+            # 处理类型转换
+            if isinstance(default_value, bool):
+                # 处理布尔值
+                params[key] = self.settings.value(key, default_value, type=bool)
+            elif isinstance(default_value, int):
+                # 处理整数
+                try:
+                    params[key] = int(self.settings.value(key, default_value))
+                except (ValueError, TypeError):
+                    params[key] = default_value
+            elif isinstance(default_value, float):
+                # 处理浮点数
+                try:
+                    params[key] = float(self.settings.value(key, default_value))
+                except (ValueError, TypeError):
+                    params[key] = default_value
+            elif isinstance(default_value, str) and not saved_value:
+                # 处理空字符串
+                params[key] = default_value
+            else:
+                # 其他情况（主要是字符串）
+                params[key] = str(self.settings.value(key, default_value))
+
+        self.settings.endGroup()
+        return params
+
+    def save_params(self):
+        """保存所有参数到QSettings"""
+        # 保存主参数
+        self._save_param_group('basic', self.basic_params)
+
+        # 保存绘图参数
+        self._save_param_group('plot', self.plot_params)
+
+        # 保存计算设置参数
+        self._save_param_group('cal_set', self.cal_set_params)
+
+        # 保存电学测量参数
+        self._save_param_group('EM', self.EM_params)
+
+        # 保存工具参数
+        self._save_param_group('tool', self.tool_params)
+
+        # 同步到磁盘
+        self.settings.sync()
+
+    def _save_param_group(self, group_name, params):
+        """保存参数组到QSettings"""
+        self.settings.beginGroup(group_name)
+
+        for key, value in params.items():
+            self.settings.setValue(key, value)
+
+        self.settings.endGroup()
+
+    def update_param(self, group_name, key, value):
+        """更新单个参数"""
+        if group_name == 'main':
+            self.main_params[key] = value
+        elif group_name == 'plot':
+            self.plot_params[key] = value
+        elif group_name == 'cal_set':
+            self.cal_set_params[key] = value
+        elif group_name == 'EM':
+            self.EM_params[key] = value
+        elif group_name == 'tool':
+            self.tool_params[key] = value
+        else:
+            raise ValueError(f"未知的参数组: {group_name}")
+
+        # 立即保存到QSettings
+        self.settings.beginGroup(group_name)
+        self.settings.setValue(key, value)
+        self.settings.endGroup()
+
+    def get_param(self, group_name, key, default=None):
+        """获取参数值"""
+        param_groups = {
+            'main': self.main_params,
+            'plot': self.plot_params,
+            'cal_set': self.cal_set_params,
+            'EM': self.EM_params,
+            'tool': self.tool_params
+        }
+
+        if group_name in param_groups and key in param_groups[group_name]:
+            return param_groups[group_name][key]
+        return default
+
+    """GUI生成"""
     def init_ui(self):
-        self.setWindowTitle("成像数据分析工具箱")
+        self.setWindowTitle(f"成像数据分析工具箱 v{self.current_version}")
         self.setGeometry(100, 50, 1700, 900)
 
         # 主部件和布局
@@ -364,7 +488,7 @@ class MainWindow(QMainWindow):
         self.time_step_input = QDoubleSpinBox()
         self.time_step_input.setMinimum(0.001)
         self.time_step_input.setMaximum(10000)
-        self.time_step_input.setValue(self.main_params['time_step'])
+        self.time_step_input.setValue(self.basic_params['time_step'])
         self.time_step_input.setDecimals(3)
         time_step_layout.addWidget(self.time_step_input)
         self.time_unit_combo = QComboBox()
@@ -379,7 +503,7 @@ class MainWindow(QMainWindow):
         space_step_layout.addWidget(QLabel("空间单位:"))
         self.space_step_input = QDoubleSpinBox()
         self.space_step_input.setMinimum(0.001)
-        self.space_step_input.setValue(self.main_params['space_step'])
+        self.space_step_input.setValue(self.basic_params['space_step'])
         self.space_step_input.setDecimals(3)
         space_step_layout.addWidget(self.space_step_input)
         self.space_unit_combo = QComboBox()
@@ -456,7 +580,7 @@ class MainWindow(QMainWindow):
         self.region_size_input = QSpinBox()
         self.region_size_input.setMinimum(1)
         self.region_size_input.setMaximum(50)
-        self.region_size_input.setValue(self.main_params['region_size'])
+        self.region_size_input.setValue(self.basic_params['region_size'])
         self.analyze_region_btn = QPushButton("分析选定区域")
             # 区域坐标输入
         self.region_x_input = QSpinBox()
@@ -522,7 +646,7 @@ class MainWindow(QMainWindow):
         self.bg_nums_input = QSpinBox()
         self.bg_nums_input.setMinimum(1)
         self.bg_nums_input.setMaximum(9999)
-        self.bg_nums_input.setValue(self.main_params['bg_nums'])
+        self.bg_nums_input.setValue(self.basic_params['bg_nums'])
         preprocess_set_layout.addWidget(self.bg_nums_input)
         self.preprocess_data_btn = QPushButton("数据预处理")
         # preprocess_set_layout2 = QHBoxLayout()
@@ -740,12 +864,11 @@ class MainWindow(QMainWindow):
         fs_help.triggered.connect(lambda: self.help_show('超快成像分析帮助',["general","lifetime"]))
         EM_help = help_menu.addAction('电化学调制iSCAT')
         EM_help.triggered.connect(lambda: self.help_show('电化学调制分析帮助',["general","stft","cwt"]))
+        about_action = help_menu.addAction("关于")
 
-        update_log = self.menu.addAction('更新日志')
-        # update_log.triggered.connect(self.show_update_log)
 
         update_action = self.menu.addAction('检查更新')
-        # update_action.triggered.connect(self.update_check)
+        update_action.triggered.connect(self.update_dialog)
 
     @staticmethod
     def QGroupBoxCreator(title="",style="default"):
@@ -815,24 +938,7 @@ class MainWindow(QMainWindow):
         self.status_light.setPixmap(QPixmap(":/icons/green_light.png").scaled(16, 16))
         self.status_bar.addPermanentWidget(self.status_light)
 
-    def update_status(self, status, working_status='idle'):
-        """更新状态条的显示"""
-        self.status_label.setText(status)
-        if working_status == 'idle' : # idle
-            light = "green_light.png"
-        elif working_status == 'working' :
-            light = "yellow_light.png"
-        elif working_status == 'warning':
-            light = "red_light.png"
-            logging.warning(status)
-        elif working_status == 'error':
-            QMessageBox.warning(self,'错误！',status)
-            logging.error(status)
-            light = "green_light.png"
-        else:
-            light = "red_light.png"
-        self.status_light.setPixmap(QPixmap(f":/icons/{light}").scaled(16, 16))
-
+    """控制台相关"""
     def setup_console(self):
         """设置控制台停靠窗口"""
         self.console_dock = QDockWidget("控制台", self)
@@ -852,6 +958,20 @@ class MainWindow(QMainWindow):
         self.console_dock.setFeatures(QDockWidget.DockWidgetMovable |
                                       QDockWidget.DockWidgetFloatable |
                                       QDockWidget.DockWidgetClosable)
+
+    def setup_log_path(self):
+        """生成配置文件地址"""
+        if hasattr(sys, '_MEIPASS'):  # 检测是否在PyInstaller打包环境中运行
+            # 使用os.environ获取标准路径
+            appdata_local = os.environ.get('LOCALAPPDATA')
+            appdata_local = os.path.join(appdata_local, 'LifeCalor')
+        else:  # 开发环境
+            appdata_local = os.path.dirname(os.path.abspath(__file__))
+
+        os.makedirs(appdata_local, exist_ok=True)
+
+        # 设置日志文件路径
+        return os.path.join(appdata_local, "carrier_lifetime.log")
 
     def setup_logging(self):
         """配置日志系统"""
@@ -895,7 +1015,7 @@ class MainWindow(QMainWindow):
 成像数据分析工具箱启动
 启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 日志位置: {self.log_file}
-程序版本: 1.9.6
+程序版本: {self.current_version}
 ============================================
         """
         logging.info(startup_msg.strip())
@@ -905,6 +1025,89 @@ class MainWindow(QMainWindow):
         self.help_dialog = CustomHelpDialog(title, topics=topics, parent=self)
         self.help_dialog.show()
 
+    """程序更新"""
+    def update_dialog(self):
+        """显示更新对话框
+        注：更新功能中使用的线程都是直接继承QThread的方法，因为功能比较简单"""
+        dialog = UpdateDialog(self)
+        dialog.download_progress.connect(self.update_progress)
+        dialog.update_status.connect(self.update_status)
+        dialog.exec_()
+        self.update_status("准备就绪")
+
+    def auto_update_check(self):
+        """设置自动检查更新"""
+        # 检查设置，避免过于频繁检查
+        self.settings.beginGroup("sys")
+        last_check = self.settings.value("last_update_check")
+        self.settings.endGroup()
+
+        # 如果从未检查过或超过24小时，则检查更新
+        import datetime
+        now = datetime.datetime.now()
+
+        should_check = True
+        if last_check:
+            last_check_date = datetime.datetime.fromisoformat(last_check)
+            if (now - last_check_date).days < 1:  # 1天内检查过
+                should_check = False
+
+        if should_check:
+            # 延迟2秒启动检查，避免影响程序启动
+            QTimer.singleShot(2000, self.check_updates_on_startup)
+
+            # 更新最后检查时间
+            self.settings.beginGroup("sys")
+            self.settings.setValue("last_update_check", now.isoformat())
+            self.settings.endGroup()
+
+    def check_updates_on_startup(self):
+        """启动时检查更新"""
+        logging.info("正在检查更新...")
+        self.update_status("检查更新中",'working')
+
+        self.startup_checker = UpdateChecker(
+            self.repo_owner,
+            self.repo_name,
+            self.current_version,
+            self.PAT
+        )
+        self.startup_checker.version_info.connect(self.handle_startup_update)
+        self.startup_checker.check_completed.connect(self.handle_check_completed)
+        self.startup_checker.start()
+
+    def handle_startup_update(self, update_info):
+        """处理启动时发现的更新"""
+        logging.info(f"发现新版本 v{update_info['latest_version']}")
+
+        # 更新状态栏提示
+        self.update_status("有新版本可用",'idle')
+
+        # 创建并显示更新对话框
+        dialog = UpdateDialog(self, startup_check=True)
+        dialog.update_info = update_info
+
+        # 直接显示更新信息，不需要再次检查
+        dialog.check_button.setEnabled(True)
+        dialog.update_button.setEnabled(True)
+        dialog.status_label.setText(f"发现新版本: v{update_info['latest_version']}")
+        dialog.log_message(f"发现新版本 v{update_info['latest_version']}")
+        dialog.show_release_notes(update_info.get('release_notes', '暂无更新说明'))
+        dialog.tab_widget.setCurrentIndex(1)
+
+        # 显示对话框
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def handle_check_completed(self, has_update):
+        """处理检查完成"""
+        if not has_update:
+            QMessageBox.information(self,"提示","当前已是最新版本")
+            logging.info("已是最新版本")
+            self.update_status("准备就绪",'idle')
+
+    """线程与信号连接"""
     def data_thread_open(self):
         """数据线程"""
         self.data_thread = QThread()
@@ -1020,46 +1223,7 @@ class MainWindow(QMainWindow):
             self.roi_pick.addItem(canvas.windowTitle())
 
     '''上面是初始化预设，下面是功能响应'''
-    def add_new_canvas(self, assign_data = None):
-        """新建图像显示画布"""
-        if self.data is None and self.processed_data is None:
-            logging.warning('请先导入或处理数据')
-            return
-        self.update_progress(-1)
-        data_display = None
-        if assign_data is not None:
-            data_display = ImagingData.create_image(assign_data)
-            data_display.colormode = self.tool_params['colormap'] if self.tool_params['use_colormap'] else None
-            logging.info("数据选择成功（原初）")
-        else:
-            dialog = DataViewAndSelectPop(datadict=self.get_data_all(), processed_datadict=self.get_processed_data_all(),add_canvas=True)
-            if dialog.exec_():
-                selected_timestamp, selected_table = dialog.get_selected_timestamp()
-                if selected_table == 'data':
-                    for data in self.data.history:
-                        if data.timestamp == selected_timestamp:
-                            data_display = ImagingData.create_image(data)
-                            data_display.colormode = self.tool_params['colormap'] if self.tool_params['use_colormap'] else None
-                            logging.info("数据选择成功（原初）")
-                            break
-                else:
-                    for data in self.processed_data.history:
-                        if data.timestamp == selected_timestamp:
-                            data_display = ImagingData.create_image(data)
-                            data_display.colormode = self.tool_params['colormap'] if self.tool_params[
-                                'use_colormap'] else None
-                            logging.info("数据选择成功（处理）")
-                            break
-        if data_display is not None:
-            self.image_display.add_canvas(data_display)
-        # else:
-        #     QMessageBox.warning(self,"数据错误","数据已经遗失（不可能错误）")
-        #     return
-        self.canvas_signal_connect()
-        # self.image_display.update_time_slice(0, True)
-
-        self.update_status("准备就绪", 'idle')
-
+    """数据导入相关"""
     def get_data_all(self) ->  List[Dict[str, Any]]:
         Data_list = []
         if self.data is None:
@@ -1106,72 +1270,6 @@ class MainWindow(QMainWindow):
             if processed.timestamp == timestamp:
                 return processed.name
 
-        return None
-
-    def load_image(self,data_type = 'original',other_params:str = None,origin_data = None):
-        """图像加载，后面会进一步修改"""
-        if len(self.image_display.display_canvas) == 0 : # 初次创建
-            # self.add_new_canvas()
-            if data_type == 'original':
-                self.imaging_main = ImagingData.create_image(self.data)
-            self.image_display.add_canvas(self.imaging_main)
-            totalframes = self.imaging_main.totalframes
-            # self.time_slider.setMaximum(totalframes - 1)
-            # self.time_label.setText(f"时间点: 0/{totalframes - 1}")
-            self.canvas_signal_connect()
-        else:
-            if data_type == 'original':
-                # imports_done = self.other_imports
-                msg_box = QMessageBox()
-                msg_box.setWindowTitle("画布操作")
-                msg_box.setText("请选择是否要覆盖当前画布或新建画布")
-
-                # 添加标准按钮
-                overwrite_btn = msg_box.addButton("覆盖", QMessageBox.ActionRole)
-                new_btn = msg_box.addButton("新建", QMessageBox.ActionRole)
-                hide_btn = msg_box.addButton("隐藏", QMessageBox.ActionRole)
-                msg_box.exec_()
-
-                # 返回结果
-                if msg_box.clickedButton() == overwrite_btn:
-                    self.image_display.del_canvas(-1)
-                    self.imaging_main = ImagingData.create_image(self.data)
-                    totalframes = self.imaging_main.totalframes
-                    # self.time_slider.setMaximum(totalframes - 1)
-                    # self.time_label.setText(f"时间点: 0/{totalframes - 1}")
-                    self.add_new_canvas(origin_data)
-                elif msg_box.clickedButton() == new_btn:
-                    self.add_new_canvas(origin_data)
-                elif msg_box.clickedButton() == hide_btn:
-                    return False
-
-        # 显示第一张图像
-        # self.image_display.update_time_slice(0, True)
-        # self.time_slider.setValue(0)
-
-        # 根据图像大小调节region范围
-        self.region_x_input.setMaximum(self.data.datashape[1])
-        self.region_y_input.setMaximum(self.data.datashape[2])
-
-    def other_imports(self):
-        msg_box = QMessageBox()
-        msg_box.setWindowTitle("画布操作")
-        msg_box.setText("请选择是否要覆盖当前画布或新建画布")
-
-        # 添加标准按钮
-        overwrite_btn = msg_box.addButton("覆盖", QMessageBox.ActionRole)
-        new_btn = msg_box.addButton("新建", QMessageBox.ActionRole)
-        hide_btn = msg_box.addButton("隐藏", QMessageBox.ActionRole)
-        msg_box.exec_()
-
-        # 返回结果
-        if msg_box.clickedButton() == overwrite_btn:
-            return "overwrite"
-        elif msg_box.clickedButton() == new_btn:
-            self.add_new_canvas('latest')
-            return "new"
-        elif msg_box.clickedButton() == hide_btn:
-            return "hide"
         return None
 
     def load_tiff_folder(self):
@@ -1300,6 +1398,115 @@ class MainWindow(QMainWindow):
         # 设置时间滑块
         self.load_image(origin_data=self.data)
 
+    """画布设置相关"""
+    def add_new_canvas(self, assign_data=None):
+        """新建图像显示画布"""
+        if self.data is None and self.processed_data is None:
+            logging.warning('请先导入或处理数据')
+            return
+        self.update_progress(-1)
+        data_display = None
+        if assign_data is not None:
+            data_display = ImagingData.create_image(assign_data)
+            data_display.colormode = self.tool_params['colormap'] if self.tool_params['use_colormap'] else None
+            logging.info("数据选择成功（原初）")
+        else:
+            dialog = DataViewAndSelectPop(datadict=self.get_data_all(),
+                                          processed_datadict=self.get_processed_data_all(), add_canvas=True)
+            if dialog.exec_():
+                selected_timestamp, selected_table = dialog.get_selected_timestamp()
+                if selected_table == 'data':
+                    for data in self.data.history:
+                        if data.timestamp == selected_timestamp:
+                            data_display = ImagingData.create_image(data)
+                            data_display.colormode = self.tool_params['colormap'] if self.tool_params[
+                                'use_colormap'] else None
+                            logging.info("数据选择成功（原初）")
+                            break
+                else:
+                    for data in self.processed_data.history:
+                        if data.timestamp == selected_timestamp:
+                            data_display = ImagingData.create_image(data)
+                            data_display.colormode = self.tool_params['colormap'] if self.tool_params[
+                                'use_colormap'] else None
+                            logging.info("数据选择成功（处理）")
+                            break
+        if data_display is not None:
+            self.image_display.add_canvas(data_display)
+        # else:
+        #     QMessageBox.warning(self,"数据错误","数据已经遗失（不可能错误）")
+        #     return
+        self.canvas_signal_connect()
+        # self.image_display.update_time_slice(0, True)
+
+        self.update_status("准备就绪", 'idle')
+
+    def load_image(self, data_type='original', other_params: str = None, origin_data=None):
+        """图像加载，后面会进一步修改"""
+        if len(self.image_display.display_canvas) == 0:  # 初次创建
+            # self.add_new_canvas()
+            if data_type == 'original':
+                self.imaging_main = ImagingData.create_image(self.data)
+            self.image_display.add_canvas(self.imaging_main)
+            totalframes = self.imaging_main.totalframes
+            # self.time_slider.setMaximum(totalframes - 1)
+            # self.time_label.setText(f"时间点: 0/{totalframes - 1}")
+            self.canvas_signal_connect()
+        else:
+            if data_type == 'original':
+                # imports_done = self.other_imports
+                msg_box = QMessageBox()
+                msg_box.setWindowTitle("画布操作")
+                msg_box.setText("请选择是否要覆盖当前画布或新建画布")
+
+                # 添加标准按钮
+                overwrite_btn = msg_box.addButton("覆盖", QMessageBox.ActionRole)
+                new_btn = msg_box.addButton("新建", QMessageBox.ActionRole)
+                hide_btn = msg_box.addButton("隐藏", QMessageBox.ActionRole)
+                msg_box.exec_()
+
+                # 返回结果
+                if msg_box.clickedButton() == overwrite_btn:
+                    self.image_display.del_canvas(-1)
+                    self.imaging_main = ImagingData.create_image(self.data)
+                    totalframes = self.imaging_main.totalframes
+                    # self.time_slider.setMaximum(totalframes - 1)
+                    # self.time_label.setText(f"时间点: 0/{totalframes - 1}")
+                    self.add_new_canvas(origin_data)
+                elif msg_box.clickedButton() == new_btn:
+                    self.add_new_canvas(origin_data)
+                elif msg_box.clickedButton() == hide_btn:
+                    return False
+
+        # 显示第一张图像
+        # self.image_display.update_time_slice(0, True)
+        # self.time_slider.setValue(0)
+
+        # 根据图像大小调节region范围
+        self.region_x_input.setMaximum(self.data.datashape[1])
+        self.region_y_input.setMaximum(self.data.datashape[2])
+
+    def other_imports(self):
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("画布操作")
+        msg_box.setText("请选择是否要覆盖当前画布或新建画布")
+
+        # 添加标准按钮
+        overwrite_btn = msg_box.addButton("覆盖", QMessageBox.ActionRole)
+        new_btn = msg_box.addButton("新建", QMessageBox.ActionRole)
+        hide_btn = msg_box.addButton("隐藏", QMessageBox.ActionRole)
+        msg_box.exec_()
+
+        # 返回结果
+        if msg_box.clickedButton() == overwrite_btn:
+            return "overwrite"
+        elif msg_box.clickedButton() == new_btn:
+            self.add_new_canvas('latest')
+            return "new"
+        elif msg_box.clickedButton() == hide_btn:
+            return "hide"
+        return None
+
     def make_hover_handler(self):
         args = {'x': None, 'y': None, 't': None, 'value': None, 'origin': None}
         def _handle_hover(x=None, y=None, t=None, value=None, origin=None):
@@ -1342,6 +1549,7 @@ class MainWindow(QMainWindow):
             if self.time_slider_vertical.isVisible():
                 self.time_slider_vertical.setVisible(False)
 
+    """编辑设置对话框"""
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
         if self.data is None and self.processed_data is None:
@@ -1386,30 +1594,6 @@ class MainWindow(QMainWindow):
             logging.info("绘图已更新")
         self.update_status("准备就绪", 'idle')
 
-    # def roi_select_dialog(self):
-    #     """ROI选取功能（即将抛弃）"""
-    #     if self.data is None or self.processed_data is None:
-    #         logging.warning("无数据，请先加载数据文件")
-    #         return
-    #     roi_dialog = ROIdrawDialog(base_layer_array=self.data.data_origin[0],parent=self)
-    #     self.update_status("ROI绘制ing", 'working')
-    #     if roi_dialog.exec_() == QDialog.Accepted:
-    #         if roi_dialog.action_type == "mask":
-    #             self.mask, self.bool_mask = roi_dialog.get_top_layer_array()
-    #             logging.info(f'成功绘制ROI，大小{self.mask.shape[0]}×{self.mask.shape[1]}')
-    #             if self.fuction_select.currentIndex() == 2:
-    #                 pass
-    #             else:
-    #                 data_amend = self.data_processor.amend_data(self.data, self.bool_mask)
-    #                 self.data.update(data_amend)
-    #                 # self.time_label.setText(self.image_display.update_time_slice(self.idx))
-    #         elif roi_dialog.action_type == "vector":
-    #             self.vector_array = roi_dialog.vector_line.getPixelValues(self.data,self.space_unit,self.time_unit)
-    #             logging.info(f'成功绘制ROI，大小{self.vector_array.shape}')
-    #
-    #
-    #     self.update_status("准备就绪", 'idle')
-
     def start_calculation(self):
         """开始计算时调用此方法"""
         self.elapsed_timer.start()
@@ -1418,6 +1602,7 @@ class MainWindow(QMainWindow):
         self.last_percent = -1
         self.cached_remaining = "计算中..."
 
+    """状态响应与更新"""
     def update_progress(self, current, total=None):
         """更新进度条"""
         if total is not None:
@@ -1472,24 +1657,6 @@ class MainWindow(QMainWindow):
         elif current == -1:
             self.progress_bar.reset()
 
-    def vectorROI_signal_show(self):
-        """向量选取信号全部展示"""
-        if not hasattr(self, 'data') or self.data is None:
-            logging.warning("无数据，请先加载数据文件")
-            return
-        if self.vector_array is None :
-            logging.warning("未选取向量直线ROI")
-            return
-        elif self.data.timelength == self.vector_array.shape[0]:
-            # self.time_slider_vertical.setVisible(True)
-            # self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
-            # self.time_slider_vertical.setValue(0)
-            self.update_result_display(0,reuse_current = False)
-            return
-        else:
-            logging.error("数据长度不匹配")
-            return
-
     def update_result_display(self,idx,reuse_current=True):
         """目前有两个地方用到垂直滚动条"""
         data = self.processed_data
@@ -1514,6 +1681,43 @@ class MainWindow(QMainWindow):
                 reuse_current = reuse_current)
         else:
             logging.debug("结果垂直滚动条失去更新源，不可能错误")
+
+    def update_status(self, status, working_status='idle'):
+        """更新状态条的显示"""
+        self.status_label.setText(status)
+        if working_status == 'idle' : # idle
+            light = "green_light.png"
+        elif working_status == 'working' :
+            light = "yellow_light.png"
+        elif working_status == 'warning':
+            light = "red_light.png"
+            logging.warning(status)
+        elif working_status == 'error':
+            QMessageBox.warning(self,'错误！',status)
+            logging.error(status)
+            light = "green_light.png"
+        else:
+            light = "red_light.png"
+        self.status_light.setPixmap(QPixmap(f":/icons/{light}").scaled(16, 16))
+
+    """各种计算方法"""
+    def vectorROI_signal_show(self):
+        """向量选取信号全部展示"""
+        if not hasattr(self, 'data') or self.data is None:
+            logging.warning("无数据，请先加载数据文件")
+            return
+        if self.vector_array is None :
+            logging.warning("未选取向量直线ROI")
+            return
+        elif self.data.timelength == self.vector_array.shape[0]:
+            # self.time_slider_vertical.setVisible(True)
+            # self.time_slider_vertical.setMaximum(self.data['data_origin'].shape[0] - 1)
+            # self.time_slider_vertical.setValue(0)
+            self.update_result_display(0,reuse_current = False)
+            return
+        else:
+            logging.error("数据长度不匹配")
+            return
 
     def vectorROI_selection(self):
         """向量选取信号选择展示"""
@@ -1987,7 +2191,7 @@ class MainWindow(QMainWindow):
         if self.data is None and self.processed_data is None:
             logging.warning('请先导入数据')
             return
-        if self.processed_data.type_processed == 'ROI_stft' or 'ROI_cwt':
+        if self.processed_data.type_processed in ['ROI_stft','ROI_cwt']:
             data = self.processed_data
         else:
             data = next(
@@ -2114,7 +2318,7 @@ class MainWindow(QMainWindow):
                 else:
                     thr = int(self.processed_data.out_processed['thr'])
                     self.time_slider_vertical.setVisible(True)
-                    self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['max_signal'].max()*10))
+                    self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['max_signal'].max()*10+21))
                     # self.time_slider_vertical.setValue(thr*10)
                     self.update_result_display(thr*10, reuse_current=False)
             case '2D_Fourier_transform':
@@ -2774,6 +2978,8 @@ QTabBar::tab:!selected {
     # 应用全局样式
     app.setStyle('Fusion')
     app.setStyleSheet(QSS1)
+    QCoreApplication.setOrganizationName("CSSA")
+    QCoreApplication.setApplicationName("LifeCalor")
     # app.setFont(QFont("Noto Sans"))
     app.setWindowIcon(QIcon(':/LifeCalor.ico'))
     window = MainWindow()

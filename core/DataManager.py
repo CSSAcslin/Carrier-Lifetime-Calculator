@@ -858,6 +858,8 @@ class ImagingData:
     """
     图像显示类型\n
     timestamp_inherited 原始数据来源\n
+    image_backup 原始数据
+    image_data 转换为图像数据
     """
     timestamp_inherited: float
     image_backup: np.ndarray = None  # 原始数据
