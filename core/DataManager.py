@@ -683,7 +683,9 @@ class Data:
     @classmethod
     def get_history_list(cls) -> list:
         """获取当前历史记录列表（按从旧到新排序）"""
-        return list(cls.history)
+        history_list = list(cls.history)
+        history_list.reverse()
+        return history_list
 
     @classmethod
     def get_history_serial_numbers(cls) -> list:
@@ -843,6 +845,12 @@ class ProcessedData:
     # def get_history_names(cls) -> List[str]:
     #     """获取所有历史记录的名称列表"""
     #     return list(cls.history.keys())
+    @classmethod
+    def get_history_list(cls) -> list:
+        """获取当前历史记录列表（按从新到旧排序）"""
+        history_list = list(cls.history)
+        history_list.reverse()
+        return history_list
 
     def __repr__(self):
         return (

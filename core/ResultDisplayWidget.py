@@ -48,8 +48,6 @@ class ResultDisplayWidget(QTabWidget):
             # 或者使用其他字体如: 'Microsoft YaHei', 'SimSun', 'FangSong', 'KaiTi'
             plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 
-
-
     def _init_counters(self):
         """计数器初始化"""
         self.tab_counters = {

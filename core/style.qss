@@ -1,0 +1,541 @@
+/* ========== QMenuBar 样式 ========== */
+QMenuBar {
+    background-color: #ffffff;
+    border-top: 3px solid #4CAF50;
+    padding: 6px;
+    margin-bottom: 3px;
+    font-weight: 475;
+}
+
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 8px;
+    border-radius: 2px;
+    color: #2E7D32;
+    margin: 0px 2px 4px 2px;
+}
+
+QMenuBar::item:selected {
+    background-color: #E8F5E9;
+}
+
+QMenuBar::item:pressed {
+    background-color: #C8E6C9;
+}
+QDockWidget {
+    border: 1px solid #388E3C;
+    border-radius: 4px;
+}
+
+
+/* 标题栏样式 */
+QDockWidget::title {
+    background-color: #C8E6C9;
+    text-align: center;
+    padding: 2px;
+}
+
+QDockWidget::title:hover {
+    background-color: #4CAF50;
+    color: white;
+}
+
+
+/* 内容区域样式 */
+QDockWidget > QWidget {
+    background-color: #fefefe;
+    border: 2px solid #C8E6C9;
+    border-top: none;
+
+}
+
+/* 分隔线样式 */
+QDockWidget::separator {
+    background-color: #C8E6C9;
+    width: 1px;
+    height: 1px;
+}
+
+/* 当停靠窗口浮动时的样式 */
+QDockWidget[floating="true"] {
+    border: 2px solid #C8E6C9;
+}
+/* ========== 状态栏渐变 ========== */
+QStatusBar {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #C8E6C9, stop:1 #fefefe);
+}
+/* ========== 进度条 ========== */
+QProgressBar {
+                border: 1px solid #C8E6C9;
+                border-radius: 3px;
+                background: white;
+                text-align: center;
+                min-height: 18px;
+                max-height: 18px;
+            }
+            QProgressBar::chunk {
+                background-color: #C8E6C9;
+                width: 10px;
+            }
+/* ========== 工具栏 ========== */
+QToolBar {
+    background-color: white;
+    border: 2px outset #C8E6C9;
+    padding: 2px;
+    spacing: 6px; /* 工具按钮间距 */
+}
+QToolBox::tab:selected { /* italicize selected tabs */
+    font: italic;
+    color: white;
+}
+QToolBar::separator {
+    background-color: #C8E6C9;
+    width: 1px;
+    margin: 4px 2px;
+}
+
+QToolBar QToolButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 0px;
+    min-width: 24px;
+}
+
+QToolBar QToolButton:hover {
+    background-color: #E8F5E9;
+    border-color: #C8E6C9;
+}
+
+QToolBar QToolButton:checked {
+    background-color: #C8E6C9;
+    border-color: #4CAF50;
+}
+
+QToolBar QToolButton:pressed {
+    background-color: #A5D6A7;
+}
+
+/* ========== QToolBox 样式 ========== */
+QToolBox {
+    background-color: white;
+}
+
+QToolBox::tab {
+    background-color: #E8F5E9;
+    color: #2E7D32;
+    border: 1px solid #C8E6C9;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    padding: 8px;
+    font-weight: 500;
+}
+
+QToolBox::tab:selected {
+    background-color: #4CAF50;
+    color: white;
+}
+
+QToolBox::tab:hover {
+    background-color: #C8E6C9;
+}
+
+QToolBox > QWidget {
+    background-color: white;
+    border: 1px solid #C8E6C9;
+    border-radius: 4px;
+}
+/* ========== QButton 样式 ========== */
+QPushButton {
+    background-color: white;
+    border: 1px solid #9ad19a;
+    border-radius: 4px;
+    padding: 3px 4px 3px 4px;
+}
+QPushButton:hover {
+    border-color: #4CAF50;
+}
+QPushButton:pressed {
+    border: 2px solid #4CAF50;
+    background-color: #F1F8E9;
+}
+
+QPushButton:disabled {
+    background-color: #F5F5F5;
+    color: #BDBDBD;
+}
+#treebutton {
+    padding: 0px;
+}
+
+/* ========== QComboBox 样式 ========== */
+QComboBox {
+    background-color: white;
+    border: 1px solid #9ad19a;
+    border-radius: 4px;
+    padding: 2px 2px 2px 4px;
+
+    min-width: 50px;
+    selection-background-color: #E8F5E9;
+}
+
+QComboBox:hover {
+    border-color: #4CAF50;
+}
+
+QComboBox:focus {
+    border: 2px solid #4CAF50;
+    background-color: #F1F8E9;
+}
+
+QComboBox:disabled {
+    background-color: #F5F5F5;
+    color: #BDBDBD;
+}
+
+/* 下拉箭头样式 */
+QComboBox::drop-down {
+    width: 24px;
+    border-left: 1px solid #C8E6C9;
+    border-radius: 0 2px 2px 0;
+}
+
+QComboBox::down-arrow {
+}
+
+
+/* 下拉菜单样式 */
+QComboBox QAbstractItemView {
+    background-color: white;
+    border: 1px solid #C8E6C9;
+    selection-background-color: #E8F5E9;
+    selection-color: #2E7D32;
+    outline: 0;  /* 移除选中项的虚线框 */
+    padding: 4px;
+}
+
+QComboBox QAbstractItemView::item {
+    height: 28px;
+    padding: 0 8px;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #C8E6C9;
+}
+/* ========== 表格 QTableWidget 样式 ========== */
+QTableWidget {
+    gridline-color: #d0d0d0; /* 网格线颜色 */
+    background-color: white; /* 背景色 */
+}
+/* 表头样式 */
+QHeaderView::section {
+    background-color: #e0e0e0;
+    padding: 4px;
+    border: 1px solid #c0c0c0;
+    font-weight: bold;
+}
+/* 单元格样式 */
+QTableWidget::item {
+    padding: 3px;
+    border: none; /* 去除默认边框，使用网格线 */
+}
+/* 选中单元格的样式 */
+QTableWidget::item:focus {
+    background-color: #C8E6C9; /* 获得焦点时的背景色 */
+    color: black;
+}
+/* 另一种设置选中行样式的方法（如果设置了SelectionBehavior为SelectRows） */
+QTableWidget::item:selected {
+    background-color: #4CAF50; /* 选中项背景色 */
+    color: white;
+}
+/* 鼠标悬停在单元格上的样式 */
+QTableWidget::item:hover {
+    background-color: #C8E6C9; /* 悬停颜色 */
+}
+/* ========== 滚动条 QScrollBar 样式 ========== */
+QScrollArea {
+    border: none;
+    background-color: white;
+}
+QScrollBar:vertical {
+    width: 12px;
+    background: #f0f0f0;
+}
+QScrollBar::handle:vertical {
+    background: #C8E6C9;
+    min-height: 20px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #A5D6A7;      /* 悬停时稍深 */
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+/* ========== QDialog 样式 ========== */
+QDialog {
+    background-color: white;
+    border: 2px solid #C8E6C9;
+    border-radius: 6px;
+}
+
+QDialog QLabel {
+    color: #2E7D32;
+    font-weight: 500;
+}
+
+QDialog QPushButton {
+    min-width: 80px;
+    margin: 0 4px;
+}
+
+/* ========== QTabWidget 样式 ========== */
+QTabWidget::pane {
+    border: 1px solid #C8E6C9;
+    border-radius: 5px;
+    background: white;
+    margin-top: -1px;
+}
+
+QTabWidget::tab-bar {
+    left: 6px;
+}
+
+QTabBar::tab {
+    background-color: #E8F5E9;
+    color: #2E7D32;
+    border: 1px solid #C8E6C9;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius:4px;
+    padding: 6px 12px;
+    margin-right: 4px;
+    margin-left: 4px;
+    font-weight: 100;
+    min-width: 40px
+}
+
+QTabBar::tab:selected {
+    background-color: #4CAF50;
+    color: white;
+    border-color: #388E3C;
+}
+
+QTabBar::tab:hover {
+    background-color: #C8E6C9;
+}
+
+QTabBar::tab:!selected {
+    margin-top: 4px;
+}
+/* ========== QTreeWidget 样式 ========== */
+QTreeWidget {
+    background-color: white;
+    alternate-background-color: #CCCCCC;
+    border: 1px solid #C8E6C9;
+    border-radius: 4px;
+    outline: 0; /* 移除焦点虚线框 */
+    color: #2E7D32;
+    font-weight: 475;
+}
+
+/* 表头样式 */
+QTreeWidget QHeaderView {
+    background-color: transparent;
+}
+
+QTreeWidget QHeaderView::section {
+    background-color: #E8F5E9;
+    color: #2E7D32;
+    border: 1px solid #C8E6C9;
+    border-top: none;
+    border-left: none;
+    font-weight: 500;
+    padding: 4px 8px;
+    min-height: 24px;
+}
+
+QTreeWidget QHeaderView::section:first {
+    border-left: 1px solid #C8E6C9;
+    border-top-left-radius: 4px;
+}
+
+QTreeWidget QHeaderView::section:last {
+    border-top-right-radius: 4px;
+}
+
+QTreeWidget QHeaderView::section:hover {
+    background-color: #C8E6C9;
+}
+
+QTreeWidget QHeaderView::section:pressed {
+    background-color: #A5D6A7;
+}
+
+/* 项样式 */
+QTreeWidget::item {
+    border: none;
+    padding: 2px 2px;
+    min-height: 24px;
+    color: #2E7D32;
+}
+
+QTreeWidget::item:hover {
+    background-color: #E8F5E9;
+    border-radius: 3px;
+}
+
+QTreeWidget::item:selected {
+    background-color: #388E3C;
+    color: white;
+    border-radius: 3px;
+}
+
+QTreeWidget::item:selected:!active {
+    background-color: #76B679;
+}
+
+/* 分支样式 */
+/* 分支指示器样式 */
+QTreeWidget::branch {
+    background-color: white;
+    width: 18px;  /* 确保足够宽以显示图标 */
+    height: 18px; /* 确保足够高以显示图标 */
+}
+
+QTreeWidget::branch:selected {
+    background-color: white;
+}
+
+/* 分支指示器悬停状态 */
+QTreeWidget::branch:hover {
+    background-color: #E8F5E9;
+}
+
+QTreeWidget::branch:selected:hover {
+    background-color: #E8F5E9;
+}
+
+/* 有子项但已折叠 - 显示向右箭头图标 */
+QTreeWidget::branch:has-children:!has-siblings:closed,
+QTreeWidget::branch:closed:has-children:has-siblings {
+    /* 从qrc资源文件引用图片 */
+    image: url(:/icons/icon_add.svg);
+}
+
+/* 有子项但已折叠且选中 - 使用白色图标 */
+QTreeWidget::branch:selected:has-children:!has-siblings:closed,
+QTreeWidget::branch:selected:closed:has-children:has-siblings {
+    image: url(:/icons/icon_add.svg);
+}
+
+/* 有子项已展开 - 显示向下箭头图标 */
+QTreeWidget::branch:open:has-children:!has-siblings,
+QTreeWidget::branch:open:has-children:has-siblings {
+    /* 从qrc资源文件引用图片 */
+    image: url(:/icons/icon_del.svg);
+}
+
+/* 有子项已展开且选中 - 使用白色图标 */
+QTreeWidget::branch:selected:open:has-children:!has-siblings,
+QTreeWidget::branch:selected:open:has-children:has-siblings {
+    image: url(:/icons/icon_del.svg);
+}
+
+/* 滚动条样式（继承全局设置，如需定制可在此覆盖） */
+QTreeWidget QScrollBar:vertical {
+    width: 12px;
+    background: #f0f0f0;
+    border-radius: 6px;
+}
+
+QTreeWidget QScrollBar::handle:vertical {
+    background: #C8E6C9;
+    border-radius: 6px;
+    min-height: 20px;
+}
+
+QTreeWidget QScrollBar::handle:vertical:hover {
+    background: #A5D6A7;
+}
+
+QTreeWidget QScrollBar::add-line:vertical,
+QTreeWidget QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+/* 行间分隔线 */
+QTreeView::item:!selected:alternate {
+    background-color: #F9F9F9;
+}
+
+/* 焦点项样式 */
+QTreeWidget::item:focus {
+    border: 1px solid #4CAF50;
+    border-radius: 3px;
+    background-color: #F1F8E9;
+}
+
+
+/* /* ========== QTreeWidget / QTreeView 样式 ==========
+QTreeWidget, QTreeView {
+    background-color: white;
+    /* 边框颜色与 QDialog/QDockWidget 保持一致
+    border: 2px solid #C8E6C9;
+    border-radius: 4px;
+    outline: 0; /* 去除选中时的虚线框
+    padding: 2px;
+    /* 使得选中条目整行高亮，而不仅仅是文字部分
+    show-decoration-selected: 1;
+}
+*/
+/* 树形控件的头部 (复用 QTableWidget 头部风格)
+QTreeWidget QHeaderView::section, QTreeView QHeaderView::section {
+    background-color: #e0e0e0;
+    padding: 4px 8px; /* 稍微增加左右内边距
+    border: 1px solid #c0c0c0;
+    border-top: none;
+    border-left: none; /* 避免双重边框
+    color: #2E7D32;    /* 字体颜色与 QMenuBar 保持一致
+    font-weight: bold;
+}*/
+
+/* 每一个条目 (Item) 的基础样式
+QTreeWidget::item, QTreeView::item {
+    padding: 4px; /* 增加舒适度
+    margin: 1px;  /* 条目间微小留白
+    border: none;
+    border-radius: 2px;
+}
+
+/* 鼠标悬停状态
+QTreeWidget::item:hover, QTreeView::item:hover {
+    /* 使用与 QMenuBar 相同的浅绿色悬停背景
+    background-color: #E8F5E9;
+    border: 1px solid #C8E6C9; /* 可选：增加微弱边框强化悬停感
+}
+
+/* 选中状态 (激活时)
+QTreeWidget::item:selected, QTreeView::item:selected {
+    /* 使用主色调 #4CAF50
+    background-color: #4CAF50;
+    color: #fefefe;
+}
+
+/* 选中状态 (失去焦点时，例如点击了其他控件)
+QTreeWidget::item:focus, QTreeView::item:focus {
+    /* 变淡，提示用户当前焦点不在树上，但选中依然存在
+    background-color: #C8E6C9;
+    color: #2E7D32;
+}
+
+/* 分支指示器 (折叠/展开的小三角区域)
+QTreeWidget::branch, QTreeView::branch {
+    background-color: white;
+}
+
+/* 鼠标悬停在分支区域时
+QTreeWidget::branch:hover, QTreeView::branch:hover {
+    background-color: #E8F5E9;
+}*/

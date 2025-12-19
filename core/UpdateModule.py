@@ -92,10 +92,15 @@ class UpdateDialog(QDialog):
             self.remind_button = QPushButton("稍后提醒")
             self.remind_button.clicked.connect(self.remind_later)
             button_layout.addWidget(self.remind_button)
+            self.never_button = QPushButton("永不提醒")
+            self.never_button.setStyleSheet("""QPushButton {color: rgba(0, 0, 0, 172);}""")
+            self.never_button.clicked.connect(self.remind_never)
+            button_layout.addWidget(self.never_button)
 
-        self.close_button = QPushButton("关闭")
-        self.close_button.clicked.connect(self.close)
-        button_layout.addWidget(self.close_button)
+        else:
+            self.close_button = QPushButton("关闭")
+            self.close_button.clicked.connect(self.close)
+            button_layout.addWidget(self.close_button)
 
         layout.addLayout(button_layout)
 
@@ -220,6 +225,21 @@ class UpdateDialog(QDialog):
         """稍后提醒"""
         logging.info("更新会在 1 天后提醒")
         self.reject()
+
+    def remind_never(self):
+        """永不更新"""
+        reply = QMessageBox.question(
+            self,
+            "确认操作",
+            f"是否永远都不检查更新"
+            "注意：此操作不可撤销，无法自动获取最新更新，\n以后只可以选择手动更新",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            self.parent.settings.setValue("should_check", False)
+            self.close()
+            return
 
     def handle_download_error(self, error_message):
         """处理下载错误"""

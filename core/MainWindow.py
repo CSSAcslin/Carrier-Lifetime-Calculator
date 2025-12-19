@@ -14,11 +14,12 @@ from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject, QElapsedTimer, QS
 from astropy.utils.console import ProgressBar
 from fontTools.ttx import process
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import pyqtgraph as pg
 
 from DataProcessor import DataProcessor, MassDataProcessor
 from ImageDisplayWindow import *
 from LifetimeCalculator import LifetimeCalculator, CalculationThread
-from ResultDisplayWidget import ResultDisplayWidget
+from ResultDisplayWidget import *
 from ConsoleUtils import *
 from ExtraDialog import *
 import logging
@@ -26,6 +27,7 @@ from ROIdrawDialog import ROIdrawDialog
 import resources_rc
 from DataManager import *
 from UpdateModule import *
+from PlotGraphWidget import *
 
 
 class MainWindow(QMainWindow):
@@ -57,7 +59,7 @@ class MainWindow(QMainWindow):
         self.current_version = "0.11.1"  # 当前程序版本
         self.repo_owner = "CSSAcslin"  # 程序作者
         self.repo_name = "Carrier-Lifetime-Calculator"  # 程序仓库名
-        self.PAT = ""
+        self.PAT = "Bearer <your PAT>"
 
         # 参数初始化
         self.settings = QSettings()
@@ -328,9 +330,30 @@ class MainWindow(QMainWindow):
         self.result_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.result_dock.setMinimumSize(350, 350)
         self.addDockWidget(Qt.RightDockWidgetArea, self.result_dock)
+
+        self.plot_dock = QDockWidget("数据结果", self)
+        plot_widget = QWidget()
+        plot_layout = QVBoxLayout(plot_widget)
+        inner_layout = QHBoxLayout()
+        self.add_data_btn = QPushButton("添加数据")
+        self.reset_data_btn = QPushButton("清除数据")
+        inner_layout.addWidget(self.add_data_btn)
+        inner_layout.addWidget(self.reset_data_btn)
+        inner_layout.addStretch()
+        plot_layout.addLayout(inner_layout)
+        self.graph_plot = PlotGraphWidget()
+        plot_layout.addWidget(self.graph_plot)
+        self.plot_dock.setWidget(plot_widget)
+        self.plot_dock.setMinimumSize(350, 250)
+        # self.plot_dock.setLayout(plot_layout)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.plot_dock)
+
         self.splitDockWidget(self.param_dock, self.image_dock, Qt.Horizontal)
         self.splitDockWidget(self.image_dock, self.result_dock, Qt.Horizontal)
+        self.splitDockWidget(self.result_dock, self.plot_dock, Qt.Vertical)
         self.resizeDocks([self.image_dock, self.result_dock], [800, 600], Qt.Horizontal)
+        self.resizeDocks([self.result_dock, self.plot_dock], [500, 400], Qt.Vertical)
+
         self.setup_status_bar()
 
         # 设置控制台
@@ -950,11 +973,11 @@ class MainWindow(QMainWindow):
 
         self.console_dock.setWidget(self.console_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
-        self.splitDockWidget(self.result_dock, self.console_dock, Qt.Vertical)
-        self.resizeDocks([self.result_dock, self.console_dock], [550, 300], Qt.Vertical)
+        self.splitDockWidget(self.plot_dock, self.console_dock, Qt.Vertical)
+        self.resizeDocks([self.plot_dock, self.console_dock], [300, 100], Qt.Vertical)
         # 设置控制台特性
-        self.console_dock.setMinimumWidth(400)
-        self.console_dock.setMinimumHeight(200)
+        self.console_dock.setMinimumWidth(200)
+        self.console_dock.setMinimumHeight(50)
         self.console_dock.setFeatures(QDockWidget.DockWidgetMovable |
                                       QDockWidget.DockWidgetFloatable |
                                       QDockWidget.DockWidgetClosable)
@@ -1040,13 +1063,13 @@ class MainWindow(QMainWindow):
         # 检查设置，避免过于频繁检查
         self.settings.beginGroup("sys")
         last_check = self.settings.value("last_update_check")
+        should_check = self.settings.value("should_check", True, type=bool)
         self.settings.endGroup()
 
         # 如果从未检查过或超过24小时，则检查更新
         import datetime
         now = datetime.datetime.now()
 
-        should_check = True
         if last_check:
             last_check_date = datetime.datetime.fromisoformat(last_check)
             if (now - last_check_date).days < 1:  # 1天内检查过
@@ -1108,8 +1131,12 @@ class MainWindow(QMainWindow):
             self.update_status("准备就绪",'idle')
 
     """线程与信号连接"""
+    def import_thread_open(self):
+        """数据导入线程开启（.11.1版本加入）"""
+        pass
+
     def data_thread_open(self):
-        """数据线程"""
+        """数据操作线程"""
         self.data_thread = QThread()
         self.dat_thread = DataManager()
         self.dat_thread.moveToThread(self.data_thread)
@@ -1212,6 +1239,8 @@ class MainWindow(QMainWindow):
         self.command_processor.clear_result_requested.connect(self.clear_result)
         # 结果区域信号
         self.result_display.tab_type_changed.connect(self._handle_result_tab)
+        self.add_data_btn.clicked.connect(self.data_plot_add)
+        self.reset_data_btn.clicked.connect(self.data_plot_clear)
 
     def canvas_signal_connect(self):
         self.roi_pick.clear()
@@ -2231,6 +2260,7 @@ class MainWindow(QMainWindow):
         self.tDFT_signal.emit(aim_data)
         return True
 
+    """结果处理"""
     def data_pick(self,need_all = True):
         """数据选择代码"""
         dialog = DataViewAndSelectPop(datadict=self.get_data_all(),
@@ -2405,6 +2435,17 @@ class MainWindow(QMainWindow):
         self.roi_processed_signal.emit(draw_data, bool_mask, 1, True,
                                        False, 0)
         logging.info(f"像素roi已快速选取，数据名{draw_data.name}")
+
+    def data_plot_add(self):
+        """选取数据送入结果显示（graphplot驱动）"""
+        self.data_plot_selector = DataPlotSelectDialog(self)
+        # 连接信号：当数据管理器中的“导出绘图”被点击时
+        self.data_plot_selector.sig_plot_request.connect(self.graph_plot.plot_data)
+        self.data_plot_selector.refresh_data()
+        self.data_plot_selector.show()
+    def data_plot_clear(self):
+        """plot清空"""
+        self.graph_plot.clear_all()
 
     '''其他功能'''
     def is_thread_active(self, thread_name: str) -> bool:
@@ -2974,12 +3015,80 @@ QTabBar::tab:hover {
 QTabBar::tab:!selected {
     margin-top: 4px; 
 }
+/* ========== QTreeWidget / QTreeView 样式 ========== */
+QTreeWidget, QTreeView {
+    background-color: white;
+    /* 边框颜色与 QDialog/QDockWidget 保持一致 */
+    border: 2px solid #C8E6C9; 
+    border-radius: 4px;
+    outline: 0; /* 去除选中时的虚线框 */
+    padding: 2px;
+    /* 使得选中条目整行高亮，而不仅仅是文字部分 */
+    show-decoration-selected: 1; 
+}
+
+/* 树形控件的头部 (复用 QTableWidget 头部风格) */
+QTreeWidget QHeaderView::section, QTreeView QHeaderView::section {
+    background-color: #e0e0e0;
+    padding: 4px 8px; /* 稍微增加左右内边距 */
+    border: 1px solid #c0c0c0;
+    border-top: none;
+    border-left: none; /* 避免双重边框 */
+    color: #2E7D32;    /* 字体颜色与 QMenuBar 保持一致 */
+    font-weight: bold;
+}
+
+/* 每一个条目 (Item) 的基础样式 */
+QTreeWidget::item, QTreeView::item {
+    padding: 4px; /* 增加舒适度 */
+    margin: 1px;  /* 条目间微小留白 */
+    border: none;
+    border-radius: 2px;
+}
+
+/* 鼠标悬停状态 */
+QTreeWidget::item:hover, QTreeView::item:hover {
+    /* 使用与 QMenuBar 相同的浅绿色悬停背景 */
+    background-color: #E8F5E9; 
+    border: 1px solid #C8E6C9; /* 可选：增加微弱边框强化悬停感 */
+}
+
+/* 选中状态 (激活时) */
+QTreeWidget::item:selected, QTreeView::item:selected {
+    /* 使用主色调 #4CAF50 */
+    background-color: #4CAF50;
+    color: white;
+}
+
+/* 选中状态 (失去焦点时，例如点击了其他控件) */
+QTreeWidget::item:selected:!active, QTreeView::item:selected:!active {
+    /* 变淡，提示用户当前焦点不在树上，但选中依然存在 */
+    background-color: #C8E6C9;
+    color: #2E7D32;
+}
+
+/* 分支指示器 (折叠/展开的小三角区域) */
+QTreeWidget::branch, QTreeView::branch {
+    background: transparent;
+}
+
+/* 鼠标悬停在分支区域时 */
+QTreeWidget::branch:hover, QTreeView::branch:hover {
+    background-color: #E8F5E9;
+}
     """
+
+
+    def read_qss_file(qss_file_name):
+        with open(qss_file_name, 'r', encoding='UTF-8') as file:
+            return file.read()
     # 应用全局样式
     app.setStyle('Fusion')
-    app.setStyleSheet(QSS1)
+    app.setStyleSheet(read_qss_file("style.qss"))
     QCoreApplication.setOrganizationName("CSSA")
     QCoreApplication.setApplicationName("LifeCalor")
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     # app.setFont(QFont("Noto Sans"))
     app.setWindowIcon(QIcon(':/LifeCalor.ico'))
     window = MainWindow()
