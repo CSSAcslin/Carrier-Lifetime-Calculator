@@ -373,7 +373,7 @@ class CalculationThread(QObject):
 
 
     def __init__(self):
-        super(CalculationThread,self).__init__()
+        super().__init__()
         logging.info('计算线程已载入')
         self._is_calculating = False
 

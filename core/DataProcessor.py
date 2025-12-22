@@ -12,7 +12,6 @@ import h5py
 from PIL import Image
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
 from PyQt5.QtWidgets import QApplication
-from skimage.exposure import equalize_adapthist
 from typing import List, Union, Optional
 from scipy import signal
 from scipy.optimize import curve_fit
@@ -22,45 +21,8 @@ import DataManager
 
 class DataProcessor:
     """本类仅包含导入数据时的数据处理"""
-    def __init__(self,path,normalize_type='linear',**kwargs):
-        self.path = path
-        self.normalize_type = normalize_type
-        self.tiff_type = 'np'
-
-    """tiff"""
-    def load_and_sort_tiff(self, current_group):
-        # 因为tiff存在两种格式，n,p
-        files = []
-        find = self.path + '/*.tiff'
-        if current_group != '不区分':
-            self.tiff_type = current_group
-            for f in glob.glob(find):
-                match = re.search(r'(\d+)([a-zA-Z]+)\.tiff', f)
-                if match and match.group(2) == current_group:
-                    files.append((int(match.group(1)), f))
-            if not files: # 当找不到任何tiff时，使其能够寻找tif结尾的文件
-                find_tif = self.path + '/*.tif'
-                for f in glob.glob(find_tif):
-                    match = re.search(r'(\d+)([a-zA-Z]+)\.tif', f)
-                    if match and match.group(2) == current_group:
-                        files.append((int(match.group(1)), f))
-        if current_group == '不区分':
-            self.tiff_type = 'np'
-            find_tif =  self.path + '/*.tiff'
-            for f in glob.glob(find_tif):
-                # 提取数字并排序
-                num_groups = re.findall(r'\d+', f)
-                last_num = int(num_groups[-1]) if num_groups else 0
-                files.append((last_num, f))
-            if not files:  # 当找不到任何tiff时，使其能够寻找tif结尾的文件
-                find_tif = self.path + '/*.tif'
-                for f in glob.glob(find_tif):
-                    # 提取数字并排序
-                    num_groups = re.findall(r'\d+', f)
-                    last_num = int(num_groups[-1]) if num_groups else 0
-                    files.append((last_num, f))
-
-        return sorted(files, key=lambda x: x[0])
+    def __init__(self):
+        pass
 
     @staticmethod
     def process_data(data, max_all, min_all, vmean_array):
@@ -85,43 +47,10 @@ class DataProcessor:
             phy_min = min_all
         return process_show, data_type, max_mean, phy_max, phy_min
 
-    def process_tiff(self, files,name):
-        '''初步数据处理'''
-        images_original = []
-        vmax_array = []
-        vmin_array = []
-        vmean_array = []
-        for _, fpath in files:
-            img_data = tiff.imread(fpath)
-            vmax_array.append(np.max(img_data))
-            vmin_array.append(np.min(img_data))
-            vmean_array.append(np.mean(img_data))
-            images_original.append(img_data)
-        #   以最值为边界
-        vmax = np.max(vmax_array)
-        vmin = np.min(vmin_array)
-
-        images_show, data_type, max_mean, phy_max, phy_min = self.process_data(images_original, vmax, vmin, vmean_array)
-
-        return DataManager.Data(np.stack(images_original, axis=0),
-                                np.arange(len(images_show)),
-                                'tiff',
-                                np.stack(images_show, axis=0),
-                                parameters={
-                                    'vmax_array':vmax_array,
-                                    'vmin_array':vmin_array,
-                                    'data_type':data_type,
-                                },
-                                name=name)
-
     def amend_data(self, data, mask = None):
         """函数修改方法
         输入修改的源数据，导出修改的数据包"""
         data_origin = data
-        # if isinstance(data, dict): # 加roi来的
-        #     data_origin = data.data_origin
-        # elif isinstance(data, np.ndarray): # 坏点修复来的
-        #     data_origin = data
         if mask is not None and mask.shape == data.framesize:
             data_mask = [ ]
             for every_data in data_origin:
@@ -196,270 +125,161 @@ class DataProcessor:
 
         return fixed_data
 
-    """sif"""
-    def load_and_sort_sif(self):
-        time_data = {}  # 存储时间点数据
-        background = None  # 存储背景数据
-
-        for filename in os.listdir(self.path):
-            if filename.endswith('.sif'):
-                filepath = os.path.join(self.path, filename)
-                name = os.path.splitext(filename)[0]  # 去除扩展名
-
-                # 检查是否是背景文件（文件名包含 "no"）
-                if name.lower() == 'no':
-                    background = sif_parser.np_open(filepath)[0][0]
-                    continue
-
-                # 否则尝试提取时间点（文件名中的数字）
-                match = re.search(r'(\d+)', name)
-                if match:
-                    time = int(match.group(1))
-                    data = sif_parser.np_open(filepath)[0][0]
-                    time_data[time] = data
-            else: return False
-
-        # 检查是否找到背景
-        if background is None:
-            raise logging.error("未找到背景文件（文件名应包含 'no'）")
-
-        # 按时间排序
-        self.sif_sorted_times = sorted(time_data.keys())
-
-        # 创建三维数组（时间, 高度, 宽度）并减去背景
-        sample_data = next(iter(time_data.values()))
-        self.sif_data_original = np.zeros((len(self.sif_sorted_times), *sample_data.shape), dtype=np.float32)
-
-        for i, time in enumerate(self.sif_sorted_times):
-            self.sif_data_original[i] = (time_data[time] - background)/background
-
-        return True
-
-    def process_sif(self,name):
-        if not hasattr(self,'sif_data_original'):
-            return logging.error('无有效数据')
-        if not hasattr(self,'sif_sorted_times'):
-            return logging.error('时间无效')
-
-        normalized = self.normalize_data(self.sif_data_original,self.normalize_type)
-        return DataManager.Data(np.stack(self.sif_data_original , axis=0),
-                                np.stack(self.sif_sorted_times,axis=0),
-                                'sif',
-                                np.stack(normalized, axis=0),
-                                name=name,
-                                parameters={
-                                    'data_type': 'sif',
-                                }
-                                )
-
-    @staticmethod
-    def normalize_data(
-            data: np.ndarray,
-            method: str = 'linear',
-            low: float = 10,
-            high: float = 100,
-            k: Optional[float] = None,
-            clip_limit: float = 0.03,
-            eps: float = 1e-6
-    ) -> np.ndarray:
-        """
-        多种归一化方法可选
-        Parameters:
-            method:
-                'linear'    - 线性归一化 (min-max)
-                'sigmoid'  - Sigmoid归一化
-                'percentile'- 百分位裁剪归一化 (默认)
-                'log'      - 对数归一化
-                'clahe'    - 自适应直方图均衡化
-            low/high: 百分位裁剪的上下界（method='percentile'时生效）
-            k: Sigmoid的斜率系数（method='sigmoid'时生效，None则自动计算）
-            clip_limit: CLAHE的裁剪限制（method='clahe'时生效）
-            eps: 对数归一化的微小增量（method='log'时生效）
-        """
-        if method == 'linear':
-            # 线性归一化
-            return (data - np.min(data)) / (np.max(data) - np.min(data))
-
-        elif method == 'sigmoid':
-            # Sigmoid归一化
-            mu = np.median(data)
-            std = np.std(data)
-            k = 10 / std if k is None else k
-            centered = data - mu
-            return 1 / (1 + np.exp(-k * centered))
-
-        elif method == 'percentile':
-            # 百分位裁剪归一化
-            plow = np.percentile(data, low)
-            phigh = np.percentile(data, high)
-            clipped = np.clip(data, plow, phigh)
-            return (clipped - plow) / (phigh - plow)
-
-        elif method == 'log':
-            # 对数归一化
-            logged = np.log(data + eps)
-            return (logged - np.min(logged)) / (np.max(logged) - np.min(logged))
-
-        elif method == 'clahe':
-            # CLAHE自适应直方图均衡化
-            return equalize_adapthist(data, clip_limit=clip_limit)
-
 
 
 class MassDataProcessor(QObject):
     """大型数据（EM-iSCAT）处理的线程解决"""
-    mass_finished = pyqtSignal(DataManager.Data) # 数据读取
     processing_progress_signal = pyqtSignal(int, int) # 进度槽
     processed_result = pyqtSignal(object)
 
     def __init__(self):
-        super(MassDataProcessor,self).__init__()
+        super().__init__()
         logging.info("大数据处理线程已载入")
         self.abortion = False
 
     """avi"""
-    @pyqtSlot(str,int)
-    def load_avi(self,path,fps):
-        """
-        处理AVI视频文件，返回包含视频数据和元信息的字典
-        返回字典:
-            - data_origin: 原始视频帧数据 (n_frames, height, width)
-            - images: 归一化后的视频帧数据
-            - time_points: 时间点数组
-            - data_type: 数据类型标识 ('video')
-            - boundary: 最大最小值边界
-            - fps: 视频帧率
-            - frame_size: 视频帧尺寸 (width, height)
-            - duration: 视频时长(秒)
-        """
-        file_name = os.path.basename(path)
-        # 读取视频文件
-        cap = cv2.VideoCapture(path)
-        if not cap.isOpened():
-            raise IOError(f"无法打开视频文件: {path}")
-
-        # 获取视频元信息
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        # codec = int(cap.get(cv2.CAP_PROP_FOURCC))
-        # codec_str = "".join([chr((codec >> 8 * i) & 0xFF) for i in range(4)])
-        duration = frame_count / fps if fps > 0 else 0
-
-        # 读取所有帧
-        frames = []
-        loading_bar_value = 0  # 进度条
-        total_l = frame_count+1
-        while not self.abortion:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            # 转换为灰度图(如果原始是彩色)
-            if len(frame.shape) == 3:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            frames.append(frame)
-            loading_bar_value += 1
-            self.processing_progress_signal.emit(loading_bar_value, total_l)
-
-        cap.release()
-
-        if not frames:
-            raise ValueError("视频中没有读取到有效帧")
-
-        # 转换为numpy数组
-        frames_array = np.stack(frames, axis=0)
-
-        # 归一化处理
-        normalized_frames = self.normalize_data(frames_array)
-
-        self.processing_progress_signal.emit(loading_bar_value+1, total_l)
-        avi_data = DataManager.Data(frames_array,
-                                    np.arange(len(frames)) / fps if fps > 0 else np.arange(len(frames)),
-                                    'avi',
-                                    normalized_frames,
-                                    parameters={'fps': fps,
-                                                'frame_size': (width, height),
-                                                'duration': duration,},
-                                    name=file_name)
-
-        self.mass_finished.emit(avi_data)
-
-    """TIF"""
-    @pyqtSlot(str,int)
-    def load_tiff(self,path,fps):
-        try:
-            tiff_files = []
-            file_name = os.path.basename(path)
-            for f in os.listdir(path):
-                if f.lower().endswith(('.tif', '.tiff')):
-                    # 提取数字并排序
-                    num_groups = re.findall(r'\d+', f)
-                    last_num = int(num_groups[-1]) if num_groups else 0
-                    tiff_files.append((last_num, f))
-
-            # 按最后一组数字排序
-            tiff_files.sort(key=lambda x: x[0])
-            frame_numbers, file_names = zip(*tiff_files) if tiff_files else ([], [])
-
-            logging.info(f"找到{len(file_names)}个TIFF文件")
-
-            # 检查数字连续性（使用已排序的frame_numbers）
-            unique_nums = sorted(set(frame_numbers))
-            is_continuous = (
-                    len(unique_nums) == len(frame_numbers) and
-                    (unique_nums[-1] - unique_nums[0] + 1) == len(unique_nums)
-            )
-
-            # 读取图像数据
-            frames = []
-            total_files = len(file_names)
-            self.processing_progress_signal.emit(0, total_files)
-
-            for i, filename in enumerate(file_names):
-                if self.abortion:
-                    break
-
-                img_path = os.path.join(path, filename)
-                img = tiff.imread(img_path)
-
-                if img is None:
-                    logging.warning(f"无法读取文件: {filename}")
-                    continue
-
-                frames.append(img)
-                self.processing_progress_signal.emit(i + 1, total_files)
-
-            if not frames:
-                raise ValueError("没有有效图像数据被读取")
-
-            # 转换为numpy数组
-            frames_array = np.stack(frames, axis=0)
-            height, width = frames[0].shape
-
-            # 计算统计信息
-            normalized_frames = self.normalize_data(frames_array)
-
-            # 生成时间点
-            if is_continuous:
-                time_points = (np.array(frame_numbers) - frame_numbers[0]) / fps
-                logging.info("使用文件名数字作为时间序列")
-            else:
-                time_points = np.arange(len(frames)) / fps
-                logging.info("使用默认顺序作为时间序列")
-
-            tiff_data = DataManager.Data(frames_array,
-                                         time_points,
-                                         'tiff',
-                                         normalized_frames,
-                                         parameters={'fps':fps,
-                                                    'frame_size': (width, height),
-                                                    'original_files': tiff_files},
-                                         name = file_name)
-            self.mass_finished.emit(tiff_data)
-
-        except Exception as e:
-            logging.error(f"处理TIFF序列时出错: {str(e)}")
-            self.processing_progress_signal.emit(1, 1)
+    # @pyqtSlot(str,int)
+    # def load_avi(self,path,fps):
+    #     """
+    #     处理AVI视频文件，返回包含视频数据和元信息的字典
+    #     返回字典:
+    #         - data_origin: 原始视频帧数据 (n_frames, height, width)
+    #         - images: 归一化后的视频帧数据
+    #         - time_points: 时间点数组
+    #         - data_type: 数据类型标识 ('video')
+    #         - boundary: 最大最小值边界
+    #         - fps: 视频帧率
+    #         - frame_size: 视频帧尺寸 (width, height)
+    #         - duration: 视频时长(秒)
+    #     """
+    #     file_name = os.path.basename(path)
+    #     # 读取视频文件
+    #     cap = cv2.VideoCapture(path)
+    #     if not cap.isOpened():
+    #         raise IOError(f"无法打开视频文件: {path}")
+    #
+    #     # 获取视频元信息
+    #     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    #     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    #     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    #     # codec = int(cap.get(cv2.CAP_PROP_FOURCC))
+    #     # codec_str = "".join([chr((codec >> 8 * i) & 0xFF) for i in range(4)])
+    #     duration = frame_count / fps if fps > 0 else 0
+    #
+    #     # 读取所有帧
+    #     frames = []
+    #     loading_bar_value = 0  # 进度条
+    #     total_l = frame_count+1
+    #     while not self.abortion:
+    #         ret, frame = cap.read()
+    #         if not ret:
+    #             break
+    #         # 转换为灰度图(如果原始是彩色)
+    #         if len(frame.shape) == 3:
+    #             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    #         frames.append(frame)
+    #         loading_bar_value += 1
+    #         self.processing_progress_signal.emit(loading_bar_value, total_l)
+    #
+    #     cap.release()
+    #
+    #     if not frames:
+    #         raise ValueError("视频中没有读取到有效帧")
+    #
+    #     # 转换为numpy数组
+    #     frames_array = np.stack(frames, axis=0)
+    #
+    #     # 归一化处理
+    #     normalized_frames = self.normalize_data(frames_array)
+    #
+    #     self.processing_progress_signal.emit(loading_bar_value+1, total_l)
+    #     avi_data = DataManager.Data(frames_array,
+    #                                 np.arange(len(frames)) / fps if fps > 0 else np.arange(len(frames)),
+    #                                 'avi',
+    #                                 normalized_frames,
+    #                                 parameters={'fps': fps,
+    #                                             'frame_size': (width, height),
+    #                                             'duration': duration,},
+    #                                 name=file_name)
+    #
+    #     self.mass_finished.emit(avi_data)
+    #
+    # """TIF"""
+    # @pyqtSlot(str,int)
+    # def load_tiff(self,path,fps):
+    #     try:
+    #         tiff_files = []
+    #         file_name = os.path.basename(path)
+    #         for f in os.listdir(path):
+    #             if f.lower().endswith(('.tif', '.tiff')):
+    #                 # 提取数字并排序
+    #                 num_groups = re.findall(r'\d+', f)
+    #                 last_num = int(num_groups[-1]) if num_groups else 0
+    #                 tiff_files.append((last_num, f))
+    #
+    #         # 按最后一组数字排序
+    #         tiff_files.sort(key=lambda x: x[0])
+    #         frame_numbers, file_names = zip(*tiff_files) if tiff_files else ([], [])
+    #
+    #         logging.info(f"找到{len(file_names)}个TIFF文件")
+    #
+    #         # 检查数字连续性（使用已排序的frame_numbers）
+    #         unique_nums = sorted(set(frame_numbers))
+    #         is_continuous = (
+    #                 len(unique_nums) == len(frame_numbers) and
+    #                 (unique_nums[-1] - unique_nums[0] + 1) == len(unique_nums)
+    #         )
+    #
+    #         # 读取图像数据
+    #         frames = []
+    #         total_files = len(file_names)
+    #         self.processing_progress_signal.emit(0, total_files)
+    #
+    #         for i, filename in enumerate(file_names):
+    #             if self.abortion:
+    #                 break
+    #
+    #             img_path = os.path.join(path, filename)
+    #             img = tiff.imread(img_path)
+    #
+    #             if img is None:
+    #                 logging.warning(f"无法读取文件: {filename}")
+    #                 continue
+    #
+    #             frames.append(img)
+    #             self.processing_progress_signal.emit(i + 1, total_files)
+    #
+    #         if not frames:
+    #             raise ValueError("没有有效图像数据被读取")
+    #
+    #         # 转换为numpy数组
+    #         frames_array = np.stack(frames, axis=0)
+    #         height, width = frames[0].shape
+    #
+    #         # 计算统计信息
+    #         normalized_frames = self.normalize_data(frames_array)
+    #
+    #         # 生成时间点
+    #         if is_continuous:
+    #             time_points = (np.array(frame_numbers) - frame_numbers[0]) / fps
+    #             logging.info("使用文件名数字作为时间序列")
+    #         else:
+    #             time_points = np.arange(len(frames)) / fps
+    #             logging.info("使用默认顺序作为时间序列")
+    #
+    #         tiff_data = DataManager.Data(frames_array,
+    #                                      time_points,
+    #                                      'tiff',
+    #                                      normalized_frames,
+    #                                      parameters={'fps':fps,
+    #                                                 'frame_size': (width, height),
+    #                                                 'original_files': tiff_files},
+    #                                      name = file_name)
+    #         self.mass_finished.emit(tiff_data)
+    #
+    #     except Exception as e:
+    #         logging.error(f"处理TIFF序列时出错: {str(e)}")
+    #         self.processing_progress_signal.emit(1, 1)
 
     @pyqtSlot(DataManager.Data,int,bool)
     def pre_process(self,data,bg_num = 360,unfold=True):
@@ -816,8 +636,8 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type':"ROI_cwt",'error':str(e)})
             return False
 
-    def normalize_data(self, data):
-        return (data - np.min(data)) / (np.max(data) - np.min(data))
+    # def normalize_data(self, data):
+    #     return (data - np.min(data)) / (np.max(data) - np.min(data))
 
     @pyqtSlot(object)
     def accumulate_amplitude(self,data):

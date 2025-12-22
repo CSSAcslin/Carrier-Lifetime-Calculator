@@ -387,13 +387,25 @@ QTreeWidget::item:hover {
 }
 
 QTreeWidget::item:selected {
-    background-color: #388E3C;
+    background-color: #76B679;
     color: white;
     border-radius: 3px;
 }
 
 QTreeWidget::item:selected:!active {
     background-color: #76B679;
+}
+
+/* 行间分隔线 */
+QTreeView::item:!selected:alternate {
+    background-color: #F9F9F9;
+}
+
+/* 焦点项样式 */
+QTreeWidget::item:focus {
+    border: 1px solid #4CAF50;
+    border-radius: 3px;
+    background-color: #388E3C;
 }
 
 /* 分支样式 */
@@ -465,17 +477,6 @@ QTreeWidget QScrollBar::sub-line:vertical {
     height: 0px;
 }
 
-/* 行间分隔线 */
-QTreeView::item:!selected:alternate {
-    background-color: #F9F9F9;
-}
-
-/* 焦点项样式 */
-QTreeWidget::item:focus {
-    border: 1px solid #4CAF50;
-    border-radius: 3px;
-    background-color: #F1F8E9;
-}
 
 
 /* /* ========== QTreeWidget / QTreeView 样式 ==========

@@ -14,8 +14,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject, QElapsedTimer, QS
 from astropy.utils.console import ProgressBar
 from fontTools.ttx import process
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-import pyqtgraph as pg
 
+from ImportManager import *
 from DataProcessor import DataProcessor, MassDataProcessor
 from ImageDisplayWindow import *
 from LifetimeCalculator import LifetimeCalculator, CalculationThread
@@ -33,14 +33,13 @@ from PlotGraphWidget import *
 class MainWindow(QMainWindow):
     """主窗口"""
     # 线程激活信号
+    data_import_signal = pyqtSignal(str, str, dict)
     # cal
     start_reg_cal_signal = pyqtSignal(object, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(object, float, str, str, int, str, int)
     start_heat_cal_signal = pyqtSignal(object, float, str, str, int, str, int)
     start_dif_cal_signal = pyqtSignal(object, float, float, float, str)
     # mass
-    load_avi_EM_signal = pyqtSignal(str,int)
-    load_tif_EM_signal = pyqtSignal(str,int)
     pre_process_signal = pyqtSignal(Data,int,bool)
     stft_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, int, int, str)
     stft_python_signal = pyqtSignal(ProcessedData,object, int, int, int, int, int, str)
@@ -66,8 +65,8 @@ class MainWindow(QMainWindow):
         self.data = None
         self.processed_data = None
         self.time_points = None
-        self.time_unit = 1.0
-        self.space_unit = 1.0
+        self.time_step = 1.0
+        self.space_step = 1.0
         self.bool_mask = None
         self.idx = None
         self.vector_array = None
@@ -94,17 +93,21 @@ class MainWindow(QMainWindow):
         self.signal_connect()
         # 更新检查
         self.auto_update_check()
-        # 线程开启
+        # 线程开启（默认不关闭的线程
+        self.import_thread_open()
+        self.import_thread.start()
         self.data_thread_open()
-        self.data_thread.start() # 本线程默认不关闭
+        self.data_thread.start()
 
     """参数配置相关功能"""
     def init_params(self):
         """初始化参数库"""
         # 基础参数
-        self.basic_params = self._load_param_group('main', {
+        self.basic_params = self._load_param_group('basic', {
             'time_step': 1.000,
             'space_step': 1.000,
+            'time_unit': 'ps',
+            'space_unit': 'μm',
             'region_size': 5,
             'bg_nums': 300,
         })
@@ -171,7 +174,7 @@ class MainWindow(QMainWindow):
         self.save_params()
         self.save_timer = QTimer()
         self.save_timer.timeout.connect(self.save_params)
-        self.save_timer.start(1000)  # 每10秒自动保存一次
+        self.save_timer.start(30000)  # 每10秒自动保存一次
 
     def _load_param_group(self, group_name, defaults):
         """加载参数组，如果没有则使用默认值"""
@@ -210,7 +213,7 @@ class MainWindow(QMainWindow):
 
     def save_params(self):
         """保存所有参数到QSettings"""
-        # 保存主参数
+        # 保存基本参数
         self._save_param_group('basic', self.basic_params)
 
         # 保存绘图参数
@@ -239,8 +242,8 @@ class MainWindow(QMainWindow):
 
     def update_param(self, group_name, key, value):
         """更新单个参数"""
-        if group_name == 'main':
-            self.main_params[key] = value
+        if group_name == 'basic':
+            self.basic_params[key] = value
         elif group_name == 'plot':
             self.plot_params[key] = value
         elif group_name == 'cal_set':
@@ -260,7 +263,7 @@ class MainWindow(QMainWindow):
     def get_param(self, group_name, key, default=None):
         """获取参数值"""
         param_groups = {
-            'main': self.main_params,
+            'basic': self.basic_params,
             'plot': self.plot_params,
             'cal_set': self.cal_set_params,
             'EM': self.EM_params,
@@ -470,7 +473,8 @@ class MainWindow(QMainWindow):
         fps_layout.addWidget(QLabel("视频帧率:"))
         self.fps_input = QSpinBox()
         self.fps_input.setRange(1,100000)
-        self.fps_input.setValue(300)
+        self.fps_input.setValue(self.EM_params['EM_fps'])
+        self.fps_input.valueChanged.connect(lambda: self.update_param('EM','EM_fps',self.fps_input.value()))
         fps_layout.addWidget(self.fps_input)
         v_layout.addLayout(fps_layout)
         v_layout.addLayout(type_choose)
@@ -513,14 +517,15 @@ class MainWindow(QMainWindow):
         self.time_step_input.setMaximum(10000)
         self.time_step_input.setValue(self.basic_params['time_step'])
         self.time_step_input.setDecimals(3)
+        self.time_step_input.valueChanged.connect(lambda: self.update_param('basic','time_step',self.time_step_input.value()))
         time_step_layout.addWidget(self.time_step_input)
         self.time_unit_combo = QComboBox()
         self.time_unit_combo.addItems(["ms", "μs", "ns", "ps", "fs"])
-        self.time_unit_combo.setCurrentIndex(3)
+        self.time_unit_combo.setCurrentText(self.basic_params['time_unit'])
+        self.time_unit_combo.currentTextChanged.connect(lambda: self.update_param('basic','time_unit',self.time_unit_combo.currentText()))
         time_step_layout.addWidget(self.time_unit_combo)
         time_step_layout.addWidget(QLabel("/帧"))
         left_layout.addLayout(time_step_layout)
-        # left_layout.addWidget(QLabel("     (最小分辨率：.001 fs)"))
         left_layout.addSpacing(10)
         space_step_layout = QHBoxLayout()
         space_step_layout.addWidget(QLabel("空间单位:"))
@@ -528,14 +533,15 @@ class MainWindow(QMainWindow):
         self.space_step_input.setMinimum(0.001)
         self.space_step_input.setValue(self.basic_params['space_step'])
         self.space_step_input.setDecimals(3)
+        self.space_step_input.valueChanged.connect(lambda: self.update_param('basic','space_step',self.space_step_input.value()))
         space_step_layout.addWidget(self.space_step_input)
         self.space_unit_combo = QComboBox()
         self.space_unit_combo.addItems(["mm", "μm", "nm"])
-        self.space_unit_combo.setCurrentIndex(1)
+        self.space_unit_combo.setCurrentText(self.basic_params['space_unit'])
+        self.space_unit_combo.currentTextChanged.connect(lambda: self.update_param('basic','space_unit',self.space_unit_combo.currentText()))
         space_step_layout.addWidget(self.space_unit_combo)
         space_step_layout.addWidget(QLabel("/像素"))
         left_layout.addLayout(space_step_layout)
-        # left_layout.addWidget(QLabel('     (最小分辨率：.001 nm)'))
         self.parameter_panel.setLayout(left_layout)
 
     # 分析总体设置
@@ -604,6 +610,7 @@ class MainWindow(QMainWindow):
         self.region_size_input.setMinimum(1)
         self.region_size_input.setMaximum(50)
         self.region_size_input.setValue(self.basic_params['region_size'])
+        self.region_size_input.valueChanged.connect(lambda: self.update_param('basic','region_size',self.region_size_input.value()))
         self.analyze_region_btn = QPushButton("分析选定区域")
             # 区域坐标输入
         self.region_x_input = QSpinBox()
@@ -670,6 +677,7 @@ class MainWindow(QMainWindow):
         self.bg_nums_input.setMinimum(1)
         self.bg_nums_input.setMaximum(9999)
         self.bg_nums_input.setValue(self.basic_params['bg_nums'])
+        self.bg_nums_input.valueChanged.connect(lambda: self.update_param('basic','bg_nums',self.bg_nums_input.value()))
         preprocess_set_layout.addWidget(self.bg_nums_input)
         self.preprocess_data_btn = QPushButton("数据预处理")
         # preprocess_set_layout2 = QHBoxLayout()
@@ -1133,10 +1141,18 @@ class MainWindow(QMainWindow):
     """线程与信号连接"""
     def import_thread_open(self):
         """数据导入线程开启（.11.1版本加入）"""
-        pass
+        self.import_thread = QThread()
+        self.imp_thread = ImportManager()
+        self.imp_thread.moveToThread(self.import_thread)
+        # 信号连接
+        self.data_import_signal.connect(self.imp_thread.import_dispatch)
+        self.imp_thread.update_status.connect(self.update_status)
+        self.imp_thread.update_QMessageBox.connect(self.update_QMessageBox)
+        self.imp_thread.processing_progress_signal.connect(self.update_progress)
+        self.imp_thread.import_finished.connect(self.import_result)
 
     def data_thread_open(self):
-        """数据操作线程"""
+        """数据操作线程（.10.10版本加入 ）"""
         self.data_thread = QThread()
         self.dat_thread = DataManager()
         self.dat_thread.moveToThread(self.data_thread)
@@ -1172,11 +1188,8 @@ class MainWindow(QMainWindow):
         self.avi_thread = QThread()
         self.mass_data_processor = MassDataProcessor()
         self.mass_data_processor.moveToThread(self.avi_thread)
-        self.mass_data_processor.mass_finished.connect(self.loaded_EM)
         self.mass_data_processor.processing_progress_signal.connect(self.update_progress)
         self.mass_data_processor.processed_result.connect(self.processed_result)
-        self.load_avi_EM_signal.connect(self.mass_data_processor.load_avi)
-        self.load_tif_EM_signal.connect(self.mass_data_processor.load_tiff)
         self.pre_process_signal.connect(self.mass_data_processor.pre_process)
         self.stft_python_signal.connect(self.mass_data_processor.python_stft)
         self.stft_quality_signal.connect(self.mass_data_processor.quality_stft)
@@ -1303,64 +1316,28 @@ class MainWindow(QMainWindow):
 
     def load_tiff_folder(self):
         """加载TIFF文件夹(FS-iSCAT)"""
-        self.time_unit = float(self.time_step_input.value())
-        folder_path = QFileDialog.getExistingDirectory(self, "选择TIFF图像文件夹")
-        self.data_processor = DataProcessor(folder_path)
+        self.time_step = float(self.time_step_input.value())
+        folder_path = QFileDialog.getExistingDirectory(self, "选择TIFF图像文件夹",self.settings.value("last_folder", ""))
         if folder_path:
             logging.info(folder_path)
-            folder_name = os.path.basename(folder_path)
             self.update_status("已加载TIFF文件夹",'idle')
             current_group = self.group_selector.currentText()
+            self.data_import_signal.emit('tif_series', folder_path, {'current_group':current_group})
 
-            # 读取文件夹中的所有tiff文件
-            tiff_files = self.data_processor.load_and_sort_tiff(current_group)
-
-            if not tiff_files or tiff_files == []:
-                self.update_status("文件夹中没有目标TIFF文件",'warning')
-                QMessageBox.warning(self,"数据导入","文件夹中没有目标TIFF文件")
-                return
-
-            # 读取所有图像
-            self.data = self.data_processor.process_tiff(tiff_files,folder_name)
-
-            if not self.data or (self.data.format_import != 'tif' and self.data.format_import != 'tiff'):
-                self.update_status("无法读取TIFF文件",'warning')
-                return
-
-            logging.info(f'成功加载TIFF数据({folder_name})')
-            # 设置时间滑块
-            self.load_image(origin_data=self.data)
         elif not folder_path:
             self.update_status("文件夹选择已取消", 'idle')
             return
 
     def load_sif_folder(self):
         '''加载SIF文件夹'''
-        folder_path = QFileDialog.getExistingDirectory(self, "选择SIF图像文件夹")
-        self.data_processor = DataProcessor(folder_path,self.method_combo.currentText())
+        folder_path = QFileDialog.getExistingDirectory(self, "选择SIF图像文件夹",self.settings.value("last_folder", ""))
         if folder_path:
             logging.info(folder_path)
             self.update_status("已加载SIF文件夹",'idle')
-            folder_name = os.path.basename(folder_path)
 
             # 读取文件夹中的所有sif文件
-            check_sif = self.data_processor.load_and_sort_sif()
+            self.data_import_signal.emit('sif_folder',folder_path,{'normalize_type' : self.method_combo.currentText()})
 
-            if not check_sif:
-                self.update_status("文件夹中没有目标SIF文件",'warning')
-                QMessageBox.warning(self,'数据导入',"文件夹中没有目标SIF文件,请确认选择的文件格式是否匹配")
-                return
-
-            # 读取所有图像
-            self.data = self.data_processor.process_sif(folder_name)
-
-            if not self.data or self.data.format_import != 'sif':
-                self.update_status("无法读取sif文件",'warning')
-                return
-
-            logging.info('成功加载SIF数据')
-            # 设置时间滑块
-            self.load_image(origin_data=self.data)
         elif not folder_path:
             self.update_status("文件夹选择已取消", 'idle')
             return
@@ -1375,7 +1352,7 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "选择AVI视频文件",
-            "",  # 起始目录
+            self.settings.value("last_folder", ""),  # 起始目录
             file_types
         )
 
@@ -1387,8 +1364,8 @@ class MainWindow(QMainWindow):
         logging.info(f"已选择AVI文件: {file_path}")
         self.update_status("正在加载AVI文件...",'working')
 
-        self.load_avi_EM_signal.emit(file_path,self.fps_input.value())
-        self.EM_params['EM_fps'] = self.fps_input.value()
+        self.data_import_signal.emit('avi',file_path, {'fps':self.fps_input.value()})
+        self.update_param('EM','EM_fps', self.fps_input.value())
 
     def load_tiff_folder_EM(self):
         """加载TIFF文件夹(FS-iSCAT)"""
@@ -1397,7 +1374,7 @@ class MainWindow(QMainWindow):
         folder_path = QFileDialog.getExistingDirectory(
             self,
             "选择TIFF图像序列文件夹",
-            ""
+            self.settings.value("last_folder", "")
         )
 
         if not folder_path:
@@ -1407,24 +1384,21 @@ class MainWindow(QMainWindow):
 
         for f in os.listdir(folder_path):
             if f.lower().endswith(('.tif', '.tiff')):
-                self.load_tif_EM_signal.emit(folder_path,self.fps_input.value())
+                self.data_import_signal.emit('tif_EM',folder_path, {'fps':self.fps_input.value()})
                 self.update_status("正在加载tiff文件...",'working')
-                self.EM_params['EM_fps'] = self.fps_input.value()
+                self.update_param('EM','EM_fps', self.fps_input.value())
                 return
             else:
                 self.update_status("文件夹中没有TIFF文件",'warning')
                 return
 
-    def loaded_EM(self, result):
-        self.data = result
-
-        if not self.data or not (self.data.format_import != 'avi' or self.data.format_import != 'tiff'):
-            self.update_status("无法读取文件",'warning')
-            return
-        else:
-            self.update_status("已加载文件",'idle')
-            logging.info("文件加载成功")
-        # 设置时间滑块
+    def import_result(self, data):
+        """导入的数据放到这里来处理"""
+        self.data = data
+        self.settings.setValue("last_folder", os.path.dirname(data.parameters['file_path']))
+        logging.info(f'成功加载{data.format_import}数据({data.name})')
+        self.update_status("已加载文件", 'idle')
+        # 成像显示
         self.load_image(origin_data=self.data)
 
     """画布设置相关"""
@@ -1729,6 +1703,14 @@ class MainWindow(QMainWindow):
             light = "red_light.png"
         self.status_light.setPixmap(QPixmap(f":/icons/{light}").scaled(16, 16))
 
+    def update_QMessageBox(self, message_type, title, message):
+        if message_type == 'warning':
+            QMessageBox.warning(self, title, message)
+        elif message_type == 'error':
+            QMessageBox.error(self, title, message)
+        elif message_type == 'information':
+            QMessageBox.information(self, title, message)
+
     """各种计算方法"""
     def vectorROI_signal_show(self):
         """向量选取信号全部展示"""
@@ -1887,12 +1869,12 @@ class MainWindow(QMainWindow):
 
         self.calc_thread.start()
         self.update_status('计算进行中...', 'working')
-        self.time_unit = float(self.time_step_input.value())
+        self.time_step = float(self.time_step_input.value())
         center = (self.region_y_input.value(), self.region_x_input.value())
         shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
-        self.start_reg_cal_signal.emit(self.data,self.time_unit,center,shape,size,model_type)
+        self.start_reg_cal_signal.emit(self.data,self.time_step,center,shape,size,model_type)
         return None
 
     def distribution_analyze_start(self):
@@ -1905,13 +1887,13 @@ class MainWindow(QMainWindow):
             self.cal_thread_open()
         self.calc_thread.start()
         self.update_status('长时计算进行中...', 'working')
-        self.time_unit = float(self.time_step_input.value())
+        self.time_step = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         pre_cov = self.pre_cov_combo.currentText() if self.pre_cov_combo.currentIndex() != 0 else None
         post_cov = self.post_cov_combo.currentText() if self.post_cov_combo.currentIndex() != 0 else None
         pre_size = self.pre_cov_size.value() if self.pre_cov_combo.currentIndex() != 0 else None
         post_size = self.post_cov_size.value() if self.post_cov_combo.currentIndex() != 0 else None
-        self.start_dis_cal_signal.emit(self.data,self.time_unit,model_type,pre_cov,pre_size,post_cov,post_size)
+        self.start_dis_cal_signal.emit(self.data,self.time_step,model_type,pre_cov,pre_size,post_cov,post_size)
         return None
 
     def heat_transfer_start(self):
@@ -1927,13 +1909,13 @@ class MainWindow(QMainWindow):
             self.cal_thread_open()
         self.calc_thread.start()
         self.update_status('传热系数计算进行中...', 'working')
-        self.time_unit = float(self.time_step_input.value())
+        self.time_step = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
         pre_cov = self.pre_cov_combo.currentText() if self.pre_cov_combo.currentIndex() != 0 else None
         post_cov = self.post_cov_combo.currentText() if self.post_cov_combo.currentIndex() != 0 else None
         pre_size = self.pre_cov_size.value() if self.pre_cov_combo.currentIndex() != 0 else None
         post_size = self.post_cov_size.value() if self.post_cov_combo.currentIndex() != 0 else None
-        self.start_heat_cal_signal.emit(aim_data,self.time_unit,model_type,pre_cov,pre_size,post_cov,post_size)
+        self.start_heat_cal_signal.emit(aim_data,self.time_step,model_type,pre_cov,pre_size,post_cov,post_size)
         return True
 
     def diffusion_calculation_start(self):
@@ -1949,9 +1931,9 @@ class MainWindow(QMainWindow):
 
         self.calc_thread.start()
         self.update_status('计算进行中...', 'working')
-        self.time_unit = float(self.time_step_input.value())
-        self.space_unit = float(self.space_step_input.value())
-        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_unit, self.space_unit, self.data.timestamp,self.data.name)
+        self.time_step = float(self.time_step_input.value())
+        self.space_step = float(self.space_step_input.value())
+        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_step, self.space_step, self.data.timestamp,self.data.name)
         return None
 
     def pre_process_EM(self):
@@ -1983,25 +1965,24 @@ class MainWindow(QMainWindow):
         if data is not None:
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
-            self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
+            self.update_param('EM','stft_window_type',window_dict[self.stft_window_select.currentIndex()])
             dialog = STFTComputePop(self.EM_params,'quality')
             self.update_status("STFT计算ing", 'working')
             if dialog.exec_():
-                self.EM_params['target_freq'] = dialog.target_freq_input.value()
-                self.EM_fps = dialog.fps_input.value()
-                self.EM_params['stft_scale_range'] = dialog.scale_range_input.value()
-                self.EM_params['stft_window_size'] = dialog.window_size_input.value()
-                self.EM_params['stft_noverlap'] = dialog.noverlap_input.value()
-                self.EM_params['custom_nfft'] = dialog.custom_nfft_input.value()
+                self.update_param('EM','target_freq',dialog.target_freq_input.value())
+                self.update_param('EM', 'EM_fps', dialog.fps_input.value())
+                self.update_param('EM', 'stft_scale_range',dialog.scale_range_input.value())
+                self.update_param('EM', 'stft_window_size',dialog.window_size_input.value())
+                self.update_param('EM', 'stft_noverlap', dialog.noverlap_input.value())
+                self.update_param('EM', 'custom_nfft',dialog.custom_nfft_input.value())
                 if not self.avi_thread.isRunning():
                     self.avi_thread.start()
                 self.stft_quality_signal.emit(data,
-                                              self.EM_params['target_freq'],self.EM_params['stft_scale_range'],self.EM_fps,
+                                              self.EM_params['target_freq'],self.EM_params['stft_scale_range'],self.EM_params['EM_fps'],
                                              self.EM_params['stft_window_size'],
                                              self.EM_params['stft_noverlap'],
                                              self.EM_params['custom_nfft'],
                                              self.EM_params['stft_window_type'])
-                self.EM_params['EM_fps']=self.EM_fps
                 logging.info("请稍等，出图会有点慢")
                 # self.stft_quality_btn.setEnabled(False)
         else:
@@ -2030,13 +2011,13 @@ class MainWindow(QMainWindow):
             self.update_status("STFT计算ing", 'working')
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
-            self.EM_params['stft_window_type'] = window_dict[self.stft_window_select.currentIndex()]
+            self.update_param('EM','stft_window_type',window_dict[self.stft_window_select.currentIndex()])
             if not self.avi_thread.isRunning():
                 self.avi_thread.start()
             target_freq = self.EM_params['target_freq'] if target_freq is None else target_freq
             logging.info(f"目标频率：{target_freq}")
             self.stft_python_signal.emit(data,
-                                         target_freq, self.EM_params['stft_scale_range'], self.EM_fps,
+                                         target_freq, self.EM_params['stft_scale_range'], self.EM_params['EM_fps'],
                                          self.EM_params['stft_window_size'],
                                          self.EM_params['stft_noverlap'],
                                          self.EM_params['custom_nfft'],
@@ -2062,21 +2043,20 @@ class MainWindow(QMainWindow):
             dialog = CWTComputePop(self.EM_params,'quality')
 
             if dialog.exec_():
-                self.EM_params['target_freq'] = dialog.target_freq_input.value()
-                self.EM_fps = dialog.fps_input.value()
-                self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
-                self.EM_params['cwt_scale_range'] = dialog.cwt_scale_range.value()
-                self.EM_params['cwt_type'] = dialog.wavelet.currentText()
+                self.update_param('EM', 'target_freq', dialog.target_freq_input.value())
+                self.update_param('EM', 'EM_fps', dialog.fps_input.value())
+                self.update_param('EM', 'cwt_total_scales',dialog.cwt_size_input.value())
+                self.update_param('EM', 'cwt_scale_range',dialog.cwt_scale_range.value())
+                self.update_param('EM', 'cwt_type', dialog.wavelet.currentText())
                 if not self.avi_thread.isRunning():
                     self.avi_thread.start()
                 self.cwt_quality_signal.emit(data,
                                              self.EM_params['target_freq'],
                                              int(self.EM_params['cwt_scale_range']),
-                                             self.EM_fps,
+                                             self.EM_params['EM_fps'],
                                              self.EM_params['cwt_total_scales'],
                                              self.EM_params['cwt_type'])
                 # self.cwt_quality_btn.setEnabled(False)
-                self.EM_params['EM_fps'] = self.EM_fps
         else:
             logging.warning("查找不到预处理数据，请先对数据进行预处理")
             self.update_status("准备就绪")
@@ -2097,17 +2077,16 @@ class MainWindow(QMainWindow):
             dialog = CWTComputePop(self.EM_params, 'signal')
             if dialog.exec_():
                 self.update_status("CWT计算ing", 'working')
-                self.EM_params['EM_fps'] = dialog.fps_input.value()
-                self.EM_fps = self.EM_params['EM_fps']
-                self.EM_params['target_freq'] = dialog.target_freq_input.value()
-                self.EM_params['cwt_type'] = dialog.wavelet.currentText()
-                self.EM_params['cwt_total_scales'] = dialog.cwt_size_input.value()
-                self.EM_params['cwt_scale_range'] = dialog.cwt_scale_range.value()
+                self.update_param('EM', 'target_freq', dialog.target_freq_input.value())
+                self.update_param('EM', 'EM_fps', dialog.fps_input.value())
+                self.update_param('EM', 'cwt_total_scales',dialog.cwt_size_input.value())
+                self.update_param('EM', 'cwt_scale_range',dialog.cwt_scale_range.value())
+                self.update_param('EM', 'cwt_type', dialog.wavelet.currentText())
                 if not self.avi_thread.isRunning():
                     self.avi_thread.start()
                 self.cwt_python_signal.emit(data,
                                             self.EM_params['target_freq'],
-                                            self.EM_fps,
+                                            self.EM_params['EM_fps'],
                                             self.EM_params['cwt_total_scales'],
                                             self.EM_params['cwt_type'],
                                             self.EM_params['cwt_scale_range'])
@@ -2231,9 +2210,9 @@ class MainWindow(QMainWindow):
             dialog = SCSComputePop(self.EM_params)
             if dialog.exec_():
                 self.update_status("单通道计算ing", 'working')
-                self.EM_params['scs_thr'] = dialog.thr_input.value()
-                self.EM_params['thr_known'] = dialog.thr_known_check.isChecked()
-                self.EM_params['scs_zoom'] = dialog.zoom_input.value()
+                self.update_param('EM', 'scs_thr',dialog.thr_input.value())
+                self.update_param('EM', 'thr_known', dialog.thr_known_check.isChecked())
+                self.update_param('EM', 'scs_zoom',dialog.zoom_input.value())
                 if not self.avi_thread.isRunning():
                     self.avi_thread.start()
                 self.tDgf_signal.emit(data,
@@ -2408,7 +2387,7 @@ class MainWindow(QMainWindow):
                                                         out_processed=draw_data.out_processed,
                                                         ROI_applied=True)
             elif draw_type == "v_line":
-                self.vector_array = result.getPixelValues(draw_data, self.space_unit, self.time_unit)
+                self.vector_array = result.getPixelValues(draw_data, self.space_step, self.time_step)
             elif draw_type == "pixel_roi":
                 self.bool_mask = result[1]
                 if dialog.inverse_check.isChecked():
@@ -2443,6 +2422,7 @@ class MainWindow(QMainWindow):
         self.data_plot_selector.sig_plot_request.connect(self.graph_plot.plot_data)
         self.data_plot_selector.refresh_data()
         self.data_plot_selector.show()
+
     def data_plot_clear(self):
         """plot清空"""
         self.graph_plot.clear_all()

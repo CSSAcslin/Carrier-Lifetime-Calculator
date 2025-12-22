@@ -28,9 +28,9 @@ class DataManager(QObject):
     processed_result = pyqtSignal(object)
 
     def __init__(self, parent=None):
-        super(DataManager, self).__init__(parent)
+        super().__init__(parent)
         self.color_map_manager = ColorMapManager()
-        logging.info("图像数据管理线程已启动")
+        logging.info("数据管理线程已启动")
 
     def to_uint8(self, data):
         """归一化和数字类型调整"""

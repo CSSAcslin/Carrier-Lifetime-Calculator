@@ -181,8 +181,8 @@ class ImageDisplayWindow(QMainWindow):
                 width_action = menu.addAction(f"设置选区宽度 (当前: {self.tool_parameters['vector_width']}像素)")
                 width_action.triggered.connect(lambda: self.set_vector_width())
 
-            pen_color_action = menu.addAction("设置颜色")
-            pen_color_action.triggered.connect(lambda: self.set_pen_color())
+            vector_color_action = menu.addAction("设置矢量颜色")
+            vector_color_action.triggered.connect(lambda: self.set_vector_color())
         else:
             return False
 
@@ -226,12 +226,23 @@ class ImageDisplayWindow(QMainWindow):
     def set_pen_color(self):
         """选择画笔颜色"""
         color = QColorDialog.getColor(
-            self.tool_parameters['pen_color'],
+            QColor(self.tool_parameters['pen_color']),
             self,
             f"选择画笔颜色"
         )
         if color.isValid():
-            self.tool_parameters['pen_color'] = color
+            self.tool_parameters['pen_color'] = color.name()
+            self.params_update_signal.emit(self.tool_parameters)
+
+    def set_vector_color(self):
+        """选择矢量工具颜色"""
+        color = QColorDialog.getColor(
+            QColor(self.tool_parameters['vector_color']),
+            self,
+            f"选择画笔颜色"
+        )
+        if color.isValid():
+            self.tool_parameters['vector_color'] = color.name()
             self.params_update_signal.emit(self.tool_parameters)
 
     def toggle_fill_shape(self):
@@ -242,12 +253,12 @@ class ImageDisplayWindow(QMainWindow):
     def set_fill_color(self):
         """选择画笔颜色"""
         color = QColorDialog.getColor(
-            self.tool_parameters['fill_color'],
+            QColor(self.tool_parameters['fill_color']),
             self,
             f"选择画笔颜色", QColorDialog.ShowAlphaChannel
         )
         if color.isValid():
-            self.tool_parameters['fill_color'] = color
+            self.tool_parameters['fill_color'] = color.name()
             self.params_update_signal.emit(self.tool_parameters)
 
     def set_cursor_id(self,cursor_id):
@@ -859,7 +870,7 @@ class SubImageDisplayWidget(QDockWidget):
                     self.clear_vector_rect()
                     rect = QRectF(self.start_pos, self.end_pos)
                     self.rect_item = QGraphicsRectItem(rect)
-                    self.rect_item.setPen(QPen(self.vector_color, 0.2, Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
+                    self.rect_item.setPen(QPen(QColor(self.vector_color), 0.2, Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
                     self.scene.addItem(self.rect_item)
 
                 elif self.drawing_tool == 'V-line':
@@ -868,7 +879,7 @@ class SubImageDisplayWidget(QDockWidget):
                     self.clear_vector_rect()
                     self.line_item = QLineF(self.start_pos, self.end_pos)
                     self.vector_line = VectorLineROI(self.line_item)
-                    self.vector_line.setPen(QPen(self.vector_color, 0.2, Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
+                    self.vector_line.setPen(QPen(QColor(self.vector_color), 0.2, Qt.SolidLine,Qt.SquareCap ,Qt.MiterJoin))
                     self.vector_line.setWidth(self.vector_width)
                     self.scene.addItem(self.vector_line)
                     pass
@@ -892,7 +903,7 @@ class SubImageDisplayWidget(QDockWidget):
                     self.clear_anchor()
 
                     # 创建新的十字标
-                    pen = QPen(self.vector_color, 0.1, Qt.SolidLine)
+                    pen = QPen(QColor(self.vector_color), 0.1, Qt.SolidLine)
                     # 水平线
                     h_line = QGraphicsLineItem(x-1, y,x+1, y)
                     h_line.setPen(pen)
@@ -1045,7 +1056,7 @@ class SubImageDisplayWidget(QDockWidget):
     def _draw_on_pixmap(self, pixmap, from_point, to_point):
         """在绘图层上绘制（用于Pen和Eraser）"""
         painter = QPainter(pixmap)
-        painter.setPen(QPen(self.pen_color, self.pen_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.setPen(QPen(QColor(self.pen_color), self.pen_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         # 检测 Shift 按键
         shift_pressed = QApplication.keyboardModifiers() == Qt.ShiftModifier
 
@@ -1106,7 +1117,7 @@ class SubImageDisplayWidget(QDockWidget):
         target_color = image.pixelColor(point)
 
         # 如果颜色已经是填充色，则不操作
-        if target_color == self.fill_color:
+        if target_color == QColor(self.fill_color):
             return
 
         # 执行填充算法
@@ -1140,7 +1151,7 @@ class SubImageDisplayWidget(QDockWidget):
                 continue
 
             # 设置填充颜色
-            image.setPixelColor(x, y, fill_color)
+            image.setPixelColor(x, y, QColor(fill_color))
 
             # 添加相邻像素
             pixels.append((x + 1, y))

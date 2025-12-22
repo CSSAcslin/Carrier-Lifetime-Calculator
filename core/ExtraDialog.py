@@ -1726,7 +1726,11 @@ class DataPlotSelectDialog(QDialog):
         self.setWindowTitle("数据流管理与导出")
         self.resize(900, 500)
         self.setModal(False)  # 设为非模态，方便一边看数据一边操作主界面
-
+        self.setWindowFlags(Qt.Dialog |
+                            Qt.WindowMinimizeButtonHint |
+                            Qt.WindowMaximizeButtonHint |
+                            Qt.WindowCloseButtonHint |
+                            Qt.WindowContextHelpButtonHint)
         self.init_ui()
 
     def init_ui(self):
