@@ -56,6 +56,10 @@ class PlotGraphWidget(QWidget):
             self.label.setText(f"X={x:.2f}, Y={y:.2f}")
             self.label.setPos(x, y)
 
+    def handle_plot_signal(self, data, dict):
+        """很简单的一个解包函数"""
+        self.plot_data(data,**dict)
+
     def plot_data(self, array:np.ndarray, **kwargs):
         """
         添加或更新数据
@@ -85,7 +89,7 @@ class PlotGraphWidget(QWidget):
 
         # === 创建新数据 ===
         item = self.plot_widget.plot(
-            array[0],array[1],
+            array[:,0],array[:,1],
             pen=plot_pen,
             symbol=plot_symbol,
             symbolBrush=color,

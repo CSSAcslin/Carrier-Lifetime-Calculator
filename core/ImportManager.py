@@ -29,7 +29,7 @@ class ImportManager(QObject):
         self.type_all ={
             'tif_series': self.load_and_sort_tiff,
             'sif_folder': self.load_and_sort_sif,
-            'avi': self.load_avi,
+            'avi_EM': self.load_avi,
             'tif_EM': self.load_tiff,
         }
         self.abortion = False
@@ -95,7 +95,7 @@ class ImportManager(QObject):
         return handler(**call_kwargs)
 
     """tiff"""
-    def load_and_sort_tiff(self, filepath ,current_group):
+    def load_and_sort_tiff(self, filepath ,current_group, time_step, space_step, time_unit, space_unit):
         # 因为tiff存在两种格式，n,p
         files = []
         find = filepath + '/*.tiff'
@@ -132,8 +132,44 @@ class ImportManager(QObject):
             self.update_status.emit("文件夹中没有目标TIFF文件", 'warning')
             self.update_QMessageBox.emit("warning", "导入错误", "文件夹中没有目标TIFF文件")
             return
+        # 数据处理合并
+        try:
+            images_original = []
+            vmax_array = []
+            vmin_array = []
+            vmean_array = []
+            for _, fpath in files:
+                img_data = tiff.imread(fpath)
+                vmax_array.append(np.max(img_data))
+                vmin_array.append(np.min(img_data))
+                vmean_array.append(np.mean(img_data))
+                images_original.append(img_data)
+            #   以最值为边界
+            vmax = np.max(vmax_array)
+            vmin = np.min(vmin_array)
+            filename = os.path.basename(filepath)
 
-        self.import_finished.emit(self.process_tiff(tiff_files,filepath))
+            images_show, data_type, max_mean, phy_max, phy_min = self.process_data(images_original, vmax, vmin, vmean_array)
+
+            self.import_finished.emit(Data(np.stack(images_original, axis=0),
+                                    np.arange(len(images_show)),
+                                    'tif_series',
+                                    np.stack(images_show, axis=0),
+                                    parameters={
+                                        'file_path': filepath,
+                                        'vmax_array':vmax_array,
+                                        'vmin_array':vmin_array,
+                                        'data_type':data_type,
+                                        'time_step':time_step,
+                                        'time_unit':time_unit,
+                                        'space_step':space_step,
+                                        'space_unit':space_unit,
+                                    },
+                                    name=filename))
+
+        except Exception as e:
+            self.update_QMessageBox.emit('error','导入错误',f'无法读取TIFF文件:{e}')
+            self.update_status.emit("无法读取TIFF文件", 'warning')
 
     @staticmethod
     def process_data(data, max_all, min_all, vmean_array):
@@ -158,107 +194,67 @@ class ImportManager(QObject):
             phy_min = min_all
         return process_show, data_type, max_mean, phy_max, phy_min
 
-    def process_tiff(self, files, filepath):
-        '''初步数据处理'''
-        try:
-            images_original = []
-            vmax_array = []
-            vmin_array = []
-            vmean_array = []
-            for _, fpath in files:
-                img_data = tiff.imread(fpath)
-                vmax_array.append(np.max(img_data))
-                vmin_array.append(np.min(img_data))
-                vmean_array.append(np.mean(img_data))
-                images_original.append(img_data)
-            #   以最值为边界
-            vmax = np.max(vmax_array)
-            vmin = np.min(vmin_array)
-            filename = os.path.basename(filepath)
-
-            images_show, data_type, max_mean, phy_max, phy_min = self.process_data(images_original, vmax, vmin, vmean_array)
-
-            return Data(np.stack(images_original, axis=0),
-                                    np.arange(len(images_show)),
-                                    'tiff',
-                                    np.stack(images_show, axis=0),
-                                    parameters={
-                                        'file_path': filepath,
-                                        'vmax_array':vmax_array,
-                                        'vmin_array':vmin_array,
-                                        'data_type':data_type,
-                                    },
-                                    name=filename)
-
-        except Exception as e:
-            self.update_QMessageBox.emit('error','导入错误',f'无法读取TIFF文件:{e}')
-            self.update_status.emit("无法读取TIFF文件", 'warning')
-
     """sif"""
-    def load_and_sort_sif(self, foldpath, normalize_type):
+    def load_and_sort_sif(self, foldpath, normalize_type, time_step, space_step, time_unit, space_unit):
         time_data = {}  # 存储时间点数据
         background = None  # 存储背景数据
 
-        for filename in os.listdir(foldpath):
-            if filename.endswith('.sif'):
-                filepath = os.path.join(foldpath, filename)
-                name = os.path.splitext(filename)[0]  # 去除扩展名
+        try:
+            for filename in os.listdir(foldpath):
+                if filename.endswith('.sif'):
+                    filepath = os.path.join(foldpath, filename)
+                    name = os.path.splitext(filename)[0]  # 去除扩展名
 
-                # 检查是否是背景文件（文件名包含 "no"）
-                if name.lower() == 'no':
-                    background = sif_parser.np_open(filepath)[0][0]
-                    continue
+                    # 检查是否是背景文件（文件名包含 "no"）
+                    if name.lower() == 'no':
+                        background = sif_parser.np_open(filepath)[0][0]
+                        continue
 
-                # 否则尝试提取时间点（文件名中的数字）
-                match = re.search(r'(\d+)', name)
-                if match:
-                    time = int(match.group(1))
-                    data = sif_parser.np_open(filepath)[0][0]
-                    time_data[time] = data
-            else:
-                self.update_status.emit("文件夹中没有目标SIF文件",'warning')
-                self.update_QMessageBox.emit('error','导入错误',"文件夹中没有目标SIF文件,请确认选择的文件格式是否匹配")
-                logging.warning("文件夹中没有目标SIF文件")
-                return False
+                    # 否则尝试提取时间点（文件名中的数字）
+                    match = re.search(r'(\d+)', name)
+                    if match:
+                        time = int(match.group(1))
+                        data = sif_parser.np_open(filepath)[0][0]
+                        time_data[time] = data
+                else:
+                    self.update_status.emit("文件夹中没有目标SIF文件",'warning')
+                    self.update_QMessageBox.emit('error','导入错误',"文件夹中没有目标SIF文件,请确认选择的文件格式是否匹配")
+                    logging.warning("文件夹中没有目标SIF文件")
+                    return False
 
-        # 检查是否找到背景
-        if background is None:
-            raise logging.error("未找到背景文件（文件名应包含 'no'）")
+            # 检查是否找到背景
+            if background is None:
+                raise logging.error("未找到背景文件（文件名应包含 'no'）")
 
-        # 按时间排序
-        self.sif_sorted_times = sorted(time_data.keys())
+            # 按时间排序
+            self.sif_sorted_times = sorted(time_data.keys())
 
-        # 创建三维数组（时间, 高度, 宽度）并减去背景
-        sample_data = next(iter(time_data.values()))
-        self.sif_data_original = np.zeros((len(self.sif_sorted_times), *sample_data.shape), dtype=np.float32)
+            # 创建三维数组（时间, 高度, 宽度）并减去背景
+            sample_data = next(iter(time_data.values()))
+            self.sif_data_original = np.zeros((len(self.sif_sorted_times), *sample_data.shape), dtype=np.float32)
 
-        for i, time in enumerate(self.sif_sorted_times):
-            self.sif_data_original[i] = (time_data[time] - background)/background
+            for i, time in enumerate(self.sif_sorted_times):
+                self.sif_data_original[i] = (time_data[time] - background)/background
 
-        self.import_finished.emit(self.process_sif(filepath,normalize_type))
-        return True
-
-    def process_sif(self, filepath, normalize_type):
-        if not hasattr(self,'sif_data_original'):
-            return logging.error('无有效数据')
-        if not hasattr(self,'sif_sorted_times'):
-            return logging.error('时间无效')
-
-        normalized = self.normalize_data(self.sif_data_original,normalize_type)
-        return Data(np.stack(self.sif_data_original , axis=0),
-                                np.stack(self.sif_sorted_times,axis=0),
-                                'sif',
-                                np.stack(normalized, axis=0),
-                                name=os.path.basename(filepath),
-                                parameters={
-                                    'data_type': 'sif',
-                                    'normalize_type': normalize_type,
-                                    'file_path': filepath,
-                                }
-                                )
+            normalized = self.normalize_data(self.sif_data_original,normalize_type)
+            self.import_finished.emit(Data(np.stack(self.sif_data_original , axis=0),
+                                    np.stack(self.sif_sorted_times,axis=0),
+                                    'sif',
+                                    np.stack(normalized, axis=0),
+                                    name=os.path.basename(foldpath),
+                                    parameters={
+                                        'data_type': 'sif_folder',
+                                        'normalize_type': normalize_type,
+                                        'file_path': foldpath,
+                                        'time_unit': time_unit,
+                                    }
+                                    ))
+            return True
+        except Exception as e:
+            logging.error(f"处理SIF序列时出错: {str(e)}")
 
     """avi"""
-    def load_avi(self,filepath,fps):
+    def load_avi(self,filepath,fps, time_step, space_step, time_unit, space_unit):
         """
         处理AVI视频文件，返回包含视频数据和元信息的字典
         返回字典:
@@ -314,18 +310,20 @@ class ImportManager(QObject):
         self.processing_progress_signal.emit(loading_bar_value+1, total_l)
         avi_data = Data(frames_array,
                                     np.arange(len(frames)) / fps if fps > 0 else np.arange(len(frames)),
-                                    'avi',
+                                    'avi_EM',
                                     normalized_frames,
                                     parameters={'fps': fps,
                                                 'frame_size': (width, height),
                                                 'duration': duration,
-                                                'file_path': filepath,},
+                                                'file_path': filepath,
+                                                'space_step': space_step,
+                                                'space_unit': space_unit,},
                                     name=file_name)
 
         self.import_finished.emit(avi_data)
 
     """TIF"""
-    def load_tiff(self,filepath,fps):
+    def load_tiff(self,filepath,fps, time_step, space_step, time_unit, space_unit):
         try:
             tiff_files = []
             file_name = os.path.basename(filepath)
@@ -388,12 +386,14 @@ class ImportManager(QObject):
 
             tiff_data = Data(frames_array,
                                          time_points,
-                                         'tiff',
+                                         'tif_EM',
                                          normalized_frames,
                                          parameters={'fps':fps,
                                                     'frame_size': (width, height),
                                                     'original_files': tiff_files,
-                                                    'file_path': filepath,},
+                                                    'file_path': filepath,
+                                                     'space_step': space_step,
+                                                     'space_unit': space_unit,},
                                          name = file_name)
             self.import_finished.emit(tiff_data)
 

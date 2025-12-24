@@ -32,8 +32,12 @@ from PlotGraphWidget import *
 
 class MainWindow(QMainWindow):
     """主窗口"""
-    # 线程激活信号
+    # import
     data_import_signal = pyqtSignal(str, str, dict)
+    # process
+    amend_data_signal = pyqtSignal(object)
+    detect_bad_frames_auto_signal = pyqtSignal(np.ndarray, float)
+    fix_bad_frames_signal = pyqtSignal(np.ndarray, list, int)
     # cal
     start_reg_cal_signal = pyqtSignal(object, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(object, float, str, str, int, str, int)
@@ -48,6 +52,7 @@ class MainWindow(QMainWindow):
     mass_export_signal = pyqtSignal(np.ndarray, str, str, str, bool, dict)
     atam_signal = pyqtSignal(object)
     tDgf_signal = pyqtSignal(ProcessedData,int,float,bool)
+    sscs_signal = pyqtSignal(ProcessedData, int, float, bool)
     tDFT_signal = pyqtSignal(object)
     easy_process = pyqtSignal(object, str)
     roi_processed_signal = pyqtSignal(object,np.ndarray,float,bool,bool,float)
@@ -98,6 +103,7 @@ class MainWindow(QMainWindow):
         self.import_thread.start()
         self.data_thread_open()
         self.data_thread.start()
+        self.process_thread.start()
 
     """参数配置相关功能"""
     def init_params(self):
@@ -147,7 +153,7 @@ class MainWindow(QMainWindow):
             'stft_window_type': 'hann',
             'stft_scale_range': 1,
             'custom_nfft': 360,
-            'cwt_type': 'morl',
+            'cwt_type': 'cmor3-3',
             'cwt_total_scales': 256,
             'cwt_scale_range': 10.0,
             'scs_thr': 2.5,
@@ -766,8 +772,10 @@ class MainWindow(QMainWindow):
         single_channel_layout = QVBoxLayout()
         self.atam_btn = QPushButton("累计时间振幅图")
         self.tDgf_btn = QPushButton("选区二维高斯拟合")
+        self.sscs_btn = QPushButton("简单单通道提取")
         single_channel_layout.addWidget(self.atam_btn)
         single_channel_layout.addWidget(self.tDgf_btn)
+        single_channel_layout.addWidget(self.sscs_btn)
         single_channel_GROUP.setLayout(single_channel_layout)
         self.after_process_stack.addWidget(single_channel_GROUP)
 
@@ -886,6 +894,9 @@ class MainWindow(QMainWindow):
         # 数据处理历史查看
         process_history_view = data_menu.addAction('历史处理查看')
         process_history_view.triggered.connect(self.process_history_view)
+        # 详细历史查看
+        data_all_view = data_menu.addAction("所有历史详情查看")
+        data_all_view.triggered.connect(self.data_plot_add)
 
         # 指南帮助
         help_menu = self.menu.addMenu('使用指南')
@@ -1152,11 +1163,11 @@ class MainWindow(QMainWindow):
         self.imp_thread.import_finished.connect(self.import_result)
 
     def data_thread_open(self):
-        """数据操作线程（.10.10版本加入 ）"""
+        """图像数据操作线程（.10.10版本加入 ）和例外数据处理线程（.11.2版本加入）"""
         self.data_thread = QThread()
         self.dat_thread = DataManager()
         self.dat_thread.moveToThread(self.data_thread)
-        # 信号连接
+
         self.image_display.image_style_change_signal.connect(self.dat_thread.to_colormap)
         self.image_display.image_export_signal.connect(self.dat_thread.export_data)
         self.dat_thread.data_progress_signal.connect(self.update_progress)
@@ -1164,6 +1175,15 @@ class MainWindow(QMainWindow):
         self.mass_export_signal.connect(self.dat_thread.export_data)
         self.roi_processed_signal.connect(self.dat_thread.ROI_processed)
         self.dat_thread.processed_result.connect(self.processed_result)
+
+        #
+        self.process_thread = QThread()
+        self.proc_thread = DataProcessor()
+        self.proc_thread.moveToThread(self.process_thread)
+        self.amend_data_signal.connect(self.proc_thread.amend_data)
+        self.detect_bad_frames_auto_signal.connect(self.proc_thread.detect_bad_frames_auto)
+        self.fix_bad_frames_signal.connect(self.proc_thread.fix_bad_frames)
+        self.proc_thread.plot_singal.connect(self.graph_plot.handle_plot_signal)
 
     def cal_thread_open(self):
         """计算线程相关 以及信号槽连接都放在这里了"""
@@ -1197,6 +1217,7 @@ class MainWindow(QMainWindow):
         self.cwt_python_signal.connect(self.mass_data_processor.python_cwt)
         self.atam_signal.connect(self.mass_data_processor.accumulate_amplitude)
         self.tDgf_signal.connect(self.mass_data_processor.twoD_gaussian_fit)
+        self.sscs_signal.connect(self.mass_data_processor.simple_single_channel)
         self.tDFT_signal.connect(self.mass_data_processor.twoD_fourier_transform)
 
         # self.avi_thread.start()
@@ -1227,7 +1248,7 @@ class MainWindow(QMainWindow):
         self.atam_btn.clicked.connect(self.process_atam)
         self.atam_btn2.clicked.connect(self.process_atam)
         self.tDgf_btn.clicked.connect(self.process_tDgf)
-        # self.retransform_btn.clicked.connect(self.retransform_EM_data)
+        self.sscs_btn.clicked.connect(self.process_simple_scs)
         self.roi_signal_btn.clicked.connect(self.roi_signal_avg)
         self.tDFT_btn.clicked.connect(self.process_tDFT)
         self.tDFT_btn2.clicked.connect(self.process_tDFT)
@@ -1322,7 +1343,7 @@ class MainWindow(QMainWindow):
             logging.info(folder_path)
             self.update_status("已加载TIFF文件夹",'idle')
             current_group = self.group_selector.currentText()
-            self.data_import_signal.emit('tif_series', folder_path, {'current_group':current_group})
+            self.data_import_signal.emit('tif_series', folder_path, {'current_group':current_group,**self.basic_params})
 
         elif not folder_path:
             self.update_status("文件夹选择已取消", 'idle')
@@ -1336,7 +1357,7 @@ class MainWindow(QMainWindow):
             self.update_status("已加载SIF文件夹",'idle')
 
             # 读取文件夹中的所有sif文件
-            self.data_import_signal.emit('sif_folder',folder_path,{'normalize_type' : self.method_combo.currentText()})
+            self.data_import_signal.emit('sif_folder',folder_path,{'normalize_type' : self.method_combo.currentText(),**self.basic_params})
 
         elif not folder_path:
             self.update_status("文件夹选择已取消", 'idle')
@@ -1364,7 +1385,7 @@ class MainWindow(QMainWindow):
         logging.info(f"已选择AVI文件: {file_path}")
         self.update_status("正在加载AVI文件...",'working')
 
-        self.data_import_signal.emit('avi',file_path, {'fps':self.fps_input.value()})
+        self.data_import_signal.emit('avi_EM',file_path, {'fps':self.fps_input.value(),**self.basic_params})
         self.update_param('EM','EM_fps', self.fps_input.value())
 
     def load_tiff_folder_EM(self):
@@ -1384,7 +1405,7 @@ class MainWindow(QMainWindow):
 
         for f in os.listdir(folder_path):
             if f.lower().endswith(('.tif', '.tiff')):
-                self.data_import_signal.emit('tif_EM',folder_path, {'fps':self.fps_input.value()})
+                self.data_import_signal.emit('tif_EM',folder_path, {'fps':self.fps_input.value(),**self.basic_params})
                 self.update_status("正在加载tiff文件...",'working')
                 self.update_param('EM','EM_fps', self.fps_input.value())
                 return
@@ -1538,20 +1559,6 @@ class MainWindow(QMainWindow):
             self.region_x_input.setValue(x)
             self.region_y_input.setValue(y)
 
-    def _handle_result_tab(self, tab_type):
-        """特殊标签页类型处理"""
-        if tab_type == 'roi':
-            # 如果是roi结果
-            self.time_slider_vertical.setVisible(True)
-            self.time_slider_vertical.setMaximum(self.data.timelength - 1)
-            self.time_slider_vertical.setValue(0)
-        elif tab_type == 'pre-scs':
-            self.time_slider_vertical.setVisible(True)
-            self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['max_signal'].max()*10))
-        else:
-            if self.time_slider_vertical.isVisible():
-                self.time_slider_vertical.setVisible(False)
-
     """编辑设置对话框"""
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
@@ -1660,6 +1667,20 @@ class MainWindow(QMainWindow):
         elif current == -1:
             self.progress_bar.reset()
 
+    def _handle_result_tab(self, tab_type):
+        """特殊标签页类型处理"""
+        if tab_type == 'roi':
+            # 如果是roi结果
+            self.time_slider_vertical.setVisible(True)
+            self.time_slider_vertical.setMaximum(self.data.timelength - 1)
+            self.time_slider_vertical.setValue(0)
+        elif tab_type == 'pre-scs':
+            self.time_slider_vertical.setVisible(True)
+            self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['max_signal'].max() * 10))
+        else:
+            if self.time_slider_vertical.isVisible():
+                self.time_slider_vertical.setVisible(False)
+
     def update_result_display(self,idx,reuse_current=True):
         """目前有两个地方用到垂直滚动条"""
         data = self.processed_data
@@ -1676,7 +1697,7 @@ class MainWindow(QMainWindow):
             thr = idx/10
             for m in range(self.processed_data.framesize):
                 if data.out_processed['max_signal'][m] > thr:
-                    data.data_processed[m] = data.out_processed['amplitudes'][m]
+                    data.data_processed[m] = data.out_processed['max_signal'][m]
                 else:
                     data.data_processed[m] = data.out_processed['mean_signal'][m]
             data.out_processed['thr'] = thr
@@ -2225,6 +2246,36 @@ class MainWindow(QMainWindow):
             self.update_status("准备就绪", 'idle')
             return
 
+    def process_simple_scs(self):
+        if self.data is None and self.processed_data is None:
+            logging.warning('请先导入数据')
+            return
+        if self.processed_data.type_processed in ['Roi_applied']:
+            data = self.processed_data
+        else:
+            data = next(
+                (data for data in reversed(self.processed_data.history) if
+                 data.type_processed == "Roi_applied"),
+                None)
+        if data is not None:
+            dialog = SCSComputePop(self.EM_params)
+            if dialog.exec_():
+                self.update_status("单通道计算ing", 'working')
+                self.update_param('EM', 'scs_thr', dialog.thr_input.value())
+                self.update_param('EM', 'thr_known', dialog.thr_known_check.isChecked())
+                self.update_param('EM', 'scs_zoom', dialog.zoom_input.value())
+                if not self.avi_thread.isRunning():
+                    self.avi_thread.start()
+                self.sscs_signal.emit(data,
+                                      self.EM_params['scs_zoom'],
+                                      self.EM_params['scs_thr'],
+                                      self.EM_params['thr_known'])
+                self.sscs_btn.setEnabled(False)
+        else:
+            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确")
+            self.update_status("准备就绪", 'idle')
+            return
+
     def process_tDFT(self):
         """二维傅里叶变换"""
         if self.data is None and self.processed_data is None:
@@ -2276,6 +2327,7 @@ class MainWindow(QMainWindow):
             self.stft_process_btn.setEnabled(True)
             self.cwt_process_btn.setEnabled(True)
             self.tDgf_btn.setEnabled(True)
+            self.sscs_btn.setEnabled(True)
             QMessageBox.warning(self,"运算错误",f"在{data['type']}处理中报错：\n{data['error']}")
             self.update_progress(-1) # 进度条重置
             return False
@@ -2322,6 +2374,7 @@ class MainWindow(QMainWindow):
                 pass
             case 'Single_channel_signal':
                 self.tDgf_btn.setEnabled(True)
+                self.sscs_btn.setEnabled(True)
                 if self.processed_data.out_processed['thr_known']:
                     self.result_display.single_channel(self.processed_data,True)
                 else:
@@ -2354,7 +2407,6 @@ class MainWindow(QMainWindow):
         crop_roi = False
         dialog = ROIProcessedDialog(draw_type, canvas_id, result,roi_info,data_type, self)
         if dialog.exec_():
-            logging.info("ROI已确认选取")
             if dialog.crop_check.isChecked():
                 crop_roi = True
             if draw_type == "v_rect":
@@ -2419,7 +2471,7 @@ class MainWindow(QMainWindow):
         """选取数据送入结果显示（graphplot驱动）"""
         self.data_plot_selector = DataPlotSelectDialog(self)
         # 连接信号：当数据管理器中的“导出绘图”被点击时
-        self.data_plot_selector.sig_plot_request.connect(self.graph_plot.plot_data)
+        self.data_plot_selector.sig_plot_request.connect(self.proc_thread.plot_data_prepare)
         self.data_plot_selector.refresh_data()
         self.data_plot_selector.show()
 

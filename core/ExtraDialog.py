@@ -143,7 +143,7 @@ class BadFrameDialog(QDialog):
     def get_bad_frames(self) -> List[int] :
         """获取用户选择的坏帧列表"""
         if self.auto_radio.isChecked():
-            return self.parent().data_processor.detect_bad_frames_auto(
+            return self.parent().detect_bad_frames_auto_signal.emit(
                 self.parent().data.origin,
                 self.threshold_spin.value()
             )
@@ -165,14 +165,14 @@ class BadFrameDialog(QDialog):
         aim_data = self.parent().data.data_origin
 
         # 修复数据
-        fixed_data = self.parent().data_processor.fix_bad_frames(
+        fixed_data = self.parent().fix_bad_frames_signal.emit(
             aim_data,
             self.bad_frames,
             n_frames
         )
 
         # 重新处理显示数据
-        data_amend = self.parent().data_processor.amend_data(fixed_data)
+        data_amend = self.parent().amend_data_signal.emit(fixed_data)
 
         self.parent().data.update_data(**data_amend)
 
@@ -1719,8 +1719,7 @@ class ColorMapDialog(QDialog):
 
 # 选择数据绘制plot
 class DataPlotSelectDialog(QDialog):
-    sig_plot_request = pyqtSignal(np.ndarray, str)
-
+    sig_plot_request = pyqtSignal(np.ndarray,str, object)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("数据流管理与导出")
@@ -1785,7 +1784,7 @@ class DataPlotSelectDialog(QDialog):
             if data_obj.parameters:
                 param_node = QTreeWidgetItem(root_item)
                 param_node.setText(0, "⚙️ Parameters")
-                self._fill_dict_items(param_node, data_obj.parameters)
+                self._fill_dict_items(param_node, data_obj.parameters, data_obj)
 
             # 记录到 Map 中，供后续 ProcessedData 查找父节点
             self.node_map[data_obj.timestamp] = root_item
@@ -1821,7 +1820,7 @@ class DataPlotSelectDialog(QDialog):
                 if proc_obj.out_processed:
                     out_node = QTreeWidgetItem(proc_item)
                     out_node.setText(0, "⚙️ Other Results")
-                    self._fill_dict_items(out_node, proc_obj.out_processed)
+                    self._fill_dict_items(out_node, proc_obj.out_processed, proc_obj)
 
                 # 3. 重要：将当前 ProcessedData 也加入 Map
                 # 这样后续的数据如果是基于它的，就可以把它当做父节点
@@ -1850,7 +1849,7 @@ class DataPlotSelectDialog(QDialog):
                 if proc_obj.out_processed:
                     out_node = QTreeWidgetItem(proc_item)
                     out_node.setText(0, "⚙️ Out Processed Results")
-                    self._fill_dict_items(out_node, proc_obj.out_processed)
+                    self._fill_dict_items(out_node, proc_obj.out_processed, proc_obj)
 
         self.tree.expandToDepth(1)
 
@@ -1883,7 +1882,7 @@ class DataPlotSelectDialog(QDialog):
         if proc_obj.data_processed is not None:
             self._check_and_add_plot_button(item, proc_obj.data_processed, proc_obj.name, proc_obj)
 
-    def _fill_dict_items(self, parent_item: QTreeWidgetItem, data_dict: dict):
+    def _fill_dict_items(self, parent_item: QTreeWidgetItem, data_dict: dict, original_obj):
         """递归填充字典数据"""
         for k, v in data_dict.items():
             child = QTreeWidgetItem(parent_item)
@@ -1896,7 +1895,7 @@ class DataPlotSelectDialog(QDialog):
                 child.setText(3, f'{v.min():.2f} ~ {v.max():.2f}')
                 child.setText(4, "Array Data")
                 # 如果是一维数组，也允许导出
-                self._check_and_add_plot_button(child, v, str(k), None)
+                self._check_and_add_plot_button(child, v, str(k), original_obj)
             elif isinstance(v, dict):
                 child.setText(1, "dict")
                 self._fill_dict_items(child, v)  # 递归
@@ -1939,23 +1938,9 @@ class DataPlotSelectDialog(QDialog):
 
     def emit_plot_signal(self, data, name, obj):
         """发射信号"""
-        print(f"Requesting plot for: {name}, Shape: {data.shape}")
-        # 如果是 (N, 1) 转为 (N,)
-        if data.ndim == 2:
-            if data.shape[1] == 1:
-                data = data.flatten()
-            elif data.shape[0] == 1:
-                data = data.flatten()
-
-        self.sig_plot_request.emit(data, name)
-
-    # def _format_size(self, data_obj):
-    #     """格式化数据大小显示"""
-    #     if hasattr(data_obj, 'data_processed') and data_obj.data_processed is not None:
-    #         return self.format_array_size(data_obj.data_processed)
-    #     elif hasattr(data_obj, 'data_origin') and data_obj.data_origin is not None:
-    #         return self.format_array_size(data_obj.data_origin)
-    #     return "N/A"
+        data = np.squeeze(data)
+        print(f"要呈现的数据: {name}, 大小: {data.shape}")
+        self.sig_plot_request.emit(data, name, obj)
 
     @staticmethod
     def _format_array_size(array):

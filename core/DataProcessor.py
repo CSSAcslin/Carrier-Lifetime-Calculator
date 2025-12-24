@@ -19,10 +19,12 @@ from scipy.ndimage import zoom
 import DataManager
 
 
-class DataProcessor:
-    """本类仅包含导入数据时的数据处理"""
+class DataProcessor(QObject):
+    """本类包含所有非计算流程的操作（常开线程）"""
+    plot_singal = pyqtSignal(np.ndarray,dict)
     def __init__(self):
-        pass
+        super().__init__()
+        logging.info("例外数据处理线程已启动")
 
     @staticmethod
     def process_data(data, max_all, min_all, vmean_array):
@@ -47,16 +49,11 @@ class DataProcessor:
             phy_min = min_all
         return process_show, data_type, max_mean, phy_max, phy_min
 
-    def amend_data(self, data, mask = None):
+    @pyqtSlot(object)
+    def amend_data(self, data):
         """函数修改方法
         输入修改的源数据，导出修改的数据包"""
         data_origin = data
-        if mask is not None and mask.shape == data.framesize:
-            data_mask = [ ]
-            for every_data in data_origin:
-                # data_mask.append(np.multiply(every_data, mask)) 目前这里有问题 还没想好怎么改
-                every_data[~mask] = data.datamin
-            data_origin = data_mask
         vmax_array = []
         vmin_array = []
         vmean_array = []
@@ -74,6 +71,7 @@ class DataProcessor:
             'image_import': np.stack(images_show, axis=0),
         }
 
+    @pyqtSlot(np.ndarray,float)
     def detect_bad_frames_auto(self, data: np.ndarray, threshold: float = 3.0) -> List[int]:
         """
         自动检测坏帧
@@ -101,6 +99,7 @@ class DataProcessor:
 
         return sorted(list(set(bad_frames)))
 
+    @pyqtSlot(np.ndarray, list, int)
     def fix_bad_frames(self, data: np.ndarray, bad_frames: List[int], n_frames: int = 2) -> np.ndarray:
         """
         修复坏帧 - 使用前后n帧的平均值替换
@@ -125,6 +124,56 @@ class DataProcessor:
 
         return fixed_data
 
+    @pyqtSlot(np.ndarray,str,object)
+    def plot_data_prepare(self, data: np.ndarray,name:str, father_obj: DataManager.Data| DataManager.ProcessedData ):
+        """完成plot数据的准备操作"""
+        try:
+            time_point = father_obj.time_point
+            father_dict = father_obj.parameters if isinstance(father_obj, DataManager.Data) else father_obj.out_processed
+            if data.ndim == 2:
+                self.plot_singal.emit(data,{'name':name})
+            else:
+                if time_point is None or time_point.shape != data.shape:
+                    if hasattr(father_dict, 'fps'):
+                        self.plot_singal.emit(self.add_time_from_fps(data,father_obj.parameters['fps']),{'name':name})
+                    else:
+                        self.plot_singal.emit(self.add_time_simple(data,father_obj.parameters['time_step']),{'name':name})
+                else:
+                    self.plot_singal.emit(np.column_stack((time_point,data)),{'name':name})
+        except Exception as e:
+            logging.error(f'数据不发被绘制由于：{e}')
+
+    @staticmethod
+    def add_time_from_fps(data: np.ndarray, sampling_rate: float,start_time: float = 0.0) -> np.ndarray:
+        """基于fps给一维数组添加时间码"""
+        if data.ndim != 1:
+            raise ValueError("输入必须是一维数组")
+        if sampling_rate <= 0:
+            raise ValueError("采样频率必须大于0")
+
+        n = len(data)
+        # 计算采样间隔
+        sampling_interval = 1.0 / sampling_rate
+        # 生成时间戳
+        timestamps = np.arange(n) * sampling_interval + start_time
+        # 合并为二维数组
+        result = np.column_stack((timestamps, data))
+
+        return result
+
+    @staticmethod
+    def add_time_simple(data: np.ndarray, time_step:float, start_time: float = 0.0) -> np.ndarray:
+        """基于间隔给一维数组添加时间"""
+        if data.ndim != 1:
+            raise ValueError("输入必须是一维数组")
+
+        n = len(data)
+        # 生成序号
+        serial_numbers = np.arange(n) * time_step + start_time
+        # 合并为二维数组
+        result = np.column_stack((serial_numbers, data))
+
+        return result
 
 
 class MassDataProcessor(QObject):
@@ -136,150 +185,6 @@ class MassDataProcessor(QObject):
         super().__init__()
         logging.info("大数据处理线程已载入")
         self.abortion = False
-
-    """avi"""
-    # @pyqtSlot(str,int)
-    # def load_avi(self,path,fps):
-    #     """
-    #     处理AVI视频文件，返回包含视频数据和元信息的字典
-    #     返回字典:
-    #         - data_origin: 原始视频帧数据 (n_frames, height, width)
-    #         - images: 归一化后的视频帧数据
-    #         - time_points: 时间点数组
-    #         - data_type: 数据类型标识 ('video')
-    #         - boundary: 最大最小值边界
-    #         - fps: 视频帧率
-    #         - frame_size: 视频帧尺寸 (width, height)
-    #         - duration: 视频时长(秒)
-    #     """
-    #     file_name = os.path.basename(path)
-    #     # 读取视频文件
-    #     cap = cv2.VideoCapture(path)
-    #     if not cap.isOpened():
-    #         raise IOError(f"无法打开视频文件: {path}")
-    #
-    #     # 获取视频元信息
-    #     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    #     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    #     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    #     # codec = int(cap.get(cv2.CAP_PROP_FOURCC))
-    #     # codec_str = "".join([chr((codec >> 8 * i) & 0xFF) for i in range(4)])
-    #     duration = frame_count / fps if fps > 0 else 0
-    #
-    #     # 读取所有帧
-    #     frames = []
-    #     loading_bar_value = 0  # 进度条
-    #     total_l = frame_count+1
-    #     while not self.abortion:
-    #         ret, frame = cap.read()
-    #         if not ret:
-    #             break
-    #         # 转换为灰度图(如果原始是彩色)
-    #         if len(frame.shape) == 3:
-    #             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    #         frames.append(frame)
-    #         loading_bar_value += 1
-    #         self.processing_progress_signal.emit(loading_bar_value, total_l)
-    #
-    #     cap.release()
-    #
-    #     if not frames:
-    #         raise ValueError("视频中没有读取到有效帧")
-    #
-    #     # 转换为numpy数组
-    #     frames_array = np.stack(frames, axis=0)
-    #
-    #     # 归一化处理
-    #     normalized_frames = self.normalize_data(frames_array)
-    #
-    #     self.processing_progress_signal.emit(loading_bar_value+1, total_l)
-    #     avi_data = DataManager.Data(frames_array,
-    #                                 np.arange(len(frames)) / fps if fps > 0 else np.arange(len(frames)),
-    #                                 'avi',
-    #                                 normalized_frames,
-    #                                 parameters={'fps': fps,
-    #                                             'frame_size': (width, height),
-    #                                             'duration': duration,},
-    #                                 name=file_name)
-    #
-    #     self.mass_finished.emit(avi_data)
-    #
-    # """TIF"""
-    # @pyqtSlot(str,int)
-    # def load_tiff(self,path,fps):
-    #     try:
-    #         tiff_files = []
-    #         file_name = os.path.basename(path)
-    #         for f in os.listdir(path):
-    #             if f.lower().endswith(('.tif', '.tiff')):
-    #                 # 提取数字并排序
-    #                 num_groups = re.findall(r'\d+', f)
-    #                 last_num = int(num_groups[-1]) if num_groups else 0
-    #                 tiff_files.append((last_num, f))
-    #
-    #         # 按最后一组数字排序
-    #         tiff_files.sort(key=lambda x: x[0])
-    #         frame_numbers, file_names = zip(*tiff_files) if tiff_files else ([], [])
-    #
-    #         logging.info(f"找到{len(file_names)}个TIFF文件")
-    #
-    #         # 检查数字连续性（使用已排序的frame_numbers）
-    #         unique_nums = sorted(set(frame_numbers))
-    #         is_continuous = (
-    #                 len(unique_nums) == len(frame_numbers) and
-    #                 (unique_nums[-1] - unique_nums[0] + 1) == len(unique_nums)
-    #         )
-    #
-    #         # 读取图像数据
-    #         frames = []
-    #         total_files = len(file_names)
-    #         self.processing_progress_signal.emit(0, total_files)
-    #
-    #         for i, filename in enumerate(file_names):
-    #             if self.abortion:
-    #                 break
-    #
-    #             img_path = os.path.join(path, filename)
-    #             img = tiff.imread(img_path)
-    #
-    #             if img is None:
-    #                 logging.warning(f"无法读取文件: {filename}")
-    #                 continue
-    #
-    #             frames.append(img)
-    #             self.processing_progress_signal.emit(i + 1, total_files)
-    #
-    #         if not frames:
-    #             raise ValueError("没有有效图像数据被读取")
-    #
-    #         # 转换为numpy数组
-    #         frames_array = np.stack(frames, axis=0)
-    #         height, width = frames[0].shape
-    #
-    #         # 计算统计信息
-    #         normalized_frames = self.normalize_data(frames_array)
-    #
-    #         # 生成时间点
-    #         if is_continuous:
-    #             time_points = (np.array(frame_numbers) - frame_numbers[0]) / fps
-    #             logging.info("使用文件名数字作为时间序列")
-    #         else:
-    #             time_points = np.arange(len(frames)) / fps
-    #             logging.info("使用默认顺序作为时间序列")
-    #
-    #         tiff_data = DataManager.Data(frames_array,
-    #                                      time_points,
-    #                                      'tiff',
-    #                                      normalized_frames,
-    #                                      parameters={'fps':fps,
-    #                                                 'frame_size': (width, height),
-    #                                                 'original_files': tiff_files},
-    #                                      name = file_name)
-    #         self.mass_finished.emit(tiff_data)
-    #
-    #     except Exception as e:
-    #         logging.error(f"处理TIFF序列时出错: {str(e)}")
-    #         self.processing_progress_signal.emit(1, 1)
 
     @pyqtSlot(DataManager.Data,int,bool)
     def pre_process(self,data,bg_num = 360,unfold=True):
@@ -344,7 +249,7 @@ class MassDataProcessor(QObject):
                                                   out_processed={
                                                       'fps' : data.parameters['fps'],
                                                       'bg_frame': bg_frame,
-                                                      'unfolded_data': unfolded_data,
+                                                      'unfolded_data': unfolded_data,**data.parameters
                                                   })
 
             self.processed_result.emit(processed)
@@ -492,7 +397,7 @@ class MassDataProcessor(QObject):
                                                                'ROI_stft',
                                                                 time_point=time_series,
                                                                data_processed=stft_py_out,
-                                                               ))
+                                                               out_processed={**data.out_processed}))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             return True
         except Exception as e:
@@ -629,7 +534,7 @@ class MassDataProcessor(QObject):
                                                                  'ROI_cwt',
                                                                  time_point=times,
                                                                  data_processed=cwt_py_out,
-                                                                 ))
+                                                                 out_processed={**data.out_processed}))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             return True
         except Exception as e:
@@ -646,7 +551,9 @@ class MassDataProcessor(QObject):
                                          f'{data.name}@atam',
                                          "Accumulated_time_amplitude_map",
                                          time_point=data.time_point,
-                                         data_processed=np.mean(data.data_processed if isinstance(data,DataManager.ProcessedData) else data.data_origin, axis=0)))
+                                         data_processed=np.mean(data.data_processed if isinstance(data,DataManager.ProcessedData) else data.data_origin, axis=0),
+                                         out_processed={**data.out_processed}
+                                                             ))
         logging.info("累计时间振幅计算已完成")
 
     @staticmethod
@@ -666,12 +573,12 @@ class MassDataProcessor(QObject):
         return A * np.exp(-((x - x0) ** 2 / (2 * sigmax ** 2) + (y - y0) ** 2 / (2 * sigmay ** 2))) + b
 
     @pyqtSlot(DataManager.ProcessedData,int,float,bool)
-    def twoD_gaussian_fit(self,data_3d:DataManager.ProcessedData,zm = 2,thr = 2.5,thr_known = False):
+    def twoD_gaussian_fit(self,data:DataManager.ProcessedData,zm = 2,thr = 2.5,thr_known = False):
         """
         对三维时序数据逐帧进行二维高斯拟合
 
         参数:
-        data_3d: numpy.ndarray, 三维数组 (T, H, W)
+        data: numpy.ndarray, 三维数组 (T, H, W)
         zm 插值系数
         返回:
         results: list of dict, 每帧的拟合参数
@@ -680,7 +587,7 @@ class MassDataProcessor(QObject):
             timer = QElapsedTimer()
             timer.start()
 
-            T, H, W = data_3d.datashape
+            T, H, W = data.datashape
             self.processing_progress_signal.emit(0, T)
 
             amplitudes = np.zeros(T)
@@ -690,7 +597,7 @@ class MassDataProcessor(QObject):
             max_signal = np.zeros(T)
 
             for m in range(T):
-                frame = data_3d.data_processed[m]
+                frame = data.data_processed[m]
                 self.processing_progress_signal.emit(m, T)
                 # 图像插值
                 if zm >1:
@@ -764,21 +671,76 @@ class MassDataProcessor(QObject):
                         centers_x[m] = np.nan
                         centers_y[m] = np.nan
             self.processing_progress_signal.emit(T, T)
-            self.processed_result.emit(DataManager.ProcessedData(data_3d.timestamp,
-                                             f'{data_3d.name}@scs',
+            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+                                             f'{data.name}@scs',
                                              "Single_channel_signal",
-                                             time_point=data_3d.time_point,
+                                             time_point=data.time_point,
                                              data_processed=copy.deepcopy(amplitudes),
                                              out_processed={
                                                  'thr_known': thr_known,
                                                  'thr': thr,
                                                  'mean_signal':mean_signal,
                                                  'amplitudes':amplitudes,
-                                                 'max_signal':max_signal,
+                                                 'max_signal':max_signal,**data.out_processed
                                              }))
             return True
         except Exception as e:
             self.processed_result.emit({'type':"Single_channel_signal",'error':str(e)})
+            return False
+
+    @pyqtSlot(DataManager.ProcessedData, int, float, bool)
+    def simple_single_channel(self, data: DataManager.ProcessedData, zm=2, thr=2.5, thr_known=False):
+        """简单的单通道信号处理办法"""
+        try:
+            timer = QElapsedTimer()
+            timer.start()
+
+            T, H, W = data.datashape
+            self.processing_progress_signal.emit(0, T)
+
+            amplitudes = np.zeros(T)
+            mean_signal = np.zeros(T)
+            max_signal = np.zeros(T)
+            min_signal = np.zeros(T)
+
+            for m in range(T):
+                frame = data.data_processed[m]
+                self.processing_progress_signal.emit(m, T)
+                # 图像插值
+                if zm > 1:
+                    Z = zoom(frame, zm, order=3)
+                else:
+                    Z = frame
+
+                h_z, w_z = Z.shape
+                mean_signal[m] = np.mean(Z)
+                max_signal[m] = np.max(Z)
+                min_signal[m] = np.min(Z)
+                if thr_known:  # 如果知道阈值
+                    # 检查是否有超过阈值的点
+                    if np.any(Z > thr):
+                        amplitudes[m] = np.max(Z)
+                    else:
+                        amplitudes[m] = np.mean(Z)
+                else:
+                    amplitudes[m] = np.max(Z)
+            self.processing_progress_signal.emit(T, T)
+            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+                                                                 f'{data.name}@scs',
+                                                                 "Single_channel_signal",
+                                                                 time_point=data.time_point,
+                                                                 data_processed=copy.deepcopy(amplitudes),
+                                                                 out_processed={
+                                                                     'thr_known': thr_known,
+                                                                     'thr': thr,
+                                                                     'mean_signal': mean_signal,
+                                                                     'max_signal': max_signal,
+                                                                     'min_signal': min_signal,
+                                                                     **data.out_processed
+                                                                 }))
+            return True
+        except Exception as e:
+            self.processed_result.emit({'type': "简单 Single_channel_signal", 'error': str(e)})
             return False
 
     @pyqtSlot(object)
@@ -795,9 +757,9 @@ class MassDataProcessor(QObject):
             phase_spectra: 傅里叶相位谱数组
             """
         if isinstance(data, DataManager.ProcessedData):
-            data_3d = data.data_processed
+            data = data.data_processed
         else:
-            data_3d = data.data_origin
+            data = data.data_origin
             pass
         try:
             if data.timelength == 1:
@@ -811,7 +773,7 @@ class MassDataProcessor(QObject):
             self.processing_progress_signal.emit(1,frames)
             for i in range(frames):
                 # 2D傅里叶变换
-                f = np.fft.fft2(data_3d[i])
+                f = np.fft.fft2(data[i])
                 fshift = np.fft.fftshift(f)  # 将低频移到中心
 
                 # 幅度谱
@@ -830,7 +792,7 @@ class MassDataProcessor(QObject):
                                        data_processed=np.squeeze(magnitude_log),
                                        out_processed={'twoD_FFT':np.squeeze(fshift),
                                                       'magnitude_spectra': np.squeeze(magnitude_spectra),
-                                                      'phase_spectra': np.squeeze(phase_spectra)}))
+                                                      'phase_spectra': np.squeeze(phase_spectra),**data.out_processed}))
             self.processing_progress_signal.emit(frames +1, frames)
             return True
         except Exception as e:
@@ -943,12 +905,12 @@ class MassDataProcessor(QObject):
         return np.array(time_constants), np.array(mse_values)
 
     # 4. 主分析流程
-    # def analyze_single_peak_data(data_3d, T, x_m, y_m):
+    # def analyze_single_peak_data(data, T, x_m, y_m):
     #     """
     #     完整分析流程
     #
     #     参数:
-    #     data_3d: 三维时序数据 (T, H, W)
+    #     data: 三维时序数据 (T, H, W)
     #     T: 时间轴
     #     x_m, y_m: ROI起始坐标
     #
@@ -956,7 +918,7 @@ class MassDataProcessor(QObject):
     #     所有分析结果
     #     """
     #     # 1. ROI高斯拟合
-    #     amplitudes, centers_x, centers_y = fit_gaussian_roi(data_3d, x_m, y_m)
+    #     amplitudes, centers_x, centers_y = fit_gaussian_roi(data, x_m, y_m)
     #
     #     # 绘制振幅变化
     #     plt.figure(figsize=(10, 6))

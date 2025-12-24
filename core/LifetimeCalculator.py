@@ -401,7 +401,8 @@ class CalculationThread(QObject):
                                                                       'fit_curve': fit_curve,
                                                                       'r_squared': r_squared,
                                                                       'model_type': model_type,
-                                                                      'boundary': {'min':data.datamin, 'max':data.datamax}}))
+                                                                      'boundary': {'min':data.datamin, 'max':data.datamax},
+                                                                      **(data.out_processed if isinstance(data,ProcessedData) else data.parameters)}))
             logging.info("计算完成!")
             self.calculating_progress_signal.emit(3, 3)
             self.cal_running_status.emit(False)
@@ -449,7 +450,8 @@ class CalculationThread(QObject):
                                                       f'{data.name}@d-lft',
                                                       'lifetime_distribution',
                                                       data_processed=lifetime_map_cov,
-                                                     out_processed={'lifetime_map': lifetime_map,}))
+                                                     out_processed={'lifetime_map': lifetime_map,
+                                                                    **(data.out_processed if isinstance(data,ProcessedData) else data.parameters)}))
             self._is_calculating = False
             self.cal_running_status.emit(False)
             self.stop_thread_signal.emit()
@@ -504,7 +506,7 @@ class CalculationThread(QObject):
             'sigma': np.stack(sigma_results, axis=0),
             'signal': np.stack(signal_series, axis=0),
             'fitting': np.stack(fitting_result, axis=0),
-            'time_series': np.stack(time_series, axis=0)
+            'time_series': np.stack(time_series, axis=0),
         }
         self.processed_result.emit(ProcessedData(timestamp,
                                                  f'{name}@dif',
@@ -535,7 +537,8 @@ class CalculationThread(QObject):
                                                              f'{data.name}@heat',
                                                              'heat_transfer',
                                                              data_processed=heat_transfer_cov,
-                                                             out_processed={'heat_transfer_map': heat_transfer, }))
+                                                             out_processed={'heat_transfer_map': heat_transfer,
+                                                                            **(data.out_processed if isinstance(data,ProcessedData) else data.parameters)}))
                     self._is_calculating = False
                     self.cal_running_status.emit(False)
                     self.stop_thread_signal.emit()
