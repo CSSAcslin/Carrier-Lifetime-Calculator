@@ -482,7 +482,8 @@ class DataManager(QObject):
                                                  'Roi_applied',
                                                  time_point=data.time_point,
                                                  data_processed=data_processed,
-                                                 out_processed=out_processed,
+                                                 out_processed={"roi_shape":f'{mask.shape[0]}×{mask.shape[1]}'
+                                                                ,**out_processed},
                                                  ROI_applied = True,
                                                  ROI_mask= mask,
                                                  ))

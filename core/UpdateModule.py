@@ -259,7 +259,7 @@ class UpdateDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "下载完成",
-            "更新文件下载完成，是否立即应用更新？\n程序将在更新后自动重启。",
+            "更新文件下载完成，是否立即应用更新？\n程序将在更新后自动重启（旧版程序需要手动删除）。",
             QMessageBox.Yes | QMessageBox.No
         )
 
@@ -392,7 +392,7 @@ class UpdateChecker(QThread):
             data = response.json()[0]
 
             # 解析版本信息
-            latest_version = data.get('tag_name', '').lstrip('beta-')
+            latest_version = data.get('tag_name', '').lstrip('v')
             if not latest_version:
                 self.error_occurred.emit("无法解析版本信息")
                 self.check_completed.emit(False)

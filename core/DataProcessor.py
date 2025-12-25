@@ -135,13 +135,16 @@ class DataProcessor(QObject):
             else:
                 if time_point is None or time_point.shape != data.shape:
                     if hasattr(father_dict, 'fps'):
-                        self.plot_singal.emit(self.add_time_from_fps(data,father_obj.parameters['fps']),{'name':name})
+                        self.plot_singal.emit(self.add_time_from_fps(data,father_dict['fps']),
+                                              {'name':name, 'time_unit':'s'})
                     else:
-                        self.plot_singal.emit(self.add_time_simple(data,father_obj.parameters['time_step']),{'name':name})
+                        self.plot_singal.emit(self.add_time_simple(data,father_dict['time_step']),
+                                              {'name':name, 'time_unit':father_dict.get('time_unit',None)})
                 else:
-                    self.plot_singal.emit(np.column_stack((time_point,data)),{'name':name})
+                    self.plot_singal.emit(np.column_stack((time_point,data)),
+                                          {'name':name, 'time_unit':father_dict.get('time_unit',None)})
         except Exception as e:
-            logging.error(f'数据不发被绘制由于：{e}')
+            logging.error(f'数据无法被绘制由于：{e}')
 
     @staticmethod
     def add_time_from_fps(data: np.ndarray, sampling_rate: float,start_time: float = 0.0) -> np.ndarray:
@@ -296,6 +299,8 @@ class MassDataProcessor(QObject):
                                                                  'stft_quality',
                                                                  data_processed=Zxx,
                                                                  out_processed={
+                                                                     'window_type': window,
+                                                                     'window_size': window_size,
                                                                      'out_length': Zxx.shape[1],
                                                                      'frequencies':f,
                                                                      'time_series':t,
@@ -397,7 +402,11 @@ class MassDataProcessor(QObject):
                                                                'ROI_stft',
                                                                 time_point=time_series,
                                                                data_processed=stft_py_out,
-                                                               out_processed={**data.out_processed}))
+                                                               out_processed={'whole_mean':np.mean(stft_py_out, axis=(1, 2)),
+                                                                              'window_type': window,
+                                                                              'window_size': window_size,
+                                                                              **{k:data.out_processed.get(k)
+                                                                                 for k in data.out_processed if k not in {"unfolded_data"}}}))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             return True
         except Exception as e:
@@ -462,6 +471,8 @@ class MassDataProcessor(QObject):
                                                                      'time_series' : np.arange(total_frames) / fps,
                                                                      'target_freq' : target_freq,
                                                                      'scale_range' : scale_range,
+                                                                     'total_scales' : totalscales,
+                                                                     'wavelet_name' : wavelet,
                                                                  }))
             self.processing_progress_signal.emit(100, 100)
             return True
@@ -534,7 +545,12 @@ class MassDataProcessor(QObject):
                                                                  'ROI_cwt',
                                                                  time_point=times,
                                                                  data_processed=cwt_py_out,
-                                                                 out_processed={**data.out_processed}))
+                                                                 out_processed={'whole_mean':np.mean(cwt_py_out, axis=(1, 2)),
+                                                                                'total_scales': totalscales,
+                                                                                'wavelet_name':wavelet,
+                                                                                **{k: data.out_processed.get(k)
+                                                                                   for k in data.out_processed if
+                                                                                   k not in {"unfolded_data"}}}))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             return True
         except Exception as e:
@@ -736,7 +752,8 @@ class MassDataProcessor(QObject):
                                                                      'mean_signal': mean_signal,
                                                                      'max_signal': max_signal,
                                                                      'min_signal': min_signal,
-                                                                     **data.out_processed
+                                                                     **{k: data.out_processed.get(k)
+                                                                        for k in {'roi_shape','whole_mean'} if k in data.out_processed}
                                                                  }))
             return True
         except Exception as e:

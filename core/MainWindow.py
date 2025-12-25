@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         # 基本信息初始化
-        self.current_version = "0.11.1"  # 当前程序版本
+        self.current_version = "0.11.4"  # 当前程序版本
         self.repo_owner = "CSSAcslin"  # 程序作者
         self.repo_name = "Carrier-Lifetime-Calculator"  # 程序仓库名
         self.PAT = "Bearer <your PAT>"
@@ -82,7 +82,6 @@ class MainWindow(QMainWindow):
         self.log_file = self.setup_log_path()
         self.setup_menus()
         self.setup_logging()
-        self.log_startup_message()
         self.help_dialog = None
 
         # 进度条与计时器
@@ -104,6 +103,7 @@ class MainWindow(QMainWindow):
         self.data_thread_open()
         self.data_thread.start()
         self.process_thread.start()
+        self.log_startup_message()
 
     """参数配置相关功能"""
     def init_params(self):
@@ -1696,10 +1696,10 @@ class MainWindow(QMainWindow):
         elif self.processed_data.type_processed == 'Single_channel_signal' and not data.out_processed['thr_known']:
             thr = idx/10
             for m in range(self.processed_data.framesize):
-                if data.out_processed['max_signal'][m] > thr:
-                    data.data_processed[m] = data.out_processed['max_signal'][m]
-                else:
+                if data.out_processed['mean_signal'][m] > thr:
                     data.data_processed[m] = data.out_processed['mean_signal'][m]
+                else:
+                    data.data_processed[m] = data.out_processed['whole_mean'][m]
             data.out_processed['thr'] = thr
             self.result_display.single_channel(data,False,
                 reuse_current = reuse_current)
@@ -2220,12 +2220,12 @@ class MainWindow(QMainWindow):
         if self.data is None and self.processed_data is None:
             logging.warning('请先导入数据')
             return
-        if self.processed_data.type_processed in ['ROI_stft','ROI_cwt']:
+        if self.processed_data.type_processed in ['Roi_applied']:
             data = self.processed_data
         else:
             data = next(
                 (data for data in reversed(self.processed_data.history) if
-                 data.type_processed == "ROI_cwt" or data.type_processed == "ROI_stft"),
+                 data.type_processed == "Roi_applied"),
                 None)
         if data is not None:
             dialog = SCSComputePop(self.EM_params)
@@ -2242,7 +2242,7 @@ class MainWindow(QMainWindow):
                                       self.EM_params['thr_known'])
                 self.tDgf_btn.setEnabled(False)
         else:
-            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确")
+            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确（是否确认ROI）")
             self.update_status("准备就绪", 'idle')
             return
 
@@ -2272,7 +2272,7 @@ class MainWindow(QMainWindow):
                                       self.EM_params['thr_known'])
                 self.sscs_btn.setEnabled(False)
         else:
-            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确")
+            QMessageBox.warning(self,"数据错误","不支持的数据类型，请确认前序处理是否正确（是否确认ROI）")
             self.update_status("准备就绪", 'idle')
             return
 
@@ -2380,7 +2380,7 @@ class MainWindow(QMainWindow):
                 else:
                     thr = int(self.processed_data.out_processed['thr'])
                     self.time_slider_vertical.setVisible(True)
-                    self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['max_signal'].max()*10+21))
+                    self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['mean_signal'].max()*10+21))
                     # self.time_slider_vertical.setValue(thr*10)
                     self.update_result_display(thr*10, reuse_current=False)
             case '2D_Fourier_transform':
@@ -2718,401 +2718,18 @@ if __name__ == "__main__":
     app = QApplication([])
     QFontDatabase.addApplicationFont("C:/Windows/Fonts/NotoSansSC-VF.ttf")  # 如：思源黑体、阿里巴巴普惠体
     QFontDatabase.addApplicationFont("C:/Windows/Fonts/calibril.ttf")  # 如：Roboto、Fira Code
-    QSS1 ="""
-    /* ========== QMenuBar 样式 ========== */
-QMenuBar {
-    background-color: #ffffff;
-    border-top: 3px solid #4CAF50;
-    padding: 6px;
-    margin-bottom: 3px;
-    font-weight: 475;
-}
-
-QMenuBar::item {
-    background: transparent;
-    padding: 4px 8px;
-    border-radius: 2px;
-    color: #2E7D32;
-    margin: 0px 2px 4px 2px;
-}
-
-QMenuBar::item:selected {
-    background-color: #E8F5E9;
-}
-
-QMenuBar::item:pressed {
-    background-color: #C8E6C9;
-}
-QDockWidget {
-    border: 1px solid #388E3C;
-    border-radius: 4px;
-}
-
-
-/* 标题栏样式 */
-QDockWidget::title {
-    background-color: #C8E6C9;
-    text-align: center;
-    padding: 2px;
-}
-
-QDockWidget::title:hover {
-    background-color: #4CAF50;
-    color: white;
-}
-
-
-/* 内容区域样式 */
-QDockWidget > QWidget {
-    background-color: #fefefe;
-    border: 2px solid #C8E6C9;
-    border-top: none;
-
-}
-
-/* 分隔线样式 */
-QDockWidget::separator {
-    background-color: #C8E6C9;
-    width: 1px;
-    height: 1px;
-}
-
-/* 当停靠窗口浮动时的样式 */
-QDockWidget[floating="true"] {
-    border: 2px solid #C8E6C9;
-}
-/* ========== 状态栏渐变 ========== */
-QStatusBar {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #C8E6C9, stop:1 #fefefe);
-}
-/* ========== 进度条 ========== */
-QProgressBar {
-                border: 1px solid #C8E6C9;
-                border-radius: 3px;
-                background: white;
-                text-align: center;
-                min-height: 18px;
-                max-height: 18px;
-            }
-            QProgressBar::chunk {
-                background-color: #C8E6C9;
-                width: 10px;
-            }
-/* ========== 工具栏 ========== */
-QToolBar {
-    background-color: white;
-    border: 2px outset #C8E6C9;
-    padding: 2px;
-    spacing: 6px; /* 工具按钮间距 */
-}
-QToolBox::tab:selected { /* italicize selected tabs */
-    font: italic;
-    color: white;
-}
-QToolBar::separator {
-    background-color: #C8E6C9;
-    width: 1px;
-    margin: 4px 2px;
-}
-
-QToolBar QToolButton {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    padding: 0px;
-    min-width: 24px;
-}
-
-QToolBar QToolButton:hover {
-    background-color: #E8F5E9;
-    border-color: #C8E6C9;
-}
-
-QToolBar QToolButton:checked {
-    background-color: #C8E6C9;
-    border-color: #4CAF50;
-}
-
-QToolBar QToolButton:pressed {
-    background-color: #A5D6A7;
-}
-
-/* ========== QToolBox 样式 ========== */
-QToolBox {
-    background-color: white;
-}
-
-QToolBox::tab {
-    background-color: #E8F5E9;
-    color: #2E7D32;
-    border: 1px solid #C8E6C9;
-    border-radius: 4px;
-    margin-bottom: 4px;
-    padding: 8px;
-    font-weight: 500;
-}
-
-QToolBox::tab:selected {
-    background-color: #4CAF50;
-    color: white;
-}
-
-QToolBox::tab:hover {
-    background-color: #C8E6C9;
-}
-
-QToolBox > QWidget {
-    background-color: white;
-    border: 1px solid #C8E6C9;
-    border-radius: 4px;
-}
-/* ========== QButton 样式 ========== */
-QPushButton {
-    background-color: white;
-    border: 1px solid #9ad19a;
-    border-radius: 4px;
-    padding: 3px 4px 3px 4px;
-}
-QPushButton:hover {
-    border-color: #4CAF50;
-}
-QPushButton:pressed {
-    border: 2px solid #4CAF50;
-    background-color: #F1F8E9;
-}
-
-QPushButton:disabled {
-    background-color: #F5F5F5;
-    color: #BDBDBD;
-}
-
-/* ========== QComboBox 样式 ========== */
-QComboBox {
-    background-color: white;
-    border: 1px solid #9ad19a;
-    border-radius: 4px;
-    padding: 2px 2px 2px 4px; 
-
-    min-width: 50px;
-    selection-background-color: #E8F5E9;
-}
-
-QComboBox:hover {
-    border-color: #4CAF50;
-}
-
-QComboBox:focus {
-    border: 2px solid #4CAF50;
-    background-color: #F1F8E9;
-}
-
-QComboBox:disabled {
-    background-color: #F5F5F5;
-    color: #BDBDBD;
-}
-
-/* 下拉箭头样式 */
-QComboBox::drop-down {
-    width: 24px;
-    border-left: 1px solid #C8E6C9;
-    border-radius: 0 2px 2px 0;
-}
-
-QComboBox::down-arrow {
-}
-
-
-/* 下拉菜单样式 */
-QComboBox QAbstractItemView {
-    background-color: white;
-    border: 1px solid #C8E6C9;
-    selection-background-color: #E8F5E9;
-    selection-color: #2E7D32;
-    outline: 0;  /* 移除选中项的虚线框 */
-    padding: 4px;
-}
-
-QComboBox QAbstractItemView::item {
-    height: 28px;
-    padding: 0 8px;
-}
-
-QComboBox QAbstractItemView::item:hover {
-    background-color: #C8E6C9;
-}
-/* ========== 表格 QTableWidget 样式 ========== */
-QTableWidget {
-    gridline-color: #d0d0d0; /* 网格线颜色 */
-    background-color: white; /* 背景色 */
-}
-/* 表头样式 */
-QHeaderView::section {
-    background-color: #e0e0e0;
-    padding: 4px;
-    border: 1px solid #c0c0c0;
-    font-weight: bold;
-}
-/* 单元格样式 */
-QTableWidget::item {
-    padding: 3px;
-    border: none; /* 去除默认边框，使用网格线 */
-}
-/* 选中单元格的样式 */
-QTableWidget::item:focus {
-    background-color: #C8E6C9; /* 获得焦点时的背景色 */
-    color: black;
-}
-/* 另一种设置选中行样式的方法（如果设置了SelectionBehavior为SelectRows） */
-QTableWidget::item:selected {
-    background-color: #4CAF50; /* 选中项背景色 */
-    color: white;
-}
-/* 鼠标悬停在单元格上的样式 */
-QTableWidget::item:hover {
-    background-color: #C8E6C9; /* 悬停颜色 */
-}
-/* ========== 滚动条 QScrollBar 样式 ========== */
-QScrollArea {
-    border: none;
-    background-color: white;
-}
-QScrollBar:vertical {
-    width: 12px;
-    background: #f0f0f0;
-}
-QScrollBar::handle:vertical {
-    background: #C8E6C9;
-    min-height: 20px;
-}
-QScrollBar::handle:vertical:hover {
-    background: #A5D6A7;      /* 悬停时稍深 */
-}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0px;
-}
-/* ========== QDialog 样式 ========== */
-QDialog {
-    background-color: white;
-    border: 2px solid #C8E6C9;
-    border-radius: 6px;
-}
-
-QDialog QLabel {
-    color: #2E7D32;
-    font-weight: 500;
-}
-
-QDialog QPushButton {
-    min-width: 80px;
-    margin: 0 4px;
-}
-
-/* ========== QTabWidget 样式 ========== */
-QTabWidget::pane {
-    border: 1px solid #C8E6C9;
-    border-radius: 5px;
-    background: white;
-    margin-top: -1px;
-}
-
-QTabWidget::tab-bar {
-    left: 6px; 
-}
-
-QTabBar::tab {
-    background-color: #E8F5E9;
-    color: #2E7D32;
-    border: 1px solid #C8E6C9;
-    border-bottom: none;
-    border-top-left-radius: 4px;
-    border-top-right-radius:4px;
-    padding: 6px 12px;
-    margin-right: 4px;
-    margin-left: 4px;
-    font-weight: 100;
-    min-width: 40px
-}
-
-QTabBar::tab:selected {
-    background-color: #4CAF50;
-    color: white;
-    border-color: #388E3C;
-}
-
-QTabBar::tab:hover {
-    background-color: #C8E6C9;
-}
-
-QTabBar::tab:!selected {
-    margin-top: 4px; 
-}
-/* ========== QTreeWidget / QTreeView 样式 ========== */
-QTreeWidget, QTreeView {
-    background-color: white;
-    /* 边框颜色与 QDialog/QDockWidget 保持一致 */
-    border: 2px solid #C8E6C9; 
-    border-radius: 4px;
-    outline: 0; /* 去除选中时的虚线框 */
-    padding: 2px;
-    /* 使得选中条目整行高亮，而不仅仅是文字部分 */
-    show-decoration-selected: 1; 
-}
-
-/* 树形控件的头部 (复用 QTableWidget 头部风格) */
-QTreeWidget QHeaderView::section, QTreeView QHeaderView::section {
-    background-color: #e0e0e0;
-    padding: 4px 8px; /* 稍微增加左右内边距 */
-    border: 1px solid #c0c0c0;
-    border-top: none;
-    border-left: none; /* 避免双重边框 */
-    color: #2E7D32;    /* 字体颜色与 QMenuBar 保持一致 */
-    font-weight: bold;
-}
-
-/* 每一个条目 (Item) 的基础样式 */
-QTreeWidget::item, QTreeView::item {
-    padding: 4px; /* 增加舒适度 */
-    margin: 1px;  /* 条目间微小留白 */
-    border: none;
-    border-radius: 2px;
-}
-
-/* 鼠标悬停状态 */
-QTreeWidget::item:hover, QTreeView::item:hover {
-    /* 使用与 QMenuBar 相同的浅绿色悬停背景 */
-    background-color: #E8F5E9; 
-    border: 1px solid #C8E6C9; /* 可选：增加微弱边框强化悬停感 */
-}
-
-/* 选中状态 (激活时) */
-QTreeWidget::item:selected, QTreeView::item:selected {
-    /* 使用主色调 #4CAF50 */
-    background-color: #4CAF50;
-    color: white;
-}
-
-/* 选中状态 (失去焦点时，例如点击了其他控件) */
-QTreeWidget::item:selected:!active, QTreeView::item:selected:!active {
-    /* 变淡，提示用户当前焦点不在树上，但选中依然存在 */
-    background-color: #C8E6C9;
-    color: #2E7D32;
-}
-
-/* 分支指示器 (折叠/展开的小三角区域) */
-QTreeWidget::branch, QTreeView::branch {
-    background: transparent;
-}
-
-/* 鼠标悬停在分支区域时 */
-QTreeWidget::branch:hover, QTreeView::branch:hover {
-    background-color: #E8F5E9;
-}
-    """
-
 
     def read_qss_file(qss_file_name):
-        with open(qss_file_name, 'r', encoding='UTF-8') as file:
+        if hasattr(sys, '_MEIPASS'):
+            # 如果是，基础路径是临时解压目录
+            base_path = sys._MEIPASS
+        else:
+            # 如果不是（开发环境），基础路径是当前脚本所在目录
+            base_path = os.path.dirname(os.path.abspath(__file__))
+
+            # 拼接出QSS文件的完整绝对路径
+        qss_path = os.path.join(base_path, qss_file_name)
+        with open(qss_path, 'r', encoding='UTF-8') as file:
             return file.read()
     # 应用全局样式
     app.setStyle('Fusion')

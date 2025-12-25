@@ -1,4 +1,6 @@
 import logging
+import os
+import sys
 import time
 from cProfile import label
 from symtable import Class
@@ -13,7 +15,6 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QHeaderView, QAbstractItemView, QTabWidget, QWidget, QListWidget, QListWidgetItem,
                              QSizePolicy, QTreeWidget, QTreeWidgetItem)
 from PyQt5.QtCore import Qt, QEvent, QTimer, QModelIndex, pyqtSignal
-import HelpContentHTML
 from DataManager import Data,ProcessedData
 import markdown
 from markdown.extensions.codehilite import CodeHiliteExtension
@@ -799,7 +800,7 @@ class CWTComputePop(QDialog):
             self.cwt_size_input.setValue(1)
 
         self.wavelet = QComboBox()
-        self.wavelet.addItems(['cmor3-3','cmor1.5-1.0','cgau8','mexh','morl'])
+        self.wavelet.addItems(['cmor3-3','cmor8-3 ','cmor1.5-1.0','cgau8','mexh','morl'])
         self.wavelet.setCurrentText(self.params['cwt_type'])
 
         layout.addRow(QLabel("目标频率"),self.target_freq_input)
@@ -1158,6 +1159,10 @@ class DataViewAndSelectPop(QDialog):
         self.tab_widget.addTab(tab, tab_name)
         self.tables.append(table)
 
+        # 排序功能
+        table.setSortingEnabled(True)
+        table.horizontalHeader().setSortIndicatorShown(True)
+
         return table
 
     def setup_table(self, table, data_list):
@@ -1250,6 +1255,37 @@ class CustomHelpDialog(QDialog):
         self.setWindowTitle(title)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         self.setAttribute(Qt.WA_DeleteOnClose)  # 关闭时自动释放
+        self.htmlpath = self.get_html_path()
+        self.HELP_CONTENT = {
+    "general": {
+        "title": "程序使用指南",
+        "html": "main_help"
+        },
+    "canvas":{
+        "title": "成像系统指南",
+        "html": "canvas_help",
+    },
+    "stft": {
+        "title": "STFT(短时傅里叶变换)分析",
+        "html": "stft_help",
+        },
+    "cwt": {
+        "title": "CWT(连续小波变换)分析",
+        "html": 'cwt_help',
+        },
+    "lifetime": {
+        "title": "指数型寿命计算（没写完）",
+        "html": "lifetime_help",
+        },
+    "whole": {
+        "title":"全细胞分析（没写完）",
+        "html": "whole_help",
+        },
+    "single": {
+        "title":"单通道分析（没写完）",
+        "html": "single_help",
+        },
+    }
         self.content = content
         # 创建布局和控件
         layout = QVBoxLayout()
@@ -1269,6 +1305,20 @@ class CustomHelpDialog(QDialog):
         self.setLayout(layout)
         self.resize(500, 700)  # 设置初始大小
 
+    @staticmethod
+    def get_html_path() -> str:
+        """
+        获取资源的绝对路径，兼容开发和打包环境
+        """
+        try:
+            # PyInstaller 创建的单文件临时文件夹
+            base_path = sys._MEIPASS
+        except AttributeError:
+            # 开发环境，返回当前工作目录
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            base_path = os.path.join(base_path,'core')
+        return os.path.join(base_path , 'HTML')
+
     def add_help_tabs(self, topics):
         """添加指定的帮助主题标签页"""
         # 如果没有指定主题或列表为空，则显示所有主题
@@ -1287,11 +1337,14 @@ class CustomHelpDialog(QDialog):
         if topic_key == 'custom':
             text = html_text
             title = '方法帮助'
-        elif topic_key not in HelpContentHTML.HELP_CONTENT:
+        elif topic_key not in self.HELP_CONTENT:
+            logging.error("impossible fault from help")
             return
         else:
-            topic = HelpContentHTML.HELP_CONTENT[topic_key]
-            text = topic["html"]
+            topic = self.HELP_CONTENT[topic_key]
+            html_path = os.path.join(self.htmlpath, topic["html"]+'.html')
+            with open(html_path, 'r', encoding='utf-8') as file:
+                text = file.read()
             title = topic["title"]
         # 创建文本浏览器
         browser = QTextBrowser()
@@ -1898,7 +1951,7 @@ class DataPlotSelectDialog(QDialog):
                 self._check_and_add_plot_button(child, v, str(k), original_obj)
             elif isinstance(v, dict):
                 child.setText(1, "dict")
-                self._fill_dict_items(child, v)  # 递归
+                self._fill_dict_items(child, v, original_obj)  # 递归
             elif isinstance(v, list):
                 child.setText(1, "list")
                 child.setText(2, self._shape_to_str(len(v)))

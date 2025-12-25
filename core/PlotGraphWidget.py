@@ -19,6 +19,21 @@ class PlotGraphWidget(QWidget):
         self.plot_widget = pg.PlotWidget()
         layout.addWidget(self.plot_widget)
 
+        self.color_cycle = [
+            '#E59473', '#A18EE0', '#3BEAE0', '#D5F088',
+            '#D67D7C', '#89B5FF', '#51EFAA', '#EBD881',
+            '#C88ACD', '#63D2FF', '#7EF986', '#F4C476'
+
+
+        ]
+        # 记录单位对应的 10的幂次 (相对于秒)
+        self.unit_powers = {
+            's': 0,
+            'ms': -3,
+            'us': -6, 'μs': -6,  # 支持微秒的两种写法
+            'ns': -9
+        }
+        self.base_unit = None  # 用于存储第一个添加的数据的单位
         self.data_items = []
 
         #十字光标相关
@@ -74,12 +89,36 @@ class PlotGraphWidget(QWidget):
         """
         # 提取样式参数
         mode = kwargs.get('mode', 'line')
-        color = kwargs.get('color', '#00ccff')  # 默认青色
+        if 'color' in kwargs:
+            color = kwargs['color']
+        else:
+            # 取余数实现循环使用颜色
+            color_index = len(self.data_items) % len(self.color_cycle)
+            color = self.color_cycle[color_index]
         width = kwargs.get('width', 2)
         name = kwargs.get('name', 'data')
         symbol = kwargs.get('symbol', 'o')
         symbol_size = kwargs.get('symbol_size', 8)
 
+        time_unit = kwargs.get('time_unit', None)
+        x_data = array[:, 0].copy()  # 复制一份X轴数据，避免修改原数组
+        y_data = array[:, 1]
+
+        if time_unit and time_unit in self.unit_powers:
+            if self.base_unit is None:
+                # 情况A: 这是第一条数据，确立基准单位
+                self.base_unit = time_unit
+                # 可选: 更新X轴标签显示单位
+                self.plot_widget.setLabel('bottom', text='Time', units=self.base_unit)
+            else:
+                # 情况B: 已有基准单位，需要进行换算
+                if time_unit != self.base_unit:
+                    # 计算幂次差。例如：基准 ms(-3), 当前 ns(-9)。 diff = -9 - (-3) = -6
+                    # 比例因子 = 10 ^ (-6)。即 1ns = 1e-6 ms
+                    power_diff = self.unit_powers[time_unit] - self.unit_powers[self.base_unit]
+                    scale_factor = 10 ** power_diff
+                    x_data = x_data * scale_factor
+                    # 提示：你也可以在这里修改 name，比如 name += f" (scaled to {self.base_unit})"
         # 构造 Pen
         pen = pg.mkPen(color=color, width=width)
 
@@ -89,7 +128,7 @@ class PlotGraphWidget(QWidget):
 
         # === 创建新数据 ===
         item = self.plot_widget.plot(
-            array[:,0],array[:,1],
+            x_data, y_data,
             pen=plot_pen,
             symbol=plot_symbol,
             symbolBrush=color,
