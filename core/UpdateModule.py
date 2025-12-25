@@ -1,3 +1,4 @@
+import re
 import sys
 import os
 import logging
@@ -279,7 +280,7 @@ class UpdateDialog(QDialog):
             app_directory = os.path.dirname(os.path.abspath(sys.argv[0]))
             app_path = sys.argv[0]
             app_name = os.path.basename(app_path)
-
+            new_path = re.sub(r'-v\d+\.\d+\.\d+', f'-v{self.update_info['latest_version']}', app_path)
             # 创建临时目录用于解压
             temp_dir = tempfile.mkdtemp()
             self.log_message(f"创建临时目录: {temp_dir}")
@@ -308,7 +309,7 @@ rmdir /s /q "{temp_dir}"
 
 echo 启动新版本...
 cd /d "{app_directory}"
-start "" "{app_path}"
+start "" "{new_path}"
 
 echo 更新完成!
 del "%~f0"
