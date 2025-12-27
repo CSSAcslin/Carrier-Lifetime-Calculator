@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
     # process
     amend_data_signal = pyqtSignal(object)
     detect_bad_frames_auto_signal = pyqtSignal(np.ndarray, float)
-    fix_bad_frames_signal = pyqtSignal(np.ndarray, list, int)
+    fix_bad_frames_signal = pyqtSignal(object, list, int)
     # cal
     start_reg_cal_signal = pyqtSignal(object, float, tuple, str, int, str)
     start_dis_cal_signal = pyqtSignal(object, float, str, str, int, str, int)
@@ -1120,6 +1120,9 @@ class MainWindow(QMainWindow):
 
     def handle_startup_update(self, update_info):
         """处理启动时发现的更新"""
+        if not update_info['update_available']:
+            return
+
         logging.info(f"发现新版本 v{update_info['latest_version']}")
 
         # 更新状态栏提示
@@ -1676,7 +1679,7 @@ class MainWindow(QMainWindow):
             self.time_slider_vertical.setValue(0)
         elif tab_type == 'pre-scs':
             self.time_slider_vertical.setVisible(True)
-            self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['max_signal'].max() * 10))
+            self.time_slider_vertical.setMaximum(int(self.processed_data.out_processed['mean_signal'].max() * 10))
         else:
             if self.time_slider_vertical.isVisible():
                 self.time_slider_vertical.setVisible(False)
@@ -2027,9 +2030,9 @@ class MainWindow(QMainWindow):
             data = next(
                 (data for data in reversed(self.processed_data.history) if data.type_processed == "stft_quality"),
                 None)
-        target_freq = self.parse_frame_input('freq', data.out_processed['frequencies'])
         if data is not None:
             self.update_status("STFT计算ing", 'working')
+            target_freq = self.parse_frame_input('freq', data.out_processed['frequencies'])
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.update_param('EM','stft_window_type',window_dict[self.stft_window_select.currentIndex()])

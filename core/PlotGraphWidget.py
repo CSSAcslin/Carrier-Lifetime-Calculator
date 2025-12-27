@@ -87,6 +87,10 @@ class PlotGraphWidget(QWidget):
                - symbol: 散点形状 ('o', 's', 't', 'd', '+')
                - name: 图例名称
         """
+        # 自动添加图例（如果还没加）
+        if self.plot_widget.plotItem.legend is None:
+            self.plot_widget.addLegend()
+
         # 提取样式参数
         mode = kwargs.get('mode', 'line')
         if 'color' in kwargs:
@@ -136,10 +140,6 @@ class PlotGraphWidget(QWidget):
             name=name
         )
         self.data_items.append(item)
-
-        # 自动添加图例（如果还没加）
-        if self.plot_widget.plotItem.legend is None:
-            self.plot_widget.addLegend()
 
     def clear_all(self):
         """清空所有绘图内容"""

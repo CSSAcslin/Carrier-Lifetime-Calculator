@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; }
+        h1 { color: #2e7d32; 
+            border-bottom: 2px solid #4caf50; }
+        h2 { color: #388e3c; }
+        h3 { color: black; }
+        .code-block { 
+            background-color: #e8f5e9; 
+            border: 1px solid #c8e6c9;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        .param-table th {
+            background-color: #4caf50;
+            color: white;
+            text-align: left;
+            padding: 8px;
+        }
+        .param-table td {
+            border: 1px solid #c8e6c9;
+            padding: 8px;
+        }
+        .param-table tr:nth-child(even) {
+            background-color: #f1f8e9;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .math-block {
+            font-size: large;
+            background-color: #f9fbe7;
+            border: 1px solid #dcedc8;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+        .tools-intro {
+            border-image: 2px round white;
+            margin: 5px;
+            border: 2px solid #dcedc8;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .strength-block {
+            display: inline-block;
+            background-color: #cefdcb;
+            border: 2px solid #388e3c;
+            border-radius: 4px;
+            color: #388e3c;
+            padding: 0.2em 0.5em;
+            margin: 0.1em;
+            line-height: 1.2;
+        }
+        .light-gray {
+            color: #888888;
+        }
+    </style>
+    <title>stft_help</title>
+</head>
+<body>
+    <h1>数据查看器使用说明</h1>
+    <h2>1.历史导入/处理查看</h2>
+    这是以表格的形式呈现的所有导入\处理过的数据，包含一些基本信息。
+    <ul>
+        <li>type：一共就两种：<span class = "strength-block">Data</span> 导入的数据
+            <span class = "strength-block">ProcessedData</span>经过程序处理的数据</li>
+        <li>name：数据的名称，经过一定规则得到。导入数据取文件或文件夹名称</li>
+        <li>序号：即导入数据的位次</li>
+        <li>数据格式：导入时数据的格式</li>
+        <li>处理类型：是用什么方法处理得到的，如果看不懂的话告诉我一下，我后面加对照表</li>
+        <li>数据大小：其实是数据的尺寸，一般三维数据是时间×高度×宽度</li>
+        <li>数据源：从哪里处理来的</li>
+        <li>操作：目前有<span class = "strength-block">设为当前</span>和<span class = "strength-block">显示选择</span>两种
+            前者可以调换当前操作的数据（默认为最新导入和处理的数据）</li>
+    </ul>
+    <h2>2.所有数据详情查看</h2>
+    是更加详细的，以树的形式呈现的数据链。包含所有数据的几乎所有信息以及参数
+    <div class="note">
+        <strong>提示：</strong>如果没能快速找到你的数据，可以点击展开所有。
+    </div>
+    <ul>
+        <li>名称/key：数据的名称 / 或者数据下的参数<span class = "strength-block">Parameters</span> 导入数据的参数
+            <span class = "strength-block">Other Results</span>处理数据的参数
+            <div class="note">如果名称看不懂的话告诉我一下，我后面加对照表</div></li>
+
+        <li>类型：导入的类型或者处理的类型</li>
+        <li>尺寸/大小：数据的尺寸（维度） / 以及数据的大小（MB格式），只有三维数据会计算大小</li>
+        <li>数值范围：数值类型数据的最大值到最小值</li>
+        <li>创建时/值：此数据创建或处理的时间 / 各类参数的值</li>
+        <li>操作：目前有<span class = "strength-block">数据可视化</span>可以使得二维数据快速显示在右侧自由灵活的<span class = "strength-block">数据结果</span>窗口</li>
+    </ul>
+</body>
+</html>

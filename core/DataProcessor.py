@@ -16,6 +16,7 @@ from typing import List, Union, Optional
 from scipy import signal
 from scipy.optimize import curve_fit
 from scipy.ndimage import zoom
+from numba import jit
 import DataManager
 
 
@@ -99,13 +100,14 @@ class DataProcessor(QObject):
 
         return sorted(list(set(bad_frames)))
 
-    @pyqtSlot(np.ndarray, list, int)
-    def fix_bad_frames(self, data: np.ndarray, bad_frames: List[int], n_frames: int = 2) -> np.ndarray:
+    @pyqtSlot(object, list, int)
+    def fix_bad_frames(self, data: DataManager.ProcessedData|DataManager.Data, bad_frames: List[int], n_frames: int = 2) -> np.ndarray:
         """
         修复坏帧 - 使用前后n帧的平均值替换
         """
-        fixed_data = data.copy()
-        total_frames = len(data)
+        aim_data = data.data_origin
+        fixed_data = aim_data.copy()
+        total_frames = len(aim_data)
 
         for frame_idx in bad_frames:
             # 计算前后n帧的范围
@@ -118,11 +120,11 @@ class DataProcessor(QObject):
 
             if valid_frames:
                 # 计算平均值
-                fixed_data[frame_idx] = np.mean(data[valid_frames], axis=0)
+                fixed_data[frame_idx] = np.mean(aim_data[valid_frames], axis=0)
             else:
                 print(f"警告: 无法修复帧 {frame_idx} - 无有效参考帧")
 
-        return fixed_data
+        data.update_data(**self.amend_data(fixed_data))
 
     @pyqtSlot(np.ndarray,str,object)
     def plot_data_prepare(self, data: np.ndarray,name:str, father_obj: DataManager.Data| DataManager.ProcessedData ):
@@ -405,6 +407,8 @@ class MassDataProcessor(QObject):
                                                                out_processed={'whole_mean':np.mean(stft_py_out, axis=(1, 2)),
                                                                               'window_type': window,
                                                                               'window_size': window_size,
+                                                                              'window_step': window_size - noverlap,
+                                                                              'FFT_length': nfft,
                                                                               **{k:data.out_processed.get(k)
                                                                                  for k in data.out_processed if k not in {"unfolded_data"}}}))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
@@ -548,6 +552,7 @@ class MassDataProcessor(QObject):
                                                                  out_processed={'whole_mean':np.mean(cwt_py_out, axis=(1, 2)),
                                                                                 'total_scales': totalscales,
                                                                                 'wavelet_name':wavelet,
+                                                                                'scale_range': cwt_scale_range,
                                                                                 **{k: data.out_processed.get(k)
                                                                                    for k in data.out_processed if
                                                                                    k not in {"unfolded_data"}}}))
@@ -556,9 +561,6 @@ class MassDataProcessor(QObject):
         except Exception as e:
             self.processed_result.emit({'type':"ROI_cwt",'error':str(e)})
             return False
-
-    # def normalize_data(self, data):
-    #     return (data - np.min(data)) / (np.max(data) - np.min(data))
 
     @pyqtSlot(object)
     def accumulate_amplitude(self,data):
