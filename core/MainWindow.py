@@ -1,4 +1,6 @@
 import logging
+import multiprocessing
+
 import resources_rc
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -1955,7 +1957,8 @@ class MainWindow(QMainWindow):
         post_cov = self.post_cov_combo.currentText() if self.post_cov_combo.currentIndex() != 0 else None
         pre_size = self.pre_cov_size.value() if self.pre_cov_combo.currentIndex() != 0 else None
         post_size = self.post_cov_size.value() if self.post_cov_combo.currentIndex() != 0 else None
-        self.start_heat_cal_signal.emit(aim_data,self.time_step,model_type,pre_cov,pre_size,post_cov,post_size)
+        self.start_heat_cal_signal.emit(aim_data,self.time_step,model_type,pre_cov,pre_size,post_cov,post_size,
+                                       self.multiprocess_check.isChecked(),self.cpu_use_input.value())
         return True
 
     def diffusion_calculation_start(self):
@@ -2745,6 +2748,7 @@ class StreamLogger(object):
         pass
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     app = QApplication([])
     QFontDatabase.addApplicationFont("C:/Windows/Fonts/NotoSansSC-VF.ttf")  # 如：思源黑体、阿里巴巴普惠体
     QFontDatabase.addApplicationFont("C:/Windows/Fonts/calibril.ttf")  # 如：Roboto、Fira Code
