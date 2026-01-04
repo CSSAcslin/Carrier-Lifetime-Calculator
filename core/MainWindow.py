@@ -1,6 +1,7 @@
+import logging
+import resources_rc
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-
 import numpy as np
 from PyQt5 import sip
 from PyQt5.QtGui import QPixmap, QIcon, QFontDatabase
@@ -11,9 +12,6 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QStatusBar, QScrollBar, QFrame
                              )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QMetaObject, QElapsedTimer, QSettings, QCoreApplication
-from astropy.utils.console import ProgressBar
-from fontTools.ttx import process
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from ImportManager import *
 from DataProcessor import DataProcessor, MassDataProcessor
@@ -22,9 +20,6 @@ from LifetimeCalculator import LifetimeCalculator, CalculationThread
 from ResultDisplayWidget import *
 from ConsoleUtils import *
 from ExtraDialog import *
-import logging
-from ROIdrawDialog import ROIdrawDialog
-import resources_rc
 from DataManager import *
 from UpdateModule import *
 from PlotGraphWidget import *
@@ -40,13 +35,13 @@ class MainWindow(QMainWindow):
     fix_bad_frames_signal = pyqtSignal(object, list, int)
     # cal
     start_reg_cal_signal = pyqtSignal(object, float, tuple, str, int, str)
-    start_dis_cal_signal = pyqtSignal(object, float, str, str, int, str, int)
-    start_heat_cal_signal = pyqtSignal(object, float, str, str, int, str, int)
+    start_dis_cal_signal = pyqtSignal(object, float, str, str, int, str, int, bool, int)
+    start_heat_cal_signal = pyqtSignal(object, float, str, str, int, str, int, bool, int)
     start_dif_cal_signal = pyqtSignal(object, float, float, float, str)
     # mass
     pre_process_signal = pyqtSignal(Data,int,bool)
     stft_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, int, int, str)
-    stft_python_signal = pyqtSignal(ProcessedData,object, int, int, int, int, int, str)
+    stft_python_signal = pyqtSignal(ProcessedData,object, int, int, int, int, int, str, bool, int, int)
     cwt_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, str)
     cwt_python_signal = pyqtSignal(ProcessedData,float, int, int, str, float)
     mass_export_signal = pyqtSignal(np.ndarray, str, str, str, bool, dict)
@@ -60,7 +55,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         # 基本信息初始化
-        self.current_version = "0.11.4"  # 当前程序版本
+        self.current_version = "0.11.6"  # 当前程序版本
         self.repo_owner = "CSSAcslin"  # 程序作者
         self.repo_name = "Carrier-Lifetime-Calculator"  # 程序仓库名
         self.PAT = "Bearer <your PAT>"
@@ -79,7 +74,7 @@ class MainWindow(QMainWindow):
 
         # 界面加载
         self.init_ui()
-        self.log_file = self.setup_log_path()
+        self.log_file = self.get_log_path()
         self.setup_menus()
         self.setup_logging()
         self.help_dialog = None
@@ -403,7 +398,25 @@ class MainWindow(QMainWindow):
         self.left_panel = QWidget()
         self.left_panel_layout = QVBoxLayout()
         self.left_panel_layout.setContentsMargins(15,15,15,15)
+        self.setup_data_panel()
+        self.setup_parameter_panel()
+        self.setup_modes_panel()
+        self.left_panel_layout.addWidget(self.data_import)
+        self.left_panel_layout.addWidget(self.parameter_panel)
+        self.left_panel_layout.addWidget(self.modes_panel, stretch=1)
+        self.left_panel_layout.addSpacing(15)
+        # 添加分析按钮和导出按钮
+        data_save_layout = QHBoxLayout()
+        self.export_image_btn = QPushButton("导出结果为图片")
+        self.export_data_btn = QPushButton("导出结果为数据")
+        self.export_data_btn.setStyleSheet(button_style_sheet)
+        self.export_image_btn.setStyleSheet(button_style_sheet)
+        data_save_layout.addWidget(self.export_image_btn)
+        data_save_layout.addWidget(self.export_data_btn)
+        self.left_panel_layout.addLayout(data_save_layout)
+        self.left_panel.setLayout(self.left_panel_layout)
 
+    def setup_data_panel(self):
     # 数据导入面板
         self.data_import = self.QGroupBoxCreator('数据导入')
         left_layout0 = QVBoxLayout()
@@ -511,6 +524,7 @@ class MainWindow(QMainWindow):
         # left_layout0.addWidget(self.folder_path_label)
         self.data_import.setLayout(left_layout0)
 
+    def setup_parameter_panel(self):
     # 参数设置
         self.parameter_panel = self.QGroupBoxCreator("参数设置")
         left_layout = QVBoxLayout()
@@ -550,6 +564,7 @@ class MainWindow(QMainWindow):
         left_layout.addLayout(space_step_layout)
         self.parameter_panel.setLayout(left_layout)
 
+    def setup_modes_panel(self):
     # 分析总体设置
         self.modes_panel = self.QGroupBoxCreator("分析设置")
         left_layout1 = QVBoxLayout()
@@ -584,7 +599,24 @@ class MainWindow(QMainWindow):
         heatmap_group = self.QGroupBoxCreator(style = "inner")
         heatmap_layout = QVBoxLayout()
         heatmap_layout.addStretch(1)
+
+        multipro_layout = QHBoxLayout()
+        self.multiprocess_check = QCheckBox()
+        multipro_layout.addWidget(QLabel("启用加速："))
+        multipro_layout.addWidget(self.multiprocess_check)
+        heatmap_layout.addLayout(multipro_layout)
+        heatmap_layout.addWidget(QLabel("建议启用时关闭无用程序,启用后\n其他软件卡顿属正常现象"))
+        cpunum_layout = QHBoxLayout()
+        self.cpu_use_input = QSpinBox()
+        self.cpu_use_input.setRange(0, 100)
+        self.cpu_use_input.setValue(0)
+        self.cpu_use_input.setSuffix(f"/{ToolBucket.available_cpu_count()[0]}")
+        self.multiprocess_check.toggled.connect(lambda: self.cpu_use_input.setValue(ToolBucket.available_cpu_count()[1]))
+        cpunum_layout.addWidget(QLabel("核数"))
+        cpunum_layout.addWidget(self.cpu_use_input)
+        heatmap_layout.addLayout(cpunum_layout)
         heatmap_layout.addLayout(lifetime_layout)
+
         cov_layout = QFormLayout()
         self.pre_cov_combo = QComboBox()
         self.pre_cov_combo.addItems(['不使用','smooth', 'gaussian', 'sharpen', 'edge', 'laplacian', 'average'])
@@ -817,22 +849,6 @@ class MainWindow(QMainWindow):
         # left_layout1.addStretch(1)
         self.modes_panel.setLayout(left_layout1)
 
-        # 添加分析按钮和导出按钮
-        data_save_layout = QHBoxLayout()
-        self.export_image_btn = QPushButton("导出结果为图片")
-        self.export_data_btn = QPushButton("导出结果为数据")
-        self.export_data_btn.setStyleSheet(button_style_sheet)
-        self.export_image_btn.setStyleSheet(button_style_sheet)
-        data_save_layout.addWidget(self.export_image_btn)
-        data_save_layout.addWidget(self.export_data_btn)
-
-        self.left_panel_layout.addWidget(self.data_import)
-        self.left_panel_layout.addWidget(self.parameter_panel)
-        self.left_panel_layout.addWidget(self.modes_panel, stretch=1)
-        self.left_panel_layout.addSpacing(15)
-        self.left_panel_layout.addLayout(data_save_layout)
-        self.left_panel.setLayout(self.left_panel_layout)
-
     def between_stack_change(self):
         if self.fuction_select.currentIndex() == 0: # nothing
             self.between_stack.setCurrentIndex(0)
@@ -1001,7 +1017,7 @@ class MainWindow(QMainWindow):
                                       QDockWidget.DockWidgetFloatable |
                                       QDockWidget.DockWidgetClosable)
 
-    def setup_log_path(self):
+    def get_log_path(self):
         """生成配置文件地址"""
         if hasattr(sys, '_MEIPASS'):  # 检测是否在PyInstaller打包环境中运行
             # 使用os.environ获取标准路径
@@ -1086,11 +1102,10 @@ class MainWindow(QMainWindow):
         self.settings.endGroup()
 
         # 如果从未检查过或超过24小时，则检查更新
-        import datetime
-        now = datetime.datetime.now()
+        now = datetime.now()
 
         if last_check:
-            last_check_date = datetime.datetime.fromisoformat(last_check)
+            last_check_date = datetime.fromisoformat(last_check)
             if (now - last_check_date).days < 1:  # 1天内检查过
                 should_check = False
 
@@ -1917,7 +1932,8 @@ class MainWindow(QMainWindow):
         post_cov = self.post_cov_combo.currentText() if self.post_cov_combo.currentIndex() != 0 else None
         pre_size = self.pre_cov_size.value() if self.pre_cov_combo.currentIndex() != 0 else None
         post_size = self.post_cov_size.value() if self.post_cov_combo.currentIndex() != 0 else None
-        self.start_dis_cal_signal.emit(self.data,self.time_step,model_type,pre_cov,pre_size,post_cov,post_size)
+        self.start_dis_cal_signal.emit(self.data,self.time_step,model_type,pre_cov,pre_size,post_cov,post_size,
+                                       self.multiprocess_check.isChecked(),self.cpu_use_input.value())
         return None
 
     def heat_transfer_start(self):
@@ -2024,31 +2040,42 @@ class MainWindow(QMainWindow):
         if self.processed_data is None:
             logging.warning("没有数据可以计算，请先加载并预处理数据")
             return
-        if "stft_quality" == self.processed_data.type_processed:
+        if "EM_pre_processed" == self.processed_data.type_processed:
             data = self.processed_data
         else:
             data = next(
-                (data for data in reversed(self.processed_data.history) if data.type_processed == "stft_quality"),
+                (data for data in reversed(self.processed_data.history) if data.type_processed == "EM_pre_processed"),
                 None)
         if data is not None:
             self.update_status("STFT计算ing", 'working')
-            target_freq = self.parse_frame_input('freq', data.out_processed['frequencies'])
+            # target_freq = self.parse_frame_input('freq', data.out_processed['frequencies'])
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
             self.update_param('EM','stft_window_type',window_dict[self.stft_window_select.currentIndex()])
-            if not self.avi_thread.isRunning():
-                self.avi_thread.start()
-            target_freq = self.EM_params['target_freq'] if target_freq is None else target_freq
-            logging.info(f"目标频率：{target_freq}")
-            self.stft_python_signal.emit(data,
-                                         target_freq, self.EM_params['stft_scale_range'], self.EM_params['EM_fps'],
-                                         self.EM_params['stft_window_size'],
-                                         self.EM_params['stft_noverlap'],
-                                         self.EM_params['custom_nfft'],
-                                         self.EM_params['stft_window_type'])
-            self.stft_process_btn.setEnabled(False)
+            dialog = STFTComputePop(self.EM_params, 'process',time_length=data.timelength)
+            if dialog.exec_():
+                self.update_param('EM','target_freq',dialog.target_freq_input.value())
+                self.update_param('EM', 'EM_fps', dialog.fps_input.value())
+                self.update_param('EM', 'stft_scale_range',dialog.scale_range_input.value())
+                self.update_param('EM', 'stft_window_size',dialog.window_size_input.value())
+                self.update_param('EM', 'stft_noverlap', dialog.noverlap_input.value())
+                self.update_param('EM', 'custom_nfft',dialog.custom_nfft_input.value())
+                if not self.avi_thread.isRunning():
+                    self.avi_thread.start()
+                target_freq = self.EM_params['target_freq'] #if target_freq is None else target_freq
+                logging.info(f"目标频率：{target_freq}")
+                self.stft_python_signal.emit(data,
+                                             target_freq, self.EM_params['stft_scale_range'], self.EM_params['EM_fps'],
+                                             self.EM_params['stft_window_size'],
+                                             self.EM_params['stft_noverlap'],
+                                             self.EM_params['custom_nfft'],
+                                             self.EM_params['stft_window_type'],
+                                             dialog.multiprocess_check.isChecked(), # 目前加速计算的参数不保存上传，需要每次都确认
+                                             dialog.batch_size_input.value(),
+                                             dialog.cpu_use_input.value(),)
+                self.stft_process_btn.setEnabled(False)
         else:
-            logging.warning("查找不到数据，请先对数据进行预处理和质量评价")
+            logging.warning("查找不到数据，请先对数据进行预处理")
             self.update_status("准备就绪")
             return
 

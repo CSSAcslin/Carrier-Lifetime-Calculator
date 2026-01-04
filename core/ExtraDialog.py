@@ -2,8 +2,8 @@ import logging
 import os
 import sys
 import time
-from cProfile import label
-from symtable import Class
+import psutil
+from math import ceil
 from typing import List
 
 import numpy as np
@@ -16,11 +16,28 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QSizePolicy, QTreeWidget, QTreeWidgetItem)
 from PyQt5.QtCore import Qt, QEvent, QTimer, QModelIndex, pyqtSignal
 from DataManager import Data,ProcessedData
-import markdown
-from markdown.extensions.codehilite import CodeHiliteExtension
-from markdown.extensions.fenced_code import FencedCodeExtension
 import re
 
+class ToolBucket:
+    @staticmethod
+    def available_cpu_count(threshold=20.0, check_interval=1.0):
+        """
+        获取可用（闲置）CPU核心数（放在整理意味着目前这条命令只需要在弹窗级别使用）
+
+        参数:
+        threshold: CPU使用率阈值，低于此值认为核心可用
+        check_interval: 检查CPU使用率的时间间隔
+
+        返回:
+        可用CPU核心数
+        """
+        cpu_percentages = psutil.cpu_percent(interval=check_interval, percpu=True)
+
+        total_cpus = len(cpu_percentages)
+        # 统计使用率低于阈值的核心
+        available_cpus = sum(1 for usage in cpu_percentages if usage < threshold)
+
+        return total_cpus, available_cpus
 
 # 坏帧处理对话框
 class BadFrameDialog(QDialog):
@@ -470,18 +487,20 @@ class DataSavingPop(QDialog):
 
 # 计算stft参数弹窗
 class STFTComputePop(QDialog):
-    def __init__(self,params,case,parent = None):
+    def __init__(self,params,case,parent = None,time_length = None):
         super().__init__(parent)
         self.setWindowTitle("短时傅里叶变换")
         self.setMinimumWidth(300)
         self.setMinimumHeight(200)
         self.params = params
         self.help_dialog = None
+        self.case = case
+        self.time_length = time_length
         self.init_ui()
 
     def init_ui(self):
         layout = QFormLayout()
-
+        row = 6
         self.target_freq_input = QDoubleSpinBox()
         self.target_freq_input.setRange(0.1, 10000)
         self.target_freq_input.setValue(self.params['target_freq'])
@@ -514,6 +533,28 @@ class STFTComputePop(QDialog):
         layout.addRow(QLabel("窗口重叠"),self.noverlap_input)
         layout.addRow(QLabel("变换长度"),self.custom_nfft_input)
 
+        if self.case == 'process':
+            row = 10
+            self.multiprocess_check = QCheckBox()
+            layout.addRow(QLabel("启用加速"),self.multiprocess_check)
+            self.hint_label = QLabel("建议启用时关闭无用程序")
+            layout.addRow(QLabel("启用警告："),self.hint_label)
+            self.multiprocess_check.toggled.connect(self.multiprocess_handle)
+
+            self.batch_size_input = QSpinBox()
+            self.batch_size_input.setRange(0,10000)
+            self.batch_size_input.setValue(0)
+            layout.addRow(QLabel("批处理大小"),self.batch_size_input)
+            self.noverlap_input.valueChanged.connect(self._batch_size_cal)
+            self.custom_nfft_input.valueChanged.connect(self._batch_size_cal)
+            self.window_size_input.valueChanged.connect(self._batch_size_cal)
+            self.batch_size_input.setEnabled(False)
+
+            self.cpu_use_input = QSpinBox()
+            self.cpu_use_input.setRange(0,100)
+            self.cpu_use_input.setValue(0)
+            layout.addRow(QLabel("加速核数"),self.cpu_use_input)
+            self.cpu_use_input.setEnabled(False)
 
         button_layout = QHBoxLayout()
         self.apply_btn = QPushButton("执行STFT")
@@ -522,7 +563,7 @@ class STFTComputePop(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.apply_btn)
         button_layout.addWidget(self.cancel_btn)
-        layout.setLayout(6,QFormLayout.FieldRole,button_layout)
+        layout.setLayout(row,QFormLayout.FieldRole,button_layout)
 
         self.setLayout(layout)
 
@@ -544,6 +585,58 @@ class STFTComputePop(QDialog):
         self.help_dialog.show()  # 非阻塞显示
         self.help_dialog.activateWindow()
         self.help_dialog.raise_()
+
+    def multiprocess_handle(self):
+        """多进程加速启用"""
+        multipro = self.multiprocess_check.isChecked()
+        if multipro:
+            self.batch_size_input.setEnabled(True)
+            self.hint_label.setText("启用后其他软件卡顿属正常现象")
+            self.cpu_use_input.setEnabled(True)
+            self._batch_size_cal()
+            self.cpu_use_input.setValue(ToolBucket.available_cpu_count()[1])
+            self.cpu_use_input.setSuffix(f"/{ToolBucket.available_cpu_count()[0]}")
+        else:
+            self.hint_label.setText("建议启用时关闭无用程序")
+            self.batch_size_input.setEnabled(False)
+            self.cpu_use_input.setEnabled(False)
+
+    def _batch_size_cal(self):
+        """动态计算批处理大小Size"""
+        custom_nfft =  self.custom_nfft_input.value()
+        window_size = self.window_size_input.value()
+        noverlap = self.noverlap_input.value()
+
+        # 1. 计算频率轴长度 (Freq Bins)
+        n_freqs = custom_nfft // 2 + 1
+
+        # 2. 计算步长 (Hop Size)
+        hop_size = window_size - noverlap
+        if hop_size < 1:
+            self.noverlap_input.setValue(window_size - 1)
+
+        # 3. 估算时间轴长度 (Time Steps)
+        # 加上 padding 带来的额外几帧，这里多算一点作为安全冗余 (+5)
+        n_time_steps = ceil(self.time_length / hop_size) + 5
+
+        # 4. 计算单个像素 STFT 结果占用的字节数 (Complex64 = 8 bytes)
+        bytes_per_pixel = n_freqs * n_time_steps * 8
+
+        # 5. 设定内存安全阈值 (例如 800 MB)
+        mem_info = psutil.virtual_memory()
+        available_ram = mem_info.available
+        SAFE_MEMORY_LIMIT = min(available_ram * 0.5, 2 * 1024 * 1024 * 1024)
+        # 意味着我们每次循环处理产生的数据量控制在 800MB 以内，这对大多数电脑都很轻松
+        TARGET_BLOCK_SIZE = 8 * 1024 * 1024  # 8 MB
+
+        # 3. 计算最佳 Batch Size
+        optimal_batch_size = int(TARGET_BLOCK_SIZE / bytes_per_pixel)
+        # 6. 算出 Batch Size
+        # 兜底：至少处理1个像素，如果连1个都存不下，那是硬件问题了
+        batch_size = max(1, int(SAFE_MEMORY_LIMIT / bytes_per_pixel))
+        batch_size = max(1, optimal_batch_size)
+        self.batch_size_input.setValue(batch_size)
+
 
 # 计算cwt参数弹窗
 class CWTComputePop(QDialog):

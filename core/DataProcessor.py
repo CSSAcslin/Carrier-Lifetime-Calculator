@@ -1,24 +1,92 @@
 import copy
-import glob
 import logging
-import os
-import re
 import numpy as np
-import tifffile as tiff
-import sif_parser
-import cv2
 import pywt
 import h5py
-from PIL import Image
-from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer
-from PyQt5.QtWidgets import QApplication
-from typing import List, Union, Optional
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QElapsedTimer, QThread
+from typing import List
 from scipy import signal
 from scipy.optimize import curve_fit
 from scipy.ndimage import zoom
-from numba import jit
 import DataManager
+from multiprocessing import shared_memory, Manager, Pool
+import math
+import traceback
 
+
+# --- 全局 Worker 函数 ---
+def _stft_worker_process(
+        input_shm_name, input_shape, input_dtype,
+        output_shm_name, output_shape, output_dtype,
+        pixel_range,
+        fps, window, window_size, noverlap, nfft, target_idx, batch_size,
+        queue
+):
+    """
+    独立进程运行的函数：读取共享内存 -> 计算 -> 写入共享内存
+    """
+    # 1. 连接共享内存
+    existing_shm_in = shared_memory.SharedMemory(name=input_shm_name)
+    existing_shm_out = shared_memory.SharedMemory(name=output_shm_name)
+
+    try:
+        # 2. 通过 buffer 重构 NumPy 数组 (零拷贝)
+        unfolded_data = np.ndarray(input_shape, dtype=input_dtype, buffer=existing_shm_in.buf)
+        stft_out_flat = np.ndarray(output_shape, dtype=output_dtype, buffer=existing_shm_out.buf)
+
+        # 3. 获取该进程负责的像素范围
+        start_global, end_global = pixel_range
+        total_pixels_in_task = end_global - start_global
+
+        # 4. 内部循环：Cache 友好的小 Batch 处理
+        #    为了保护 L3 Cache，我们不在进程内一次性算完 3万个像素
+        #    而是每次算 64-128 个像素
+        CACHE_BATCH_SIZE = batch_size
+
+        local_processed_count = 0
+
+        for b_start in range(start_global, end_global, CACHE_BATCH_SIZE):
+            b_end = min(b_start + CACHE_BATCH_SIZE, end_global)
+
+            # --- 核心计算逻辑 (同之前的优化版) ---
+            batch_data = unfolded_data[b_start:b_end, :]  # [Batch, Time]
+
+            # STFT
+            _, _, Zxx_batch = signal.stft(
+                batch_data, fs=fps, window=window,
+                nperseg=window_size, noverlap=noverlap, nfft=nfft,
+                axis=-1
+            )
+
+            # 提取目标频率
+            target_data = Zxx_batch[:, target_idx, :]
+            mag_batch = np.abs(target_data)
+
+            if mag_batch.ndim == 3:
+                mag_batch = np.mean(mag_batch, axis=1)
+
+            mag_batch *= 560
+
+            # 写入输出共享内存
+            # 注意：stft_out_flat 的形状是 (out_length, total_pixels)
+            # 我们需要转置 mag_batch (Batch, Time) -> (Time, Batch)
+            valid_len = min(mag_batch.shape[1], stft_out_flat.shape[0])
+            stft_out_flat[:valid_len, b_start:b_end] = mag_batch.T[:valid_len, :]
+
+            # 5. 上报进度
+            #    为了防止 Queue 拥堵，每处理一定量才发一次
+            local_processed_count += (b_end - b_start)
+            if local_processed_count >= 1000 or b_end == end_global:
+                queue.put(local_processed_count)
+                local_processed_count = 0
+
+    except Exception as e:
+        traceback.print_exc()
+        raise f"Worker Error: {e}"
+    finally:
+        # 清理连接（不删除内存，只断开连接）
+        existing_shm_in.close()
+        existing_shm_out.close()
 
 class DataProcessor(QObject):
     """本类包含所有非计算流程的操作（常开线程）"""
@@ -316,10 +384,241 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
             return False
 
-    @pyqtSlot(DataManager.ProcessedData,object,int,int,int,int,int,str)
-    def python_stft(self,data, target_freq,scale_range:int,fps:int, window_size: int, noverlap: int,
-                    custom_nfft: int, window_type: str):
-        """
+    # @pyqtSlot(DataManager.ProcessedData,object,int,int,int,int,int,int,str)
+    # def python_stft(self,data, target_freq,scale_range:int,fps:int, window_size: int, noverlap: int,
+    #                 custom_nfft: int, batch_size: int, window_type: str):
+    #     """
+    #     执行逐像素STFT分析
+    #     参数:
+    #         avi_data: 预处理后的数据字典
+    #         target_freq: 目标分析频率(Hz)
+    #         window_size: Hanning窗口大小(样本数)
+    #         noverlap: 重叠样本数
+    #         custom_nfft: 自定义FFT点数(可选)
+    #     """
+        # try:
+        #     if not data:
+        #         raise ValueError("请先进行预处理")
+        #     if 'out_length' not in data.out_processed:
+        #         raise ValueError("请先进行质量评估")
+        #
+        #     if isinstance(target_freq, float):
+        #         target_idx = data.out_processed['target_idx']
+        #     else:
+        #         target_idx = target_freq
+        #     out_length = data.out_processed['out_length']
+        #     time_series = data.out_processed['time_series']
+        #     freq = data.out_processed['frequencies']
+        #     data = next(data for data in reversed(data.history) if data.type_processed == "EM_pre_processed")# [像素数 x 帧数]
+        #     frame_size = data.framesize  # (宽度, 高度)
+        #     unfolded_data = data.out_processed['unfolded_data']
+        #
+        #     # 2. 计算采样率和FFT参数
+        #     total_frames = unfolded_data.shape[1]
+        #     total_pixels = unfolded_data.shape[0]
+        #     nfft = custom_nfft
+        #     if nfft < window_size: # 确保nfft大于等于窗长度
+        #         nfft = window_size
+        #
+        #     self.processing_progress_signal.emit(1, total_pixels)
+        #
+        #     # 4. 初始化结果数组
+        #     height, width = frame_size
+        #     stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
+        #
+        #     # 窗函数的选择和生成
+        #     window = self.get_window(window_type, window_size)
+        #
+        #     # 5. 逐像素STFT处理
+        #     self.processing_progress_signal.emit(1, total_pixels)
+        #
+        #     # 对每个像素执行STFT
+        #     for i in range(total_pixels):
+        #         if self.abortion:
+        #             return
+        #
+        #         pixel_signal = unfolded_data[i, :]
+        #
+        #         # 计算当前像素的STFT
+        #         # signal.ShortTimeFFT
+        #         _, _, Zxx = signal.stft(
+        #             pixel_signal,
+        #             fs=fps,
+        #             window=window,
+        #             nperseg=window_size,
+        #             noverlap=noverlap,
+        #             nfft=nfft,
+        #             return_onesided=False,
+        #             scaling='psd'
+        #         )
+        #         # 提取目标频率处的幅度
+        #         magnitude = np.mean(np.abs(Zxx[target_idx, :]), axis=0) * 560
+        #
+        #         # 将结果存入对应像素位置
+        #         y = i // width
+        #         x = i % width
+        #         stft_py_out[:, y, x] = magnitude
+        #         # zxx_out[:,:, y, x] = Zxx
+        #
+        #         self.processing_progress_signal.emit(i, total_pixels)
+        #
+        #     # with h5py.File('transfer_data.h5', 'w') as f:
+        #     #     # 创建数据集并写入数据(for debug)
+        #     #     dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
+        #
+        #     # 6. 发送完整结果
+        #     self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+        #                                                        f'{data.name}@r_stft',
+        #                                                        'ROI_stft',
+        #                                                         time_point=time_series,
+        #                                                        data_processed=stft_py_out,
+        #                                                        out_processed={'whole_mean':np.mean(stft_py_out, axis=(1, 2)),
+        #                                                                       'window_type': window,
+        #                                                                       'window_size': window_size,
+        #                                                                       'window_step': window_size - noverlap,
+        #                                                                       'FFT_length': nfft,
+        #                                                                       **{k:data.out_processed.get(k)
+        #                                                                          for k in data.out_processed if k not in {"unfolded_data"}}}))
+        #     self.processing_progress_signal.emit(total_pixels, total_pixels)
+        #     return True
+        # except Exception as e:
+        #     self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
+        #     return False
+
+
+    # @pyqtSlot(DataManager.ProcessedData, object, int, int, int, int, int, int, str)
+    # def python_stft(self, data, target_freq, scale_range: int, fps: int, window_size: int, noverlap: int,
+    #                 custom_nfft: int, batch_size: int, window_type: str):
+    #     """分块处理的stft"""
+    #     # try:
+    #     window = self.get_window(window_type, window_size)
+    #     frame_size = data.framesize
+    #     unfolded_data = data.out_processed['unfolded_data']  # Shape: [Pixels, Frames]
+    #
+    #     mean_signal = np.mean(unfolded_data, axis=0)
+    #     f0, t0, Zxx0 = signal.stft(
+    #         mean_signal,
+    #         fs=fps,
+    #         window=window,
+    #         nperseg=window_size,
+    #         noverlap=noverlap,
+    #         nfft=custom_nfft,
+    #         return_onesided=True,
+    #         scaling='psd'
+    #     )
+    #     out_length = Zxx0.shape[1]
+    #     time_series = t0
+    #
+    #     if isinstance(target_freq, float):
+    #         if scale_range > 0:
+    #             low_bound = max(0.0, target_freq - scale_range / 2.0)
+    #             high_bound = min(f0[-1], target_freq + scale_range / 2.0)
+    #             target_idx = np.where((f0 >= low_bound) & (f0 <= high_bound))[0]
+    #             if len(target_idx) == 0:
+    #                 target_idx = [np.argmin(np.abs(f0 - target_freq))]
+    #         else:
+    #             target_idx = [np.argmin(np.abs(f0 - target_freq))]
+    #     else:
+    #         target_idx = target_freq
+    #
+    #     total_pixels = unfolded_data.shape[0]
+    #     nfft = max(custom_nfft, window_size)
+    #     height, width = frame_size
+    #
+    #     # --- 2. 准备工作 ---
+    #     self.processing_progress_signal.emit(1, total_pixels)
+    #
+    #     # 创建结果数组 (out_length, height, width)
+    #     stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
+    #
+    #     # 创建一个临时视图，将空间维度展平，方便按像素索引赋值
+    #     # Shape: (out_length, total_pixels)
+    #     stft_out_flat = stft_py_out.reshape(out_length, -1)
+    #
+    #     for start_idx in range(0, total_pixels, batch_size):
+    #         if self.abortion:
+    #             return
+    #
+    #         end_idx = min(start_idx + batch_size, total_pixels)
+    #
+    #         # 取出一批像素数据 (Batch_size, Frames)
+    #         batch_data = unfolded_data[start_idx:end_idx, :]
+    #
+    #         # [关键点]：一次性计算整个 Batch 的 STFT
+    #         # axis=-1 表示对最后的时间维度做变换
+    #         # 返回 Zxx shape: (Batch_size, Freqs, Time_segments)
+    #         _, _, Zxx_batch = signal.stft(
+    #             batch_data,
+    #             fs=fps,
+    #             window=window,
+    #             nperseg=window_size,
+    #             noverlap=noverlap,
+    #             nfft=nfft,
+    #             return_onesided=False,
+    #             scaling='psd',
+    #             axis=-1
+    #         )
+    #
+    #         # 现在的 Zxx_batch 是 3D 的。我们需要切片并保持 batch 维度。
+    #
+    #         # 提取目标频率层。
+    #         # 注意：target_idx 可能是一个切片(slice)或列表，也可能是一个整数。
+    #         target_data = Zxx_batch[:, target_idx, :]  # Shape: (Batch_size, [Freqs], Time)
+    #
+    #         # 计算模值
+    #         mag_batch = np.abs(target_data)
+    #
+    #         # 如果 target_idx 包含了多个频率(是一个频带)，需要像原来一样 dim=0 (现在是 dim=1) 做平均
+    #         # 如果 target_idx 只是单个频率，ndim 已经是 2 (Batch, Time) 了
+    #         if mag_batch.ndim == 3:
+    #             mag_batch = np.mean(mag_batch, axis=1)
+    #
+    #         mag_batch *= 560
+    #
+    #         # 此时 mag_batch shape 为 (Batch_size, Time_segments)
+    #         # 我们的目标 stft_out_flat 需要 (Time_segments, Batch_size)
+    #         # 所以需要转置 (.T)
+    #         # 赋值给结果数组
+    #         # 注意：这里可能会因为 signal.stft 返回的 time segment 数量与 out_length 有极其微小的差异（取决于padding），
+    #         # 建议加个切片 [:out_length] 保护
+    #         valid_time_len = min(mag_batch.shape[1], out_length)
+    #         stft_out_flat[:valid_time_len, start_idx:end_idx] = mag_batch.T[:valid_time_len, :]
+    #
+    #         # 每处理完一个 Batch 发送一次信号，而不是每个像素发一次
+    #         self.processing_progress_signal.emit(end_idx, total_pixels)
+    #
+    #     # --- 5. 收尾工作 ---
+    #     # 此时 stft_py_out 已经被通过 stft_out_flat 视图填充完毕
+    #
+    #     result_payload = DataManager.ProcessedData(
+    #         data.timestamp,
+    #         f'{data.name}@r_stft',
+    #         'ROI_stft',
+    #         time_point=time_series,
+    #         data_processed=stft_py_out,
+    #         out_processed={
+    #             'whole_mean': np.mean(stft_py_out, axis=(1, 2)),
+    #             'window_type': window,
+    #             'window_size': window_size,
+    #             'window_step': window_size - noverlap,
+    #             'target_freq': target_freq,
+    #             'FFT_length': nfft,
+    #             'batch_size': batch_size,
+    #             **{k: data.out_processed.get(k) for k in data.out_processed if k not in {"unfolded_data"}}
+    #         }
+    #     )
+    #
+    #     self.processed_result.emit(result_payload)
+    #     self.processing_progress_signal.emit(total_pixels, total_pixels)
+    #     return True
+        # # except Exception as e:
+        # #     self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
+        # #     return False
+
+    @pyqtSlot(DataManager.ProcessedData, object, int, int, int, int, int, str, bool, int, int)
+    def python_stft(self, data, target_freq, scale_range: int, fps: int, window_size: int, noverlap: int,
+                    custom_nfft: int, window_type: str, is_multipro: bool, batch_size: int, cpu_num: int):
+        """可选并行计算加速
         执行逐像素STFT分析
         参数:
             avi_data: 预处理后的数据字典
@@ -328,94 +627,283 @@ class MassDataProcessor(QObject):
             noverlap: 重叠样本数
             custom_nfft: 自定义FFT点数(可选)
         """
-        try:
-            if not data:
-                raise ValueError("请先进行预处理")
-            if 'out_length' not in data.out_processed:
-                raise ValueError("请先进行质量评估")
+        if is_multipro: # 启用并行加速
+            logging.info("将开启并行加速，进度条不代表实时进度，请稍等。。。")
+            shm_in = None
+            shm_out = None
+            pool = None
 
-            if isinstance(target_freq, float):
-                target_idx = data.out_processed['target_idx']
-            else:
-                target_idx = target_freq
-            out_length = data.out_processed['out_length']
-            time_series = data.out_processed['time_series']
-            freq = data.out_processed['frequencies']
-            data = next(data for data in reversed(data.history) if data.type_processed == "EM_pre_processed")# [像素数 x 帧数]
-            frame_size = data.framesize  # (宽度, 高度)
-            unfolded_data = data.out_processed['unfolded_data']
+            try:
+                # --- 1. 参数校验与准备 ---
+                window = self.get_window(window_type, window_size)
+                frame_size = data.framesize
+                unfolded_data = data.out_processed['unfolded_data']  # Shape: [Pixels, Frames]
 
-            # 2. 计算采样率和FFT参数
-            total_frames = unfolded_data.shape[1]
-            total_pixels = unfolded_data.shape[0]
-            nfft = custom_nfft
-            if nfft < window_size: # 确保nfft大于等于窗长度
-                nfft = window_size
-
-            self.processing_progress_signal.emit(1, total_pixels)
-
-            # 4. 初始化结果数组
-            height, width = frame_size
-            stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
-
-            # 窗函数的选择和生成
-            window = self.get_window(window_type, window_size)
-
-            # 5. 逐像素STFT处理
-            self.processing_progress_signal.emit(0, total_pixels)
-
-            # 对每个像素执行STFT
-            for i in range(total_pixels):
-                if self.abortion:
-                    return
-
-                pixel_signal = unfolded_data[i, :]
-
-                # 计算当前像素的STFT
-                # signal.ShortTimeFFT
-                _, _, Zxx = signal.stft(
-                    pixel_signal,
+                mean_signal = np.mean(unfolded_data, axis=0)
+                f0, t0, Zxx0 = signal.stft(
+                    mean_signal,
                     fs=fps,
                     window=window,
                     nperseg=window_size,
                     noverlap=noverlap,
-                    nfft=nfft,
-                    return_onesided=False,
+                    nfft=custom_nfft,
+                    return_onesided=True,
                     scaling='psd'
                 )
-                # 提取目标频率处的幅度
-                magnitude = np.mean(np.abs(Zxx[target_idx, :]), axis=0) * 560
+                out_length = Zxx0.shape[1]
+                time_series = t0
 
-                # 将结果存入对应像素位置
-                y = i // width
-                x = i % width
-                stft_py_out[:, y, x] = magnitude
-                # zxx_out[:,:, y, x] = Zxx
+                if isinstance(target_freq, float):
+                    if scale_range > 0:
+                        low_bound = max(0.0, target_freq - scale_range / 2.0)
+                        high_bound = min(f0[-1], target_freq + scale_range / 2.0)
+                        target_idx = np.where((f0 >= low_bound) & (f0 <= high_bound))[0]
+                        if len(target_idx) == 0:
+                            target_idx = [np.argmin(np.abs(f0 - target_freq))]
+                    else:
+                        target_idx = [np.argmin(np.abs(f0 - target_freq))]
+                else:
+                    target_idx = target_freq
 
-                self.processing_progress_signal.emit(i, total_pixels)
+                height, width = frame_size
+                total_pixels = unfolded_data.shape[0]
 
-            # with h5py.File('transfer_data.h5', 'w') as f:
-            #     # 创建数据集并写入数据(for debug)
-            #     dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
+                nfft = max(custom_nfft, window_size)
 
-            # 6. 发送完整结果
-            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
-                                                               f'{data.name}@r_stft',
-                                                               'ROI_stft',
-                                                                time_point=time_series,
-                                                               data_processed=stft_py_out,
-                                                               out_processed={'whole_mean':np.mean(stft_py_out, axis=(1, 2)),
-                                                                              'window_type': window,
-                                                                              'window_size': window_size,
-                                                                              'window_step': window_size - noverlap,
-                                                                              'FFT_length': nfft,
-                                                                              **{k:data.out_processed.get(k)
-                                                                                 for k in data.out_processed if k not in {"unfolded_data"}}}))
-            self.processing_progress_signal.emit(total_pixels, total_pixels)
-            return True
-        except Exception as e:
-            self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
-            return False
+                # --- 2. 创建共享内存 (Shared Memory) ---
+                # 这一步非常关键：我们在主进程申请内存，子进程直接用，无需复制 16GB 数据
+
+                # A. 输入数据共享内存
+                # create=True 表示创建新内存块
+                shm_in = shared_memory.SharedMemory(create=True, size=unfolded_data.nbytes)
+                # 将 numpy 数据复制进共享内存
+                shm_in_arr = np.ndarray(unfolded_data.shape, dtype=unfolded_data.dtype, buffer=shm_in.buf)
+                shm_in_arr[:] = unfolded_data[:]  # copy data
+
+                # B. 输出结果共享内存 (预分配)
+                # 我们需要一个 (out_length, total_pixels) 的矩阵方便写入
+                # 最终结果是 (out_length, height, width)，但计算时平铺比较好处理
+                output_shape_flat = (out_length, total_pixels)
+                output_dtype = np.float32
+                output_bytes = int(np.prod(output_shape_flat) * np.dtype(output_dtype).itemsize)
+
+                shm_out = shared_memory.SharedMemory(create=True, size=output_bytes)
+                # 初始化为 0
+                shm_out_arr = np.ndarray(output_shape_flat, dtype=output_dtype, buffer=shm_out.buf)
+                shm_out_arr[:] = 0
+
+                # 获取核心数
+                num_cores = cpu_num
+
+                # 计算每个进程负责的像素范围
+                chunk_size = math.ceil(total_pixels / num_cores)
+                tasks = []
+
+                # 使用 Manager Queue 进行进程间通信 (进度条)
+                m = Manager()
+                queue = m.Queue()
+
+                for i in range(num_cores):
+                    start = i * chunk_size
+                    end = min((i + 1) * chunk_size, total_pixels)
+                    if start >= end: break
+
+                    # 打包参数
+                    task_args = (
+                        shm_in.name, unfolded_data.shape, unfolded_data.dtype,
+                        shm_out.name, output_shape_flat, output_dtype,
+                        (start, end),  # Pixel Range
+                        fps, window, window_size, noverlap, nfft, target_idx,batch_size,
+                        queue
+                    )
+                    tasks.append(task_args)
+
+                self.processing_progress_signal.emit(0, total_pixels)
+                print(f"开始多进程计算: 核心数={len(tasks)}, SHM_IN={shm_in.name}, SHM_OUT={shm_out.name}")
+
+                # --- 4. 启动进程池 ---
+                # 注意：Windows 下必须使用 starmap_async 或者手动解析 args
+                pool = Pool(processes=len(tasks))
+
+                # 异步提交任务
+                result_async = pool.starmap_async(_stft_worker_process, tasks)
+
+                # --- 5. 监控进度 ---
+                # 主线程在这里循环，直到任务完成
+                # 这样既不会阻塞 UI (如果在 thread 里)，又能实时更新进度
+                processed_total = 0
+                while not result_async.ready():
+                    # 检查中止信号
+                    if self.abortion:
+                        pool.terminate()
+                        return False
+
+                    # 尝试从队列获取进度更新
+                    # 每次取一点，避免死锁
+                    while not queue.empty():
+                        processed_total += queue.get()
+
+                    self.processing_progress_signal.emit(processed_total, total_pixels)
+
+                    # 稍微 sleep 一下避免空转烧 CPU
+                    QThread.msleep(50)
+
+                    # 确保最后取完队列
+                while not queue.empty():
+                    processed_total += queue.get()
+                self.processing_progress_signal.emit(total_pixels, total_pixels)
+
+                # 检查是否有异常抛出
+                result_async.get()  # 如果 worker 报错，这里会 raise Exception
+
+                # --- 6. 结果回收与重构 ---
+                # 此时 shm_out_arr 里已经是计算好的数据了
+                # 我们需要把它 reshape 成 (out_length, height, width)
+                # 注意：这里的 .copy() 很重要，因为 shm_out 马上要 close/unlink 了
+                final_result_flat = shm_out_arr.copy()
+
+                # 重塑维度
+                stft_py_out = final_result_flat.reshape(out_length, height, width)
+
+                # 发送结果
+                self.processed_result.emit(DataManager.ProcessedData(
+                    data.timestamp,
+                    f'{data.name}@r_stft',
+                    'ROI_stft',
+                    time_point=time_series,
+                    data_processed=stft_py_out,
+                    out_processed={
+                        'whole_mean': np.mean(stft_py_out, axis=(1, 2)),
+                        'window_type': window,
+                        'window_size': window_size,
+                        'window_step': window_size - noverlap,
+                        'target_freq': target_freq,
+                        'FFT_length': nfft,
+                        **{k: data.out_processed.get(k) for k in data.out_processed if k not in {"unfolded_data"}}
+                    }
+                ))
+
+                return True
+
+            except Exception as e:
+                traceback.print_exc()
+                self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
+                return False
+
+            finally:
+                # --- 7. 清理资源 (至关重要) ---
+                if pool:
+                    pool.close()
+                    pool.join()
+
+                # 必须手动释放共享内存，否则会造成内存泄漏直到重启电脑
+                if shm_in:
+                    shm_in.close()
+                    shm_in.unlink()  # unlink 表示从系统中删除
+                if shm_out:
+                    shm_out.close()
+                    shm_out.unlink()
+
+                logging.info("共享内存已释放，进程池已关闭。")
+
+        else: # 不启用加速
+
+            try:
+                window = self.get_window(window_type, window_size)
+                frame_size = data.framesize
+                unfolded_data = data.out_processed['unfolded_data']  # Shape: [Pixels, Frames]
+
+                mean_signal = np.mean(unfolded_data, axis=0)
+                f0, t0, Zxx0 = signal.stft(
+                    mean_signal,
+                    fs=fps,
+                    window=window,
+                    nperseg=window_size,
+                    noverlap=noverlap,
+                    nfft=custom_nfft,
+                    return_onesided=True,
+                    scaling='psd'
+                )
+                out_length = Zxx0.shape[1]
+                time_series = t0
+
+                if isinstance(target_freq, float):
+                    if scale_range > 0:
+                        low_bound = max(0.0, target_freq - scale_range / 2.0)
+                        high_bound = min(f0[-1], target_freq + scale_range / 2.0)
+                        target_idx = np.where((f0 >= low_bound) & (f0 <= high_bound))[0]
+                        if len(target_idx) == 0:
+                            target_idx = [np.argmin(np.abs(f0 - target_freq))]
+                    else:
+                        target_idx = [np.argmin(np.abs(f0 - target_freq))]
+                else:
+                    target_idx = target_freq
+
+                total_pixels = unfolded_data.shape[0]
+                nfft = max(custom_nfft, window_size)
+                self.processing_progress_signal.emit(1, total_pixels)
+
+                # 4. 初始化结果数组
+                height, width = frame_size
+                stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
+
+                # 窗函数的选择和生成
+                window = self.get_window(window_type, window_size)
+
+                # 5. 逐像素STFT处理
+                self.processing_progress_signal.emit(1, total_pixels)
+
+                # 对每个像素执行STFT
+                for i in range(total_pixels):
+                    if self.abortion:
+                        return
+
+                    pixel_signal = unfolded_data[i, :]
+
+                    # 计算当前像素的STFT
+                    # signal.ShortTimeFFT
+                    _, _, Zxx = signal.stft(
+                        pixel_signal,
+                        fs=fps,
+                        window=window,
+                        nperseg=window_size,
+                        noverlap=noverlap,
+                        nfft=nfft,
+                        return_onesided=False,
+                        scaling='psd'
+                    )
+                    # 提取目标频率处的幅度
+                    magnitude = np.mean(np.abs(Zxx[target_idx, :]), axis=0) * 560
+
+                    # 将结果存入对应像素位置
+                    y = i // width
+                    x = i % width
+                    stft_py_out[:, y, x] = magnitude
+                    # zxx_out[:,:, y, x] = Zxx
+
+                    self.processing_progress_signal.emit(i, total_pixels)
+
+                # with h5py.File('transfer_data.h5', 'w') as f:
+                #     # 创建数据集并写入数据(for debug)
+                #     dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
+
+                # 6. 发送完整结果
+                self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+                                                                   f'{data.name}@r_stft',
+                                                                   'ROI_stft',
+                                                                    time_point=time_series,
+                                                                   data_processed=stft_py_out,
+                                                                   out_processed={'whole_mean':np.mean(stft_py_out, axis=(1, 2)),
+                                                                                  'window_type': window,
+                                                                                  'window_size': window_size,
+                                                                                  'window_step': window_size - noverlap,
+                                                                                  'FFT_length': nfft,
+                                                                                  **{k:data.out_processed.get(k)
+                                                                                     for k in data.out_processed if k not in {"unfolded_data"}}}))
+                return True
+            except Exception as e:
+                self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
+                return False
 
     def get_window(self,window_type, window_size):
         try:
@@ -509,13 +997,13 @@ class MassDataProcessor(QObject):
             scales = pywt.frequency2scale(wavelet, target_freqs * 1.0 / fps)
             total_frames = unfolded_data.shape[1]
             total_pixels = unfolded_data.shape[0]
-            self.processing_progress_signal.emit(0, total_pixels)
+            self.processing_progress_signal.emit(1, total_pixels)
             # 初始化结果数组
             height, width = frame_size
             cwt_py_out = np.zeros((data.timelength, height, width), dtype=np.float32)
 
             # 5. 逐像素STFT处理
-            self.processing_progress_signal.emit(1, total_pixels)
+            self.processing_progress_signal.emit(2, total_pixels)
 
             mid_idx = totalscales // 8
 
