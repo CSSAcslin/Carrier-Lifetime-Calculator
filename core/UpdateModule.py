@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                             QWidget, QPushButton, QLabel, QProgressBar, QTextEdit,
                             QMessageBox, QGroupBox, QDialog, QDialogButtonBox,
                             QMenu, QMenuBar, QAction, QTabWidget, QTextBrowser)
-from PyQt5.QtCore import QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWebEngineWidgets import QWebEngineView  # 用于渲染Markdown
 
@@ -31,6 +31,7 @@ class UpdateDialog(QDialog):
         self.update_checker = None
         self.update_downloader = None
         self.update_info = None
+        self.setAttribute(Qt.WA_DeleteOnClose)
 
         self.init_ui()
 

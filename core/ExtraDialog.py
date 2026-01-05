@@ -39,6 +39,97 @@ class ToolBucket:
 
         return total_cpus, available_cpus
 
+    @staticmethod
+    def parse_frame_input(self, parse_type="frame", freq=None):
+        """解析用户输入的帧数"""
+        if parse_type == 'frame':
+            text = self.frame_input.toPlainText()
+            self.max_frame = self.vector_array.shape[0] - 1
+            if not text:
+                QMessageBox.warning(self, "输入为空", "请输入有效的帧数选择")
+                return None
+        elif parse_type == 'freq':
+            text = self.retransform_input.toPlainText()
+            if not text:
+                return None
+        if text == 'all':
+            if parse_type == 'frame':
+                return list(range(self.max_frame + 1))
+            else:
+                return freq
+
+        # 替换所有分隔符为逗号
+        text = text.replace(';', ',').replace('，', ',')
+        frames = set()
+        target_idx = []
+        parts = text.split(',')
+        try:
+            for part in parts:
+                if not part:
+                    continue
+                # 处理范围输入 (e.g., "5-10", "20-25")
+                if '-' in part:
+                    range_parts = part.split('-')
+                    if len(range_parts) != 2:
+                        raise ValueError(f"无效的范围格式: {part}")
+
+                    start = int(range_parts[0])
+                    end = int(range_parts[1])
+
+                    if start > end:
+                        raise ValueError(f"起始帧({start})不能大于结束帧({end})")
+
+                    if parse_type == 'frame':
+                        # 确保范围在有效区间内
+                        if start < 0 or end > self.max_frame:
+                            raise ValueError(f"范围 {part} 超出有效帧范围 (0-{self.max_frame})")
+                        frames.update(range(start, end + 1))
+
+                    elif parse_type == 'freq':
+                        if start < min(freq) or end > max(freq):
+                            raise ValueError(f"范围 {part} 超出有效频率范围 ({min(freq)}-{max(freq)})")
+                        f_list = np.where((freq >= start) & (freq <= end))[0]
+                        if isinstance(f_list, np.ndarray):
+                            target_idx.extend(f_list)
+                        else:
+                            target_idx.append(f_list)
+                # 处理单帧数字
+                else:
+                    if parse_type == 'frame':
+                        frame = int(part)
+                        if frame < 0 or frame > self.max_frame:
+                            raise ValueError(f"帧号 {frame} 超出有效范围 (0-{self.max_frame})")
+                        frames.add(frame)
+                    elif parse_type == 'freq':
+                        target_idx.append(np.argmin(np.abs(freq - int(part))))
+            return sorted(frames) if parse_type == 'frame' else np.unique(target_idx)
+
+        except ValueError as e:
+            if parse_type == 'frame':
+                QMessageBox.warning(
+                    self,
+                    "输入错误",
+                    f"无效输入: {str(e)}\n\n正确格式示例:\n"
+                    "• 单帧: 5\n"
+                    "• 序列: 1,3,5,7\n"
+                    "• 范围: 10-15,20-25\n"
+                    "• 混合: 1,3-5,7,9-10\n"
+                    f"• 所有帧: all\n\n有效帧范围: 0-{self.max_frame}"
+                )
+                logging.warning(f"帧数输入错误: {str(e)} - 输入内容: {text}")
+            if parse_type == 'freq':
+                QMessageBox.warning(
+                    self,
+                    "输入错误",
+                    f"无效输入: {str(e)}\n\n正确格式示例:\n"
+                    "• 单频率（离此频率最近的频率）: 30\n"
+                    "• 范围（再此范围内的频率）:10-15,20-25\n"
+                    "• 混合: 10,30-50,70,90-100\n"
+                    f"• 全频率: all，即: {min(freq)}-{max(freq)}"
+                )
+                logging.warning(f"频率输入错误: {str(e)} - 输入内容: {text}")
+            return None
+
 # 坏帧处理对话框
 class BadFrameDialog(QDialog):
     def __init__(self, parent=None):
@@ -1845,7 +1936,10 @@ class DataPlotSelectDialog(QDialog):
             elif isinstance(v, list):
                 child.setText(1, "list")
                 child.setText(2, self._shape_to_str(len(v)))
-                child.setText(3, f'{min(v):.2f} ~ {max(v):.2f}')
+                try:
+                    child.setText(3, f'{min(v):.2f} ~ {max(v):.2f}')
+                except:
+                    child.setText(3, f'{v[0]} ~ {v[-1]}')
                 child.setText(4, "List Data")
             elif isinstance(v, float):
                 child.setText(1, "float")
@@ -1935,3 +2029,36 @@ class DataPlotSelectDialog(QDialog):
 
         # 将每个维度转换为字符串并用乘号连接
         return '×'.join(str(dim) for dim in shape)
+
+# 心跳分析模式弹窗
+class HeartBeatFrameSelectDialog(QDialog):
+    def __init__(self, data, parent=None):
+        super().__init__()
+        self.setWindowTitle("心肌细胞分析设置")
+        self.setGeometry(1000, 600, 400, 150)
+        self.setModal(False)
+        self.setWindowFlags(Qt.Dialog |
+                            Qt.WindowCloseButtonHint |
+                            Qt.WindowContextHelpButtonHint)
+        self.help_window = None
+        self.data = data
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        layout.addWidget(QLabel("请输入基准帧"))
+        self.base_frame_input = QSpinBox()
+        self.base_frame_input.setRange(0, self.data.timelength)
+        layout.addWidget(self.base_frame_input)
+        layout.addWidget(QLabel("请输入所有后续需要比较的帧"))
+        self.motion_frame_input = QLineEdit()
+        self.motion_frame_input.setPlaceholderText("输入帧位（起始帧位为0），以逗号或分号分隔，范围用-\n输入all选取全部帧")
+        layout.addWidget(self.motion_frame_input)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)

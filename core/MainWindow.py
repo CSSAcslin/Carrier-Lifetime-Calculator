@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         # 基本信息初始化
-        self.current_version = "0.11.6"  # 当前程序版本
+        self.current_version = "0.11.7"  # 当前程序版本
         self.repo_owner = "CSSAcslin"  # 程序作者
         self.repo_name = "Carrier-Lifetime-Calculator"  # 程序仓库名
         self.PAT = "Bearer <your PAT>"
@@ -578,7 +578,14 @@ class MainWindow(QMainWindow):
         nothing_layout1.addWidget(QLabel("首先：请选择分析模式!"))
         nothing_GROUP.setLayout(nothing_layout1)
         self.between_stack.addWidget(nothing_GROUP)
+        self.setup_fs_GROUP()
+        self.setup_EM_GROUP()
+        self.setup_Other_GROUP()
+        left_layout1.addWidget(self.between_stack)
+        # left_layout1.addStretch(1)
+        self.modes_panel.setLayout(left_layout1)
 
+    def setup_fs_GROUP(self):
     # fs_iSCAT下的功能选择
         fs_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
         operation_layout = QVBoxLayout()
@@ -702,6 +709,7 @@ class MainWindow(QMainWindow):
         fs_iSCAT_GROUP.setLayout(operation_layout)
         self.between_stack.addWidget(fs_iSCAT_GROUP)
 
+    def setup_EM_GROUP(self):
     # EM_iSCAT下的功能选择
         EM_iSCAT_GROUP = self.QGroupBoxCreator(style="noborder")
         EM_iSCAT_layout = QVBoxLayout()
@@ -822,6 +830,7 @@ class MainWindow(QMainWindow):
         EM_iSCAT_GROUP.setLayout(EM_iSCAT_layout)
         self.between_stack.addWidget(EM_iSCAT_GROUP)
 
+    def setup_Other_GROUP(self):
         # 其他方法模块
         Other_GROUP = self.QGroupBoxCreator(style='noborder')
         Other_layout = QVBoxLayout()
@@ -844,12 +853,10 @@ class MainWindow(QMainWindow):
         Other_layout.addWidget(self.tDFT_btn2)
         self.atam_btn2 = QPushButton("累计时间振幅图")
         Other_layout.addWidget(self.atam_btn2)
+        self.heartbeat_btn = QPushButton("心肌细胞跳动分析")
+        Other_layout.addWidget(self.heartbeat_btn)
         Other_GROUP.setLayout(Other_layout)
         self.between_stack.addWidget(Other_GROUP)
-
-        left_layout1.addWidget(self.between_stack)
-        # left_layout1.addStretch(1)
-        self.modes_panel.setLayout(left_layout1)
 
     def between_stack_change(self):
         if self.fuction_select.currentIndex() == 0: # nothing
@@ -1146,21 +1153,21 @@ class MainWindow(QMainWindow):
         self.update_status("有新版本可用",'idle')
 
         # 创建并显示更新对话框
-        dialog = UpdateDialog(self, startup_check=True)
-        dialog.update_info = update_info
+        self.dialog = UpdateDialog(self, startup_check=True)
+        self.dialog.update_info = update_info
 
         # 直接显示更新信息，不需要再次检查
-        dialog.check_button.setEnabled(True)
-        dialog.update_button.setEnabled(True)
-        dialog.status_label.setText(f"发现新版本: v{update_info['latest_version']}")
-        dialog.log_message(f"发现新版本 v{update_info['latest_version']}")
-        dialog.show_release_notes(update_info.get('release_notes', '暂无更新说明'))
-        dialog.tab_widget.setCurrentIndex(1)
+        self.dialog.check_button.setEnabled(True)
+        self.dialog.update_button.setEnabled(True)
+        self.dialog.status_label.setText(f"发现新版本: v{update_info['latest_version']}")
+        self.dialog.log_message(f"发现新版本 v{update_info['latest_version']}")
+        self.dialog.show_release_notes(update_info.get('release_notes', '暂无更新说明'))
+        self.dialog.tab_widget.setCurrentIndex(1)
 
         # 显示对话框
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+        self.dialog.show()
+        self.dialog.raise_()
+        self.dialog.activateWindow()
 
     def handle_check_completed(self, has_update):
         """处理检查完成"""
@@ -1276,6 +1283,7 @@ class MainWindow(QMainWindow):
         self.select_frames_btn.clicked.connect(self.vectorROI_selection)
         self.diffusion_coefficient_btn.clicked.connect(self.result_display.plot_variance_evolution)
         self.roi_fast_btn.clicked.connect(self.fast_roi_result)
+        self.heartbeat_btn.clicked.connect(self.process_heartbeat)
         self.signal_extract.clicked.connect(self.process_signal_avg)
         self.export_image_btn.clicked.connect(self.export_image)
         self.export_data_btn.clicked.connect(self.export_data)
@@ -2323,6 +2331,20 @@ class MainWindow(QMainWindow):
         self.tDFT_signal.emit(aim_data)
         return True
 
+    def process_heartbeat(self):
+        """心肌细胞跳动分析"""
+        if self.data is None and self.processed_data is None:
+            logging.warning("无数据可处理，请先加载数据")
+            return None
+        aim_data = self.data_pick()
+        if aim_data is None:
+            return False
+        self.dialog = HeartBeatFrameSelectDialog(aim_data)
+        self.dialog.show()
+        self.dialog.raise_()
+        self.update_status('心肌细胞跳动分析中...', 'working')
+        return True
+
     """结果处理"""
     def data_pick(self,need_all = True):
         """数据选择代码"""
@@ -2746,6 +2768,7 @@ class StreamLogger(object):
 
     def flush(self):
         pass
+
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
