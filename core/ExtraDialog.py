@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QMessageBox, QFormLayout, QDoubleSpinBox, QColorDialog, QComboBox, QCheckBox,
                              QFileDialog, QWhatsThis, QTextBrowser, QTableWidget, QDialogButtonBox, QTableWidgetItem,
                              QHeaderView, QAbstractItemView, QTabWidget, QWidget, QListWidget, QListWidgetItem,
-                             QSizePolicy, QTreeWidget, QTreeWidgetItem)
+                             QSizePolicy, QTreeWidget, QTreeWidgetItem, QTextEdit)
 from PyQt5.QtCore import Qt, QEvent, QTimer, QModelIndex, pyqtSignal
 from DataManager import Data,ProcessedData
 import re
@@ -40,30 +40,29 @@ class ToolBucket:
         return total_cpus, available_cpus
 
     @staticmethod
-    def parse_frame_input(self, parse_type="frame", freq=None):
-        """解析用户输入的帧数"""
-        if parse_type == 'frame':
-            text = self.frame_input.toPlainText()
-            self.max_frame = self.vector_array.shape[0] - 1
-            if not text:
-                QMessageBox.warning(self, "输入为空", "请输入有效的帧数选择")
-                return None
-        elif parse_type == 'freq':
-            text = self.retransform_input.toPlainText()
-            if not text:
-                return None
-        if text == 'all':
-            if parse_type == 'frame':
-                return list(range(self.max_frame + 1))
-            else:
-                return freq
-
-        # 替换所有分隔符为逗号
-        text = text.replace(';', ',').replace('，', ',')
-        frames = set()
-        target_idx = []
-        parts = text.split(',')
+    def parse_frame_input(input:str, max_frame, parse_type="frame", freq=None, parent = None):
+        """解析用户输入的帧数，输出set集合"""
         try:
+            text = input
+            max_frame = int(max_frame)
+            if parse_type == 'frame':
+                if not text:
+                    raise ValueError("输入为空,请输入有效的帧数选择")
+            elif parse_type == 'freq':
+                if not text:
+                    raise ValueError("请输入有效的频率范围")
+            if text == 'all':
+                if parse_type == 'frame':
+                    return list(range(max_frame + 1))
+                else:
+                    return freq
+
+            # 替换所有分隔符为逗号
+            text = text.replace(';', ',').replace('，', ',')
+            frames = set()
+            target_idx = []
+            parts = text.split(',')
+
             for part in parts:
                 if not part:
                     continue
@@ -81,8 +80,8 @@ class ToolBucket:
 
                     if parse_type == 'frame':
                         # 确保范围在有效区间内
-                        if start < 0 or end > self.max_frame:
-                            raise ValueError(f"范围 {part} 超出有效帧范围 (0-{self.max_frame})")
+                        if start < 0 or end > max_frame:
+                            raise ValueError(f"范围 {part} 超出有效帧范围 (0-{max_frame})")
                         frames.update(range(start, end + 1))
 
                     elif parse_type == 'freq':
@@ -97,8 +96,8 @@ class ToolBucket:
                 else:
                     if parse_type == 'frame':
                         frame = int(part)
-                        if frame < 0 or frame > self.max_frame:
-                            raise ValueError(f"帧号 {frame} 超出有效范围 (0-{self.max_frame})")
+                        if frame < 0 or frame > max_frame:
+                            raise ValueError(f"帧号 {frame} 超出有效范围 (0-{max_frame})")
                         frames.add(frame)
                     elif parse_type == 'freq':
                         target_idx.append(np.argmin(np.abs(freq - int(part))))
@@ -107,19 +106,19 @@ class ToolBucket:
         except ValueError as e:
             if parse_type == 'frame':
                 QMessageBox.warning(
-                    self,
+                    parent,
                     "输入错误",
                     f"无效输入: {str(e)}\n\n正确格式示例:\n"
                     "• 单帧: 5\n"
                     "• 序列: 1,3,5,7\n"
                     "• 范围: 10-15,20-25\n"
                     "• 混合: 1,3-5,7,9-10\n"
-                    f"• 所有帧: all\n\n有效帧范围: 0-{self.max_frame}"
+                    f"• 所有帧: all\n\n有效帧范围: 0-{max_frame}"
                 )
                 logging.warning(f"帧数输入错误: {str(e)} - 输入内容: {text}")
             if parse_type == 'freq':
                 QMessageBox.warning(
-                    self,
+                    parent,
                     "输入错误",
                     f"无效输入: {str(e)}\n\n正确格式示例:\n"
                     "• 单频率（离此频率最近的频率）: 30\n"
@@ -2035,13 +2034,14 @@ class HeartBeatFrameSelectDialog(QDialog):
     def __init__(self, data, parent=None):
         super().__init__()
         self.setWindowTitle("心肌细胞分析设置")
-        self.setGeometry(1000, 600, 400, 150)
+        self.setGeometry(1000, 800, 300, 20)
         self.setModal(False)
         self.setWindowFlags(Qt.Dialog |
                             Qt.WindowCloseButtonHint |
                             Qt.WindowContextHelpButtonHint)
         self.help_window = None
         self.data = data
+        self.parent = parent
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.init_ui()
 
@@ -2049,16 +2049,38 @@ class HeartBeatFrameSelectDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
+        step_layout = QHBoxLayout()
+        step_layout.addWidget(QLabel("处理间距（不宜太短）："))
+        self.step_input = QSpinBox()
+        self.step_input.setRange(1,min(self.data.framesize))
+        self.step_input.setValue(5)
+        step_layout.addWidget(self.step_input)
+        layout.addLayout(step_layout)
         layout.addWidget(QLabel("请输入基准帧"))
         self.base_frame_input = QSpinBox()
         self.base_frame_input.setRange(0, self.data.timelength)
         layout.addWidget(self.base_frame_input)
         layout.addWidget(QLabel("请输入所有后续需要比较的帧"))
-        self.motion_frame_input = QLineEdit()
+        self.motion_frame_input = QTextEdit()
         self.motion_frame_input.setPlaceholderText("输入帧位（起始帧位为0），以逗号或分号分隔，范围用-\n输入all选取全部帧")
         layout.addWidget(self.motion_frame_input)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        self.apply_btn = QPushButton("开始处理")
+        self.apply_btn.clicked.connect(self.start_process)
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.apply_btn)
+        button_layout.addWidget(self.cancel_btn)
+
+        layout.addLayout(button_layout)
+
+    def start_process(self):
+        motion_frames = ToolBucket.parse_frame_input(self.motion_frame_input.toPlainText(),self.data.timelength)
+        if motion_frames:
+            if not self.parent.avi_thread.isRunning():
+                self.parent.avi_thread.start()
+            self.parent.heartbeat_signal.emit(self.data, self.step_input.value(), self.base_frame_input.value(), motion_frames)
+            logging.info("完成帧数选择，开始心肌细胞运动分析")
+            self.accept()

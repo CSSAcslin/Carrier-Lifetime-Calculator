@@ -59,7 +59,8 @@ class ResultDisplayWidget(QTabWidget):
             'quality': 1, # 信号评估
             'series': 1, # EM信号
             'scs': 1,# 单通道信号
-            'pre-scs':1 # 单通道信号不定阈值
+            'pre-scs':1, # 单通道信号不定阈值
+            'heartbeat':1 # 心肌细胞跳动
         }
 
     def _current_index(self, index):
@@ -536,3 +537,44 @@ class ResultDisplayWidget(QTabWidget):
             'signal': signal,
         })
         self.store_tab_data(tab, self.current_mode, data = data,thr_known = thr_known)
+
+    def display_heartbeat(self,data,reuse_current=False):
+        self.current_mode = "heartbeat"
+        step = data.out_processed['step']
+        base_img = data.out_processed['base_data']
+        h, w = base_img.shape
+        y, x = np.mgrid[0:h:step, 0:w:step].reshape(2, -1).astype(int)
+
+        for i,n in enumerate(data.out_processed['after_series']):
+            figure, canvas, index, title, tab = self.create_tab(self.current_mode, self.current_mode, reuse_current)
+            figure.subplots_adjust(left=0.05, right=1, bottom=0, top=0.95)
+            ax = figure.add_subplot(111)
+            ax.imshow(base_img, cmap= 'gray', alpha = 0.5)
+
+            fx = data.data_processed[i, y, x, 0]  # U分量
+            fy = data.data_processed[i, y, x, 1]
+
+            color_speed = data.out_processed['magnitude_list'][i, y, x]
+
+            Q = ax.quiver(x, y, fx, fy, color_speed,
+                           cmap='jet',  # 颜色表，红色代表高速，蓝色代表低速
+                           angles='xy', scale_units='xy', scale=1,  # scale=1 表示箭头长度直接对应像素位移
+                           width=0.003, headwidth=3.5, headlength=4)
+
+            # 添加颜色条
+            cbar = figure.colorbar(Q,ax=ax)
+            cbar.set_label(f'Motion Magnitude ({data.out_processed['space_unit']}/s)', fontsize=10)
+            cbar.ax.tick_params(labelsize=8)
+            # 调整颜色条轴的位置
+            cbar_ax = cbar.ax
+
+            # 获取图像轴的位置
+            img_pos = ax.get_position()
+
+            # 设置颜色条轴的位置，使其与图像高度相同
+            cbar_ax.set_position([img_pos.x1 + 0.02, img_pos.y0, 0.02, img_pos.height])
+
+            ax.set_title(f"Cardiomyocyte Motion Field\n(Step size: {step}px; No.{data.out_processed['base_num']} + {data.time_point[i]}帧)", fontsize=10)
+            ax.axis('off')  # 关闭坐标轴
+            # figure.tight_layout()
+            canvas.draw()

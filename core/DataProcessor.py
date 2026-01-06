@@ -1,5 +1,7 @@
 import copy
 import logging
+
+import cv2
 import numpy as np
 import pywt
 import h5py
@@ -383,237 +385,6 @@ class MassDataProcessor(QObject):
         except Exception as e:
             self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
             return False
-
-    # @pyqtSlot(DataManager.ProcessedData,object,int,int,int,int,int,int,str)
-    # def python_stft(self,data, target_freq,scale_range:int,fps:int, window_size: int, noverlap: int,
-    #                 custom_nfft: int, batch_size: int, window_type: str):
-    #     """
-    #     执行逐像素STFT分析
-    #     参数:
-    #         avi_data: 预处理后的数据字典
-    #         target_freq: 目标分析频率(Hz)
-    #         window_size: Hanning窗口大小(样本数)
-    #         noverlap: 重叠样本数
-    #         custom_nfft: 自定义FFT点数(可选)
-    #     """
-        # try:
-        #     if not data:
-        #         raise ValueError("请先进行预处理")
-        #     if 'out_length' not in data.out_processed:
-        #         raise ValueError("请先进行质量评估")
-        #
-        #     if isinstance(target_freq, float):
-        #         target_idx = data.out_processed['target_idx']
-        #     else:
-        #         target_idx = target_freq
-        #     out_length = data.out_processed['out_length']
-        #     time_series = data.out_processed['time_series']
-        #     freq = data.out_processed['frequencies']
-        #     data = next(data for data in reversed(data.history) if data.type_processed == "EM_pre_processed")# [像素数 x 帧数]
-        #     frame_size = data.framesize  # (宽度, 高度)
-        #     unfolded_data = data.out_processed['unfolded_data']
-        #
-        #     # 2. 计算采样率和FFT参数
-        #     total_frames = unfolded_data.shape[1]
-        #     total_pixels = unfolded_data.shape[0]
-        #     nfft = custom_nfft
-        #     if nfft < window_size: # 确保nfft大于等于窗长度
-        #         nfft = window_size
-        #
-        #     self.processing_progress_signal.emit(1, total_pixels)
-        #
-        #     # 4. 初始化结果数组
-        #     height, width = frame_size
-        #     stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
-        #
-        #     # 窗函数的选择和生成
-        #     window = self.get_window(window_type, window_size)
-        #
-        #     # 5. 逐像素STFT处理
-        #     self.processing_progress_signal.emit(1, total_pixels)
-        #
-        #     # 对每个像素执行STFT
-        #     for i in range(total_pixels):
-        #         if self.abortion:
-        #             return
-        #
-        #         pixel_signal = unfolded_data[i, :]
-        #
-        #         # 计算当前像素的STFT
-        #         # signal.ShortTimeFFT
-        #         _, _, Zxx = signal.stft(
-        #             pixel_signal,
-        #             fs=fps,
-        #             window=window,
-        #             nperseg=window_size,
-        #             noverlap=noverlap,
-        #             nfft=nfft,
-        #             return_onesided=False,
-        #             scaling='psd'
-        #         )
-        #         # 提取目标频率处的幅度
-        #         magnitude = np.mean(np.abs(Zxx[target_idx, :]), axis=0) * 560
-        #
-        #         # 将结果存入对应像素位置
-        #         y = i // width
-        #         x = i % width
-        #         stft_py_out[:, y, x] = magnitude
-        #         # zxx_out[:,:, y, x] = Zxx
-        #
-        #         self.processing_progress_signal.emit(i, total_pixels)
-        #
-        #     # with h5py.File('transfer_data.h5', 'w') as f:
-        #     #     # 创建数据集并写入数据(for debug)
-        #     #     dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
-        #
-        #     # 6. 发送完整结果
-        #     self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
-        #                                                        f'{data.name}@r_stft',
-        #                                                        'ROI_stft',
-        #                                                         time_point=time_series,
-        #                                                        data_processed=stft_py_out,
-        #                                                        out_processed={'whole_mean':np.mean(stft_py_out, axis=(1, 2)),
-        #                                                                       'window_type': window,
-        #                                                                       'window_size': window_size,
-        #                                                                       'window_step': window_size - noverlap,
-        #                                                                       'FFT_length': nfft,
-        #                                                                       **{k:data.out_processed.get(k)
-        #                                                                          for k in data.out_processed if k not in {"unfolded_data"}}}))
-        #     self.processing_progress_signal.emit(total_pixels, total_pixels)
-        #     return True
-        # except Exception as e:
-        #     self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
-        #     return False
-
-
-    # @pyqtSlot(DataManager.ProcessedData, object, int, int, int, int, int, int, str)
-    # def python_stft(self, data, target_freq, scale_range: int, fps: int, window_size: int, noverlap: int,
-    #                 custom_nfft: int, batch_size: int, window_type: str):
-    #     """分块处理的stft"""
-    #     # try:
-    #     window = self.get_window(window_type, window_size)
-    #     frame_size = data.framesize
-    #     unfolded_data = data.out_processed['unfolded_data']  # Shape: [Pixels, Frames]
-    #
-    #     mean_signal = np.mean(unfolded_data, axis=0)
-    #     f0, t0, Zxx0 = signal.stft(
-    #         mean_signal,
-    #         fs=fps,
-    #         window=window,
-    #         nperseg=window_size,
-    #         noverlap=noverlap,
-    #         nfft=custom_nfft,
-    #         return_onesided=True,
-    #         scaling='psd'
-    #     )
-    #     out_length = Zxx0.shape[1]
-    #     time_series = t0
-    #
-    #     if isinstance(target_freq, float):
-    #         if scale_range > 0:
-    #             low_bound = max(0.0, target_freq - scale_range / 2.0)
-    #             high_bound = min(f0[-1], target_freq + scale_range / 2.0)
-    #             target_idx = np.where((f0 >= low_bound) & (f0 <= high_bound))[0]
-    #             if len(target_idx) == 0:
-    #                 target_idx = [np.argmin(np.abs(f0 - target_freq))]
-    #         else:
-    #             target_idx = [np.argmin(np.abs(f0 - target_freq))]
-    #     else:
-    #         target_idx = target_freq
-    #
-    #     total_pixels = unfolded_data.shape[0]
-    #     nfft = max(custom_nfft, window_size)
-    #     height, width = frame_size
-    #
-    #     # --- 2. 准备工作 ---
-    #     self.processing_progress_signal.emit(1, total_pixels)
-    #
-    #     # 创建结果数组 (out_length, height, width)
-    #     stft_py_out = np.zeros((out_length, height, width), dtype=np.float32)
-    #
-    #     # 创建一个临时视图，将空间维度展平，方便按像素索引赋值
-    #     # Shape: (out_length, total_pixels)
-    #     stft_out_flat = stft_py_out.reshape(out_length, -1)
-    #
-    #     for start_idx in range(0, total_pixels, batch_size):
-    #         if self.abortion:
-    #             return
-    #
-    #         end_idx = min(start_idx + batch_size, total_pixels)
-    #
-    #         # 取出一批像素数据 (Batch_size, Frames)
-    #         batch_data = unfolded_data[start_idx:end_idx, :]
-    #
-    #         # [关键点]：一次性计算整个 Batch 的 STFT
-    #         # axis=-1 表示对最后的时间维度做变换
-    #         # 返回 Zxx shape: (Batch_size, Freqs, Time_segments)
-    #         _, _, Zxx_batch = signal.stft(
-    #             batch_data,
-    #             fs=fps,
-    #             window=window,
-    #             nperseg=window_size,
-    #             noverlap=noverlap,
-    #             nfft=nfft,
-    #             return_onesided=False,
-    #             scaling='psd',
-    #             axis=-1
-    #         )
-    #
-    #         # 现在的 Zxx_batch 是 3D 的。我们需要切片并保持 batch 维度。
-    #
-    #         # 提取目标频率层。
-    #         # 注意：target_idx 可能是一个切片(slice)或列表，也可能是一个整数。
-    #         target_data = Zxx_batch[:, target_idx, :]  # Shape: (Batch_size, [Freqs], Time)
-    #
-    #         # 计算模值
-    #         mag_batch = np.abs(target_data)
-    #
-    #         # 如果 target_idx 包含了多个频率(是一个频带)，需要像原来一样 dim=0 (现在是 dim=1) 做平均
-    #         # 如果 target_idx 只是单个频率，ndim 已经是 2 (Batch, Time) 了
-    #         if mag_batch.ndim == 3:
-    #             mag_batch = np.mean(mag_batch, axis=1)
-    #
-    #         mag_batch *= 560
-    #
-    #         # 此时 mag_batch shape 为 (Batch_size, Time_segments)
-    #         # 我们的目标 stft_out_flat 需要 (Time_segments, Batch_size)
-    #         # 所以需要转置 (.T)
-    #         # 赋值给结果数组
-    #         # 注意：这里可能会因为 signal.stft 返回的 time segment 数量与 out_length 有极其微小的差异（取决于padding），
-    #         # 建议加个切片 [:out_length] 保护
-    #         valid_time_len = min(mag_batch.shape[1], out_length)
-    #         stft_out_flat[:valid_time_len, start_idx:end_idx] = mag_batch.T[:valid_time_len, :]
-    #
-    #         # 每处理完一个 Batch 发送一次信号，而不是每个像素发一次
-    #         self.processing_progress_signal.emit(end_idx, total_pixels)
-    #
-    #     # --- 5. 收尾工作 ---
-    #     # 此时 stft_py_out 已经被通过 stft_out_flat 视图填充完毕
-    #
-    #     result_payload = DataManager.ProcessedData(
-    #         data.timestamp,
-    #         f'{data.name}@r_stft',
-    #         'ROI_stft',
-    #         time_point=time_series,
-    #         data_processed=stft_py_out,
-    #         out_processed={
-    #             'whole_mean': np.mean(stft_py_out, axis=(1, 2)),
-    #             'window_type': window,
-    #             'window_size': window_size,
-    #             'window_step': window_size - noverlap,
-    #             'target_freq': target_freq,
-    #             'FFT_length': nfft,
-    #             'batch_size': batch_size,
-    #             **{k: data.out_processed.get(k) for k in data.out_processed if k not in {"unfolded_data"}}
-    #         }
-    #     )
-    #
-    #     self.processed_result.emit(result_payload)
-    #     self.processing_progress_signal.emit(total_pixels, total_pixels)
-    #     return True
-        # # except Exception as e:
-        # #     self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
-        # #     return False
 
     @pyqtSlot(DataManager.ProcessedData, object, int, int, int, int, int, str, bool, int, int)
     def python_stft(self, data, target_freq, scale_range: int, fps: int, window_size: int, noverlap: int,
@@ -1306,6 +1077,77 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type': "2D_Fourier_transform", 'error': str(e)})
             return False
 
+    @pyqtSlot(object, int, int ,list)
+    def heartbeat_movement(self, data, step, base_num, after_series):
+        """心肌细胞运动分析，使用
+        稠密光流 (Farneback算法)"""
+        # try:
+        timer = QElapsedTimer()
+        timer.start()
+        if isinstance(data, DataManager.ProcessedData):
+            aim_data = data.data_processed
+            out_processed = data.out_processed
+        else:
+            aim_data = data.data_origin
+            out_processed = data.parameters
+
+        num = len(after_series)
+        time_point = np.array(after_series)-base_num
+        logging.info(f"要比较的帧位（相对于基准帧）:{time_point}")
+        self.processing_progress_signal.emit(1, num + 2)
+        base_data = self.clahe_and_blur(aim_data[base_num])
+        max_speed = np.zeros(num)
+        mean_speed = np.zeros(num)
+        h, w = base_data.shape
+        flow_list = [np.zeros((h, w, 2), dtype=np.float32) for _ in range(num)]
+        magnitude_list = [np.zeros((h, w), dtype=np.float32) for _ in range(num)]
+        angle_list = [np.zeros((h, w), dtype=np.float32) for _ in range(num)]
+
+        self.processing_progress_signal.emit(2,num+2)
+
+        for i, next_num in enumerate(after_series):
+            next_data = self.clahe_and_blur(aim_data[next_num])
+            # flow 是一个 (h, w, 2) 的数组，flow[...,0]是水平位移，flow[...,1]是垂直位移
+            flow = cv2.calcOpticalFlowFarneback(base_data, next_data, None,
+                                                pyr_scale=0.5, levels=3, winsize=15,
+                                                iterations=3, poly_n=5, poly_sigma=1.2,
+                                                flags=0) # 目前参数都定死了
+            # 4. 转换数据 (笛卡尔坐标 -> 极坐标: 速度大小和角度)
+            # magnitude: 速度大小, angle: 运动方向
+            magnitude, angle = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+            # 计算真实的速度
+            magnitude_real = (magnitude * out_processed['space_step'] *
+                              out_processed['fps'] / (next_num - base_num))
+            max_speed[i] = np.max(magnitude_real)
+            mean_speed[i] = np.mean(magnitude_real)
+            flow_list[i] = flow
+            magnitude_list[i] = magnitude_real
+            angle_list[i] = angle
+
+            self.processing_progress_signal.emit(i+3,num+2)
+
+
+        result = DataManager.ProcessedData(data.timestamp,
+                                           f'{data.name}@heartbeat',
+                                           "Heartbeat",
+                                           time_point = time_point,
+                                           data_processed=np.stack(flow_list, axis=0),
+                                           out_processed={'step':step,
+                                                          "base_num": base_num,
+                                                          'base_data': base_data,
+                                                          'after_series': after_series,
+                                                          'magnitude_list': np.stack(magnitude_list, axis=0),
+                                                          'angle_list': np.stack(angle_list, axis=0),
+                                                          'max_speed': max_speed ,
+                                                          'mean_speed': mean_speed,**out_processed})
+
+        self.processed_result.emit(result)
+        return True
+
+        # except Exception as e:
+        #     self.processed_result.emit({'type': "heartbeat", 'error': str(e)})
+        #     return False
+
     def stop(self):
         """请求中止处理"""
         self.abort = True
@@ -1349,6 +1191,22 @@ class MassDataProcessor(QObject):
                 i += 1
 
         return np.array(amplitudes), np.array(durations)
+
+    @staticmethod
+    def clahe_and_blur(img):
+        """限制对比度自适应直方图均衡化+模糊处理"""
+        # CLAHE (限制对比度自适应直方图均衡化)
+        # 对于明场细胞图像，这是增强纹理的神器
+        # clipLimit: 阈值，越大对比度越强，但也可能放大噪声，建议 2.0-4.0
+        # tileGridSize: 局部窗口大小，(8,8)是标准值
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        img_clahe = clahe.apply(img)
+
+        # 轻微的高斯模糊
+        # 因为你的图像较小(300x200)，且我们做过增强，噪声也会变明显
+        # 用 (3,3) 的小核既能去噪又不至于损失太多细节
+        img_blur = cv2.GaussianBlur(img_clahe, (3, 3), 0)
+        return img_blur
 
     # 上升/下降时间常数拟合(未启用)
     def fit_exponential_time(data, thr, mode='up', n=5):

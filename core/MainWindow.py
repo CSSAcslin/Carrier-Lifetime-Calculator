@@ -51,13 +51,14 @@ class MainWindow(QMainWindow):
     tDgf_signal = pyqtSignal(ProcessedData,int,float,bool)
     sscs_signal = pyqtSignal(ProcessedData, int, float, bool)
     tDFT_signal = pyqtSignal(object)
+    heartbeat_signal = pyqtSignal(object, int, int ,list)
     easy_process = pyqtSignal(object, str)
     roi_processed_signal = pyqtSignal(object,np.ndarray,float,bool,bool,float)
 
     def __init__(self):
         super().__init__()
         # 基本信息初始化
-        self.current_version = "0.11.7"  # 当前程序版本
+        self.current_version = "0.11.8"  # 当前程序版本
         self.repo_owner = "CSSAcslin"  # 程序作者
         self.repo_name = "Carrier-Lifetime-Calculator"  # 程序仓库名
         self.PAT = "Bearer <your PAT>"
@@ -1246,6 +1247,7 @@ class MainWindow(QMainWindow):
         self.tDgf_signal.connect(self.mass_data_processor.twoD_gaussian_fit)
         self.sscs_signal.connect(self.mass_data_processor.simple_single_channel)
         self.tDFT_signal.connect(self.mass_data_processor.twoD_fourier_transform)
+        self.heartbeat_signal.connect(self.mass_data_processor.heartbeat_movement)
 
         # self.avi_thread.start()
 
@@ -2339,7 +2341,7 @@ class MainWindow(QMainWindow):
         aim_data = self.data_pick()
         if aim_data is None:
             return False
-        self.dialog = HeartBeatFrameSelectDialog(aim_data)
+        self.dialog = HeartBeatFrameSelectDialog(aim_data, self)
         self.dialog.show()
         self.dialog.raise_()
         self.update_status('心肌细胞跳动分析中...', 'working')
@@ -2445,6 +2447,10 @@ class MainWindow(QMainWindow):
                 pass
             case 'Roi_applied':
                 logging.info("ROI应用完成")
+            case 'Heartbeat':
+                logging.info("心肌细胞处理完成，开始作图")
+                self.result_display.display_heartbeat(self.processed_data)
+                logging.info("所有图绘制完成")
 
     def draw_result(self,draw_type:str,canvas_id:int,result,roi_info = None):
         """canvas绘图结果处理"""
