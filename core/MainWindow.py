@@ -1,5 +1,6 @@
 import logging
 import multiprocessing
+from unittest import case
 
 import resources_rc
 from datetime import datetime
@@ -25,6 +26,7 @@ from ExtraDialog import *
 from DataManager import *
 from UpdateModule import *
 from PlotGraphWidget import *
+from widget import TriStateSwitch
 
 
 class MainWindow(QMainWindow):
@@ -41,15 +43,15 @@ class MainWindow(QMainWindow):
     start_heat_cal_signal = pyqtSignal(object, float, str, str, int, str, int, bool, int)
     start_dif_cal_signal = pyqtSignal(object, float, float, float, str)
     # mass
-    pre_process_signal = pyqtSignal(Data,int,bool)
-    stft_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, int, int, str)
-    stft_python_signal = pyqtSignal(ProcessedData,object, int, int, int, int, int, str, bool, int, int)
-    cwt_quality_signal = pyqtSignal(ProcessedData,float, int, int, int, str)
-    cwt_python_signal = pyqtSignal(ProcessedData,float, int, int, str, float)
+    pre_process_signal = pyqtSignal(object,int,bool)
+    stft_quality_signal = pyqtSignal(object,float, int, int, int, int, int, str)
+    stft_python_signal = pyqtSignal(object,object, int, int, int, int, int, str, bool, int, int)
+    cwt_quality_signal = pyqtSignal(object,float, int, int, int, str)
+    cwt_python_signal = pyqtSignal(object,float, int, int, str, float)
     mass_export_signal = pyqtSignal(np.ndarray, str, str, str, bool, dict)
     atam_signal = pyqtSignal(object)
-    tDgf_signal = pyqtSignal(ProcessedData,int,float,bool)
-    sscs_signal = pyqtSignal(ProcessedData, int, float, bool)
+    tDgf_signal = pyqtSignal(object,int,float,bool)
+    sscs_signal = pyqtSignal(object, int, float, bool)
     tDFT_signal = pyqtSignal(object)
     heartbeat_signal = pyqtSignal(object, int, int ,list)
     easy_process = pyqtSignal(object, str)
@@ -58,13 +60,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         # 基本信息初始化
-        self.current_version = "0.11.8"  # 当前程序版本
+        self.current_version = "0.11.9"  # 当前程序版本
         self.repo_owner = "CSSAcslin"  # 程序作者
         self.repo_name = "Carrier-Lifetime-Calculator"  # 程序仓库名
         self.PAT = "Bearer <your PAT>"
 
         # 参数初始化
         self.settings = QSettings()
+        self.mode = 0
         self.data = None
         self.processed_data = None
         self.time_points = None
@@ -421,14 +424,69 @@ class MainWindow(QMainWindow):
 
     def setup_data_panel(self):
     # 数据导入面板
-        self.data_import = self.QGroupBoxCreator('数据导入')
+        self.data_import = self.QGroupBoxCreator('导入设置')
         left_layout0 = QVBoxLayout()
         left_layout0.setSpacing(2)
+
+        # 基础参数设置
+        param_panel = self.QGroupBoxCreator("","inner")
+        param_layout = QVBoxLayout(param_panel)
+        param_layout.setSpacing(2)
+        # param_layout.setContentsMargins(1,7,1,7)
+        time_step_layout = QHBoxLayout()
+        time_step_layout.addWidget(QLabel("时间单位:"))
+        self.time_step_input = QDoubleSpinBox()
+        self.time_step_input.setMinimum(0.001)
+        self.time_step_input.setMaximum(10000)
+        self.time_step_input.setValue(self.basic_params['time_step'])
+        self.time_step_input.setDecimals(3)
+        self.time_step_input.valueChanged.connect(
+            lambda: self.update_param('basic', 'time_step', self.time_step_input.value()))
+        time_step_layout.addWidget(self.time_step_input)
+        self.time_unit_combo = QComboBox()
+        self.time_unit_combo.addItems(["ms", "μs", "ns", "ps", "fs"])
+        self.time_unit_combo.setCurrentText(self.basic_params['time_unit'])
+        self.time_unit_combo.currentTextChanged.connect(
+            lambda: self.update_param('basic', 'time_unit', self.time_unit_combo.currentText()))
+        time_step_layout.addWidget(self.time_unit_combo)
+        time_step_layout.addWidget(QLabel("/帧"))
+        param_layout.addLayout(time_step_layout)
+        param_layout.addSpacing(5)
+        space_step_layout = QHBoxLayout()
+        space_step_layout.addWidget(QLabel("空间单位:"))
+        self.space_step_input = QDoubleSpinBox()
+        self.space_step_input.setMinimum(0.001)
+        self.space_step_input.setValue(self.basic_params['space_step'])
+        self.space_step_input.setDecimals(3)
+        self.space_step_input.valueChanged.connect(
+            lambda: self.update_param('basic', 'space_step', self.space_step_input.value()))
+        space_step_layout.addWidget(self.space_step_input)
+        self.space_unit_combo = QComboBox()
+        self.space_unit_combo.addItems(["mm", "μm", "nm"])
+        self.space_unit_combo.setCurrentText(self.basic_params['space_unit'])
+        self.space_unit_combo.currentTextChanged.connect(
+            lambda: self.update_param('basic', 'space_unit', self.space_unit_combo.currentText()))
+        space_step_layout.addWidget(self.space_unit_combo)
+        space_step_layout.addWidget(QLabel("/像素"))
+        param_layout.addLayout(space_step_layout)
+
+        param_layout.addSpacing(5)
+        fps_layout = QHBoxLayout()
+        fps_layout.addWidget(QLabel("视频帧率:"))
+        self.fps_input = QSpinBox()
+        self.fps_input.setRange(1, 100000)
+        self.fps_input.setValue(self.EM_params['EM_fps'])
+        self.fps_input.valueChanged.connect(lambda: self.update_param('EM', 'EM_fps', self.fps_input.value()))
+        fps_layout.addWidget(self.fps_input)
+        fps_layout.addWidget(QLabel(" Hz"))
+        param_layout.addLayout(fps_layout)
 
         # 模式选择
         self.fuction_select = QComboBox()
         self.fuction_select.addItems(['请选择分析模式','超快成像动态分析','EM-iSCAT','其他方法'])
         left_layout0.addWidget(self.fuction_select)
+        left_layout0.addWidget(param_panel)
+
         self.funtion_stack = QStackedWidget()
         nothing_group = self.QGroupBoxCreator(style="inner")
         nothing_layout = QVBoxLayout()
@@ -438,12 +496,12 @@ class MainWindow(QMainWindow):
 
         # FS&PA模式下的文件夹选择
         fs_iSCAT_group = self.QGroupBoxCreator(style="inner")
-        type_choose1 = QVBoxLayout()
+        type_choose1 = QHBoxLayout()
         self.file_type_selector1 = QComboBox()
         self.file_type_selector1.addItems(['tif格式', 'sif格式'])
         self.file_type_stack1 = QStackedWidget()
         fs_group = self.QGroupBoxCreator(style="noborder") # tif
-        tiff_layout = QHBoxLayout()
+        tiff_layout = QVBoxLayout()
         self.group_selector = QComboBox()
         self.group_selector.addItems(['n', 'p', '不区分'])
         self.tiff_folder_btn = QPushButton("选择TIFF文件夹")
@@ -491,14 +549,7 @@ class MainWindow(QMainWindow):
         tiff_group.setLayout(tiff_layout)
         self.file_type_stack.addWidget(tiff_group)
         type_choose.addWidget(self.file_type_stack)
-        fps_layout = QHBoxLayout()
-        fps_layout.addWidget(QLabel("视频帧率:"))
-        self.fps_input = QSpinBox()
-        self.fps_input.setRange(1,100000)
-        self.fps_input.setValue(self.EM_params['EM_fps'])
-        self.fps_input.valueChanged.connect(lambda: self.update_param('EM','EM_fps',self.fps_input.value()))
-        fps_layout.addWidget(self.fps_input)
-        v_layout.addLayout(fps_layout)
+
         v_layout.addLayout(type_choose)
         EM_iSCAT_group.setLayout(v_layout)
         self.funtion_stack.addWidget(EM_iSCAT_group)
@@ -506,11 +557,11 @@ class MainWindow(QMainWindow):
         # 科学分析模块
         Sim_group = self.QGroupBoxCreator(style="inner")
         sim_layout = QVBoxLayout()
-        self.text_box = QTextEdit()
-        self.text_box.setPlaceholderText("输入Python代码或拖入.py文件")
-        self.text_box.setMaximumHeight(40)
-        self.text_box.setMinimumHeight(20)
-        sim_layout.addWidget(self.text_box)
+        # self.text_box = QTextEdit()
+        # self.text_box.setPlaceholderText("输入Python代码或拖入.py文件")
+        # self.text_box.setMaximumHeight(40)
+        # self.text_box.setMinimumHeight(20)
+        # sim_layout.addWidget(self.text_box)
         self.code_button = QPushButton('执行代码')
         sim_layout.addWidget(self.code_button)
         Sim_group.setLayout(sim_layout)
@@ -528,44 +579,23 @@ class MainWindow(QMainWindow):
         self.data_import.setLayout(left_layout0)
 
     def setup_parameter_panel(self):
-    # 参数设置
-        self.parameter_panel = self.QGroupBoxCreator("参数设置")
-        left_layout = QVBoxLayout()
-        left_layout.setSpacing(2)
-        # left_layout.setContentsMargins(1,7,1,7)
-        time_step_layout = QHBoxLayout()
-        time_step_layout.addWidget(QLabel("时间单位:"))
-        self.time_step_input = QDoubleSpinBox()
-        self.time_step_input.setMinimum(0.001)
-        self.time_step_input.setMaximum(10000)
-        self.time_step_input.setValue(self.basic_params['time_step'])
-        self.time_step_input.setDecimals(3)
-        self.time_step_input.valueChanged.connect(lambda: self.update_param('basic','time_step',self.time_step_input.value()))
-        time_step_layout.addWidget(self.time_step_input)
-        self.time_unit_combo = QComboBox()
-        self.time_unit_combo.addItems(["ms", "μs", "ns", "ps", "fs"])
-        self.time_unit_combo.setCurrentText(self.basic_params['time_unit'])
-        self.time_unit_combo.currentTextChanged.connect(lambda: self.update_param('basic','time_unit',self.time_unit_combo.currentText()))
-        time_step_layout.addWidget(self.time_unit_combo)
-        time_step_layout.addWidget(QLabel("/帧"))
-        left_layout.addLayout(time_step_layout)
-        left_layout.addSpacing(10)
-        space_step_layout = QHBoxLayout()
-        space_step_layout.addWidget(QLabel("空间单位:"))
-        self.space_step_input = QDoubleSpinBox()
-        self.space_step_input.setMinimum(0.001)
-        self.space_step_input.setValue(self.basic_params['space_step'])
-        self.space_step_input.setDecimals(3)
-        self.space_step_input.valueChanged.connect(lambda: self.update_param('basic','space_step',self.space_step_input.value()))
-        space_step_layout.addWidget(self.space_step_input)
-        self.space_unit_combo = QComboBox()
-        self.space_unit_combo.addItems(["mm", "μm", "nm"])
-        self.space_unit_combo.setCurrentText(self.basic_params['space_unit'])
-        self.space_unit_combo.currentTextChanged.connect(lambda: self.update_param('basic','space_unit',self.space_unit_combo.currentText()))
-        space_step_layout.addWidget(self.space_unit_combo)
-        space_step_layout.addWidget(QLabel("/像素"))
-        left_layout.addLayout(space_step_layout)
-        self.parameter_panel.setLayout(left_layout)
+        """处理的模式设置"""
+        self.parameter_panel = self.QGroupBoxCreator("处理设置")
+        process_layout = QVBoxLayout()
+        switch_layout = QHBoxLayout()
+        self.tri_switch = TriStateSwitch.TriStateSwitch()
+        self.mode_label = QLabel("便捷模式")
+        switch_layout.addWidget(QLabel('处理模式：'))
+        self.tri_switch.setFixedWidth(100)
+        switch_layout.addWidget(self.tri_switch)
+        self.tri_switch.valueChanged.connect(self.mode_switch_change)
+        self.mode_label.setStyleSheet(f"font-size: 18px; font-weight: bold; color: #34C759")
+        switch_layout.addWidget(self.mode_label)
+        process_layout.addLayout(switch_layout)
+        process_layout.addSpacing(5)
+        self.mode_explain = QLabel("按标准处理流程执行的快速操作，\n数据源会自动选择")
+        process_layout.addWidget(self.mode_explain)
+        self.parameter_panel.setLayout(process_layout)
 
     def setup_modes_panel(self):
     # 分析总体设置
@@ -869,16 +899,38 @@ class MainWindow(QMainWindow):
             self.cal_thread_open()
             self.stop_thread(type=1)
             self.update_status('准备就绪')
+            self.fps_input.setEnabled(False)
+            self.time_step_input.setEnabled(True)
+            self.time_unit_combo.setEnabled(True)
         if self.fuction_select.currentIndex() == 2:  # ES-iSCAT
             self.between_stack.setCurrentIndex(2)
             self.EM_thread_open()
             self.stop_thread(type=0)
             self.update_status('准备就绪')
+            self.fps_input.setEnabled(True)
+            self.time_step_input.setEnabled(False)
+            self.time_unit_combo.setEnabled(False)
         if self.fuction_select.currentIndex() == 3:
             self.between_stack.setCurrentIndex(3)
             self.cal_thread_open()
             self.EM_thread_open()
             self.update_status('准备就绪')
+
+    def mode_switch_change(self, mode:int):
+        """模式改变后"""
+        self.mode = mode
+        if mode == 0:
+            self.mode_label.setText('便捷模式')
+            self.mode_explain.setText("按标准处理流程执行的快速操作，\n数据源会自动选择")
+        elif mode == 1:
+            self.mode_label.setText('默认模式')
+            self.mode_explain.setText("使用默认数据（最新数据）进行处理，\n换源需要手动设置（历史数据查看）")
+        elif mode == 2:
+            self.mode_label.setText('自由模式')
+            self.mode_explain.setText("每次处理前都需要选择数据，\n数据自由选择，但可能会报错（无法处理）")
+        colors = ["#34C759", "#999999", "#007AFF"]
+
+        self.mode_label.setStyleSheet(f"font-size: 20px; font-weight: bold; color: {colors[mode]}")
 
     def setup_menus(self):
         """加入菜单栏"""
@@ -1783,7 +1835,8 @@ class MainWindow(QMainWindow):
 
     def vectorROI_selection(self):
         """向量选取信号选择展示"""
-        frames = self.parse_frame_input()
+        self.max_frame = self.vector_array.shape[0] - 1
+        frames = ToolBucket.parse_frame_input(self.frame_input.toPlainText(),self.max_frame)
         if not frames :
             logging.warning("请输入选取的帧数")
         elif not hasattr(self, 'vector_array'):
@@ -1816,127 +1869,31 @@ class MainWindow(QMainWindow):
         # # 自动显示方差演化图
         # self.display_diffusion_coefficient()
 
-    def parse_frame_input(self,parse_type = "frame",freq = None):
-        """解析用户输入的帧数"""
-        if parse_type=='frame':
-            text = self.frame_input.toPlainText()
-            self.max_frame = self.vector_array.shape[0] - 1
-            if not text:
-                QMessageBox.warning(self, "输入为空", "请输入有效的帧数选择")
-                return None
-        elif parse_type=='freq':
-            text = self.retransform_input.toPlainText()
-            if not text:
-                return None
-        if text == 'all':
-            if parse_type=='frame':
-                return list(range(self.max_frame + 1))
-            else:
-                return freq
-
-        # 替换所有分隔符为逗号
-        text = text.replace(';', ',').replace('，', ',')
-        frames = set()
-        target_idx = []
-        parts = text.split(',')
-        try:
-            for part in parts:
-                if not part:
-                    continue
-                # 处理范围输入 (e.g., "5-10", "20-25")
-                if '-' in part:
-                    range_parts = part.split('-')
-                    if len(range_parts) != 2:
-                        raise ValueError(f"无效的范围格式: {part}")
-
-                    start = int(range_parts[0])
-                    end = int(range_parts[1])
-
-                    if start > end:
-                        raise ValueError(f"起始帧({start})不能大于结束帧({end})")
-
-                    if parse_type=='frame':
-                        # 确保范围在有效区间内
-                        if start < 0 or end > self.max_frame:
-                            raise ValueError(f"范围 {part} 超出有效帧范围 (0-{self.max_frame})")
-                        frames.update(range(start, end + 1))
-
-                    elif parse_type=='freq':
-                        if start < min(freq) or end > max(freq):
-                            raise ValueError(f"范围 {part} 超出有效频率范围 ({min(freq)}-{max(freq)})")
-                        f_list = np.where((freq >= start) & (freq <= end))[0]
-                        if isinstance(f_list, np.ndarray):
-                            target_idx.extend(f_list)
-                        else:
-                            target_idx.append(f_list)
-                # 处理单帧数字
-                else:
-                    if parse_type == 'frame':
-                        frame = int(part)
-                        if frame < 0 or frame > self.max_frame:
-                            raise ValueError(f"帧号 {frame} 超出有效范围 (0-{self.max_frame})")
-                        frames.add(frame)
-                    elif parse_type == 'freq':
-                        target_idx.append(np.argmin(np.abs(freq - int(part))))
-            return sorted(frames) if parse_type=='frame' else np.unique(target_idx)
-
-        except ValueError as e:
-            if parse_type=='frame':
-                QMessageBox.warning(
-                    self,
-                    "输入错误",
-                    f"无效输入: {str(e)}\n\n正确格式示例:\n"
-                    "• 单帧: 5\n"
-                    "• 序列: 1,3,5,7\n"
-                    "• 范围: 10-15,20-25\n"
-                    "• 混合: 1,3-5,7,9-10\n"
-                    f"• 所有帧: all\n\n有效帧范围: 0-{self.max_frame}"
-                )
-                logging.warning(f"帧数输入错误: {str(e)} - 输入内容: {text}")
-            if parse_type == 'freq':
-                QMessageBox.warning(
-                    self,
-                    "输入错误",
-                    f"无效输入: {str(e)}\n\n正确格式示例:\n"
-                    "• 单频率（离此频率最近的频率）: 30\n"
-                    "• 范围（再此范围内的频率）:10-15,20-25\n"
-                    "• 混合: 10,30-50,70,90-100\n"
-                    f"• 全频率: all，即: {min(freq)}-{max(freq)}"
-                )
-                logging.warning(f"频率输入错误: {str(e)} - 输入内容: {text}")
-            return None
-
     def region_analyze_start(self):
         """分析选定区域载流子寿命"""
-        if self.data is None or not hasattr(self, 'time_points'):
-            return logging.warning('无数据载入')
+        aim_data = self.data_selection('data')
+        if aim_data is None:
+            return False
         # 如果线程没了，要开启
-        if not self.is_thread_active("calc_thread"):
-            self.cal_thread_open()
-        # 如果有线程在运算，要提示（不过目前不需要，保留语句）
-        if self.cal_thread and self.calc_thread.isRunning():
-            logging.warning("已有计算任务正在运行")
-            return
-
-        self.calc_thread.start()
+        if not self.calc_thread.isRunning():
+            self.calc_thread.start()
         self.update_status('计算进行中...', 'working')
         self.time_step = float(self.time_step_input.value())
         center = (self.region_y_input.value(), self.region_x_input.value())
         shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
-        self.start_reg_cal_signal.emit(self.data,self.time_step,center,shape,size,model_type)
+        self.start_reg_cal_signal.emit(aim_data,self.time_step,center,shape,size,model_type)
         return None
 
     def distribution_analyze_start(self):
         """分析载流子寿命"""
-        if self.data is None:
-            return logging.warning('无数据载入')
-        # self.time_slider_vertical.setVisible(False)
+        aim_data = self.data_selection('data')
+        if aim_data is None:
+            return False
         # 如果线程没了，要创建
-        if not self.is_thread_active("calc_thread"):
-            self.cal_thread_open()
-        self.calc_thread.start()
+        if not self.calc_thread.isRunning():
+            self.calc_thread.start()
         self.update_status('长时计算进行中...', 'working')
         self.time_step = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
@@ -1944,22 +1901,18 @@ class MainWindow(QMainWindow):
         post_cov = self.post_cov_combo.currentText() if self.post_cov_combo.currentIndex() != 0 else None
         pre_size = self.pre_cov_size.value() if self.pre_cov_combo.currentIndex() != 0 else None
         post_size = self.post_cov_size.value() if self.post_cov_combo.currentIndex() != 0 else None
-        self.start_dis_cal_signal.emit(self.data,self.time_step,model_type,pre_cov,pre_size,post_cov,post_size,
-                                       self.multiprocess_check.isChecked(),self.cpu_use_input.value())
+        self.start_dis_cal_signal.emit(aim_data,self.time_step,model_type,pre_cov,pre_size,post_cov,post_size,
+                                       self.multiprocess_check.isChecked(),self.cpu_use_input.value()-1)
         return None
 
     def heat_transfer_start(self):
         """分析载流子寿命"""
-        if self.data is None and self.processed_data is None:
-            return logging.warning('无数据载入')
-        # self.time_slider_vertical.setVisible(False)
         # 如果线程没了，要创建
-        aim_data = self.data_pick()
+        aim_data = self.data_selection('data')
         if aim_data is None:
             return False
-        if not self.is_thread_active("calc_thread"):
-            self.cal_thread_open()
-        self.calc_thread.start()
+        if not self.calc_thread.isRunning():
+            self.calc_thread.start()
         self.update_status('传热系数计算进行中...', 'working')
         self.time_step = float(self.time_step_input.value())
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
@@ -1973,7 +1926,8 @@ class MainWindow(QMainWindow):
 
     def diffusion_calculation_start(self):
         """扩散系数计算"""
-        if self.data is None:
+        data = self.data_selection('data')
+        if data is None:
             return logging.warning('无数据载入')
         elif self.vectorROI_data is None:
             return  logging.warning("无有效ROI数据")
@@ -1986,35 +1940,25 @@ class MainWindow(QMainWindow):
         self.update_status('计算进行中...', 'working')
         self.time_step = float(self.time_step_input.value())
         self.space_step = float(self.space_step_input.value())
-        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_step, self.space_step, self.data.timestamp,self.data.name)
+        self.start_dif_cal_signal.emit(self.vectorROI_data,self.time_step, self.space_step, data.timestamp,data.name)
         return None
 
     def pre_process_EM(self):
         """EM的数据预处理"""
-        if self.data is None:
-            logging.warning("请先加载数据")
-            return
-        if not hasattr(self.data, 'data_origin'):
-            logging.error("数据加载有误，请重新加载数据")
-            QMessageBox.warning(self,'数据错误',"数据加载有误，请重新加载数据")
-            return
+        data = self.data_selection('data')
+        if data is None:
+            return False
         if not self.is_thread_active("avi_thread"):
             # self.EM_thread_open()
             pass
         # 如果有线程在运算，要提示（不过目前不需要，保留语句）
         if not self.avi_thread.isRunning():
             self.avi_thread.start()
-        self.pre_process_signal.emit(self.data, self.bg_nums_input.value(), True)
+        self.pre_process_signal.emit(data, self.bg_nums_input.value(), True)
 
     def quality_EM_stft(self):
-        if self.processed_data is None:
-            logging.warning("没有数据可以计算，请先加载并预处理数据")
-            return
-        if "EM_pre_processed" == self.processed_data.type_processed:
-            data = self.processed_data
-        else:
-            data = next(
-                (data for data in reversed(self.processed_data.history) if data.type_processed == "EM_pre_processed"),None)
+        """stft质量评价"""
+        data = self.data_selection(['EM_pre_processed'])
         if data is not None:
             # 窗函数选择转义
             window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
@@ -2044,136 +1988,98 @@ class MainWindow(QMainWindow):
             return
 
     def process_EM_stft(self):
-
         """EM的数据处理"""
-        # if self.stft_program_select.currentIndex() == 0:
-        #     type = "python"
-        # if self.stft_program_select.currentIndex() == 1:
-        #     type = "julia"
-        if self.processed_data is None:
-            logging.warning("没有数据可以计算，请先加载并预处理数据")
-            return
-        if "EM_pre_processed" == self.processed_data.type_processed:
-            data = self.processed_data
-        else:
-            data = next(
-                (data for data in reversed(self.processed_data.history) if data.type_processed == "EM_pre_processed"),
-                None)
-        if data is not None:
-            self.update_status("STFT计算ing", 'working')
-            # target_freq = self.parse_frame_input('freq', data.out_processed['frequencies'])
-            # 窗函数选择转义
-            window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
-            self.update_param('EM','stft_window_type',window_dict[self.stft_window_select.currentIndex()])
-            dialog = STFTComputePop(self.EM_params, 'process',time_length=data.timelength)
-            if dialog.exec_():
-                self.update_param('EM','target_freq',dialog.target_freq_input.value())
-                self.update_param('EM', 'EM_fps', dialog.fps_input.value())
-                self.update_param('EM', 'stft_scale_range',dialog.scale_range_input.value())
-                self.update_param('EM', 'stft_window_size',dialog.window_size_input.value())
-                self.update_param('EM', 'stft_noverlap', dialog.noverlap_input.value())
-                self.update_param('EM', 'custom_nfft',dialog.custom_nfft_input.value())
-                if not self.avi_thread.isRunning():
-                    self.avi_thread.start()
-                target_freq = self.EM_params['target_freq'] #if target_freq is None else target_freq
-                logging.info(f"目标频率：{target_freq}")
-                self.stft_python_signal.emit(data,
-                                             target_freq, self.EM_params['stft_scale_range'], self.EM_params['EM_fps'],
-                                             self.EM_params['stft_window_size'],
-                                             self.EM_params['stft_noverlap'],
-                                             self.EM_params['custom_nfft'],
-                                             self.EM_params['stft_window_type'],
-                                             dialog.multiprocess_check.isChecked(), # 目前加速计算的参数不保存上传，需要每次都确认
-                                             dialog.batch_size_input.value(),
-                                             dialog.cpu_use_input.value(),)
-                self.stft_process_btn.setEnabled(False)
-        else:
-            logging.warning("查找不到数据，请先对数据进行预处理")
-            self.update_status("准备就绪")
-            return
+        data = self.data_selection(['EM_pre_processed'])
+        if data is None:
+            return False
+        self.update_status("STFT计算ing", 'working')
+        # target_freq = self.parse_frame_input('freq', data.out_processed['frequencies'])
+        # 窗函数选择转义
+        window_dict = ['hann', 'hamming', 'gaussian', 'boxcar','blackman','blackmanharris']
+        self.update_param('EM','stft_window_type',window_dict[self.stft_window_select.currentIndex()])
+        dialog = STFTComputePop(self.EM_params, 'process',time_length=data.timelength)
+        if dialog.exec_():
+            self.update_param('EM','target_freq',dialog.target_freq_input.value())
+            self.update_param('EM', 'EM_fps', dialog.fps_input.value())
+            self.update_param('EM', 'stft_scale_range',dialog.scale_range_input.value())
+            self.update_param('EM', 'stft_window_size',dialog.window_size_input.value())
+            self.update_param('EM', 'stft_noverlap', dialog.noverlap_input.value())
+            self.update_param('EM', 'custom_nfft',dialog.custom_nfft_input.value())
+            if not self.avi_thread.isRunning():
+                self.avi_thread.start()
+            target_freq = self.EM_params['target_freq'] #if target_freq is None else target_freq
+            logging.info(f"目标频率：{target_freq}")
+            self.stft_python_signal.emit(data,
+                                         target_freq, self.EM_params['stft_scale_range'], self.EM_params['EM_fps'],
+                                         self.EM_params['stft_window_size'],
+                                         self.EM_params['stft_noverlap'],
+                                         self.EM_params['custom_nfft'],
+                                         self.EM_params['stft_window_type'],
+                                         dialog.multiprocess_check.isChecked(), # 目前加速计算的参数不保存上传，需要每次都确认
+                                         dialog.batch_size_input.value(),
+                                         dialog.cpu_use_input.value(),)
+            self.stft_process_btn.setEnabled(False)
+            return True
+        return False
 
     def quality_EM_cwt(self):
         """小波变换的质量评价"""
-        if self.processed_data is None:
-            logging.warning("没有数据可以计算，请先加载并预处理数据")
-            return
-        if "EM_pre_processed" == self.processed_data.type_processed:
-            data = self.processed_data
-        else:
-            data = next(
-                (data for data in reversed(self.processed_data.history) if data.type_processed == "EM_pre_processed"),
-                None)
-        if data is not None:
-            dialog = CWTComputePop(self.EM_params,'quality')
+        data = self.data_selection(['EM_pre_processed'])
+        if data is None:
+            return False
+        dialog = CWTComputePop(self.EM_params,'quality')
 
-            if dialog.exec_():
-                self.update_param('EM', 'target_freq', dialog.target_freq_input.value())
-                self.update_param('EM', 'EM_fps', dialog.fps_input.value())
-                self.update_param('EM', 'cwt_total_scales',dialog.cwt_size_input.value())
-                self.update_param('EM', 'cwt_scale_range',dialog.cwt_scale_range.value())
-                self.update_param('EM', 'cwt_type', dialog.wavelet.currentText())
-                if not self.avi_thread.isRunning():
-                    self.avi_thread.start()
-                self.cwt_quality_signal.emit(data,
-                                             self.EM_params['target_freq'],
-                                             int(self.EM_params['cwt_scale_range']),
-                                             self.EM_params['EM_fps'],
-                                             self.EM_params['cwt_total_scales'],
-                                             self.EM_params['cwt_type'])
-                # self.cwt_quality_btn.setEnabled(False)
+        if dialog.exec_():
+            self.update_param('EM', 'target_freq', dialog.target_freq_input.value())
+            self.update_param('EM', 'EM_fps', dialog.fps_input.value())
+            self.update_param('EM', 'cwt_total_scales',dialog.cwt_size_input.value())
+            self.update_param('EM', 'cwt_scale_range',dialog.cwt_scale_range.value())
+            self.update_param('EM', 'cwt_type', dialog.wavelet.currentText())
+            if not self.avi_thread.isRunning():
+                self.avi_thread.start()
+            self.cwt_quality_signal.emit(data,
+                                         self.EM_params['target_freq'],
+                                         int(self.EM_params['cwt_scale_range']),
+                                         self.EM_params['EM_fps'],
+                                         self.EM_params['cwt_total_scales'],
+                                         self.EM_params['cwt_type'])
+            # self.cwt_quality_btn.setEnabled(False)
+            return True
         else:
-            logging.warning("查找不到预处理数据，请先对数据进行预处理")
-            self.update_status("准备就绪")
-            return
+            return False
 
     def process_EM_cwt(self):
         """小波变换"""
-        if self.processed_data is None:
-            logging.warning("没有数据可以计算，请先加载并预处理数据")
-            return
-        if "cwt_quality" == self.processed_data.type_processed:
-            data = self.processed_data
+        data = self.data_selection(['EM_pre_processed'])
+        if data is None:
+            return False
+        dialog = CWTComputePop(self.EM_params, 'signal')
+        if dialog.exec_():
+            self.update_status("CWT计算ing", 'working')
+            self.update_param('EM', 'target_freq', dialog.target_freq_input.value())
+            self.update_param('EM', 'EM_fps', dialog.fps_input.value())
+            self.update_param('EM', 'cwt_total_scales',dialog.cwt_size_input.value())
+            self.update_param('EM', 'cwt_scale_range',dialog.cwt_scale_range.value())
+            self.update_param('EM', 'cwt_type', dialog.wavelet.currentText())
+            if not self.avi_thread.isRunning():
+                self.avi_thread.start()
+            self.cwt_python_signal.emit(data,
+                                        self.EM_params['target_freq'],
+                                        self.EM_params['EM_fps'],
+                                        self.EM_params['cwt_total_scales'],
+                                        self.EM_params['cwt_type'],
+                                        self.EM_params['cwt_scale_range'])
+            self.cwt_process_btn.setEnabled(False)
+            return True
         else:
-            data = next(
-                (data for data in reversed(self.processed_data.history) if data.type_processed == "cwt_quality"),
-                None)
-        if data is not None:
-            dialog = CWTComputePop(self.EM_params, 'signal')
-            if dialog.exec_():
-                self.update_status("CWT计算ing", 'working')
-                self.update_param('EM', 'target_freq', dialog.target_freq_input.value())
-                self.update_param('EM', 'EM_fps', dialog.fps_input.value())
-                self.update_param('EM', 'cwt_total_scales',dialog.cwt_size_input.value())
-                self.update_param('EM', 'cwt_scale_range',dialog.cwt_scale_range.value())
-                self.update_param('EM', 'cwt_type', dialog.wavelet.currentText())
-                if not self.avi_thread.isRunning():
-                    self.avi_thread.start()
-                self.cwt_python_signal.emit(data,
-                                            self.EM_params['target_freq'],
-                                            self.EM_params['EM_fps'],
-                                            self.EM_params['cwt_total_scales'],
-                                            self.EM_params['cwt_type'],
-                                            self.EM_params['cwt_scale_range'])
-                self.cwt_process_btn.setEnabled(False)
-        else:
-            logging.warning("查找不到质量评价数据，请先对数据进行质量评价")
-            self.update_status("准备就绪", 'idle')
-            return
+            return False
 
     def roi_signal_avg(self):
         """计算选区信号平均值并显示"""
         if not hasattr(self,"bool_mask") or self.bool_mask is None:
             QMessageBox.warning(self,"警告","请先绘制ROI")
             return
-        if self.processed_data is None:
-            QMessageBox.warning(self,"警告","请先处理数据")
-            return
-        if self.processed_data.type_processed == 'ROI_stft' or self.processed_data.type_processed == 'ROI_cwt':
-            data = self.processed_data
-        else:
-            data = next(
-                (data for data in reversed(self.processed_data.history) if data.type_processed == "ROI_cwt" or data.type_processed == "ROI_stft"),
-                None)
+        data = self.data_selection(['ROI_stft', 'ROI_cwt'])
         if data is not None:
             pass
         else:
@@ -2198,10 +2104,7 @@ class MainWindow(QMainWindow):
 
     def process_signal_avg(self):
         """广义信号平均"""
-        if self.data is None and self.processed_data is None:
-            logging.warning("无数据可处理，请先加载数据")
-            return False
-        aim_data = self.data_pick()
+        aim_data = self.data_selection()
         if aim_data is None:
             return False
         if not self.avi_thread.isRunning():
@@ -2214,10 +2117,7 @@ class MainWindow(QMainWindow):
 
     def process_atam(self):
         """累计时间振幅图"""
-        if self.data is None  and self.processed_data is None :
-            logging.warning('请先导入数据')
-            return False
-        aim_data = self.data_pick()
+        aim_data = self.data_selection()
         if aim_data is None:
             return False
         if aim_data.ndim not in [2, 3]:
@@ -2260,16 +2160,7 @@ class MainWindow(QMainWindow):
 
     def process_tDgf(self):
         """单通道二维高斯拟合以及信号显示"""
-        if self.data is None and self.processed_data is None:
-            logging.warning('请先导入数据')
-            return
-        if self.processed_data.type_processed in ['Roi_applied']:
-            data = self.processed_data
-        else:
-            data = next(
-                (data for data in reversed(self.processed_data.history) if
-                 data.type_processed == "Roi_applied"),
-                None)
+        data = self.data_selection(['Roi_applied'])
         if data is not None:
             dialog = SCSComputePop(self.EM_params)
             if dialog.exec_():
@@ -2290,16 +2181,8 @@ class MainWindow(QMainWindow):
             return
 
     def process_simple_scs(self):
-        if self.data is None and self.processed_data is None:
-            logging.warning('请先导入数据')
-            return
-        if self.processed_data.type_processed in ['Roi_applied']:
-            data = self.processed_data
-        else:
-            data = next(
-                (data for data in reversed(self.processed_data.history) if
-                 data.type_processed == "Roi_applied"),
-                None)
+        """单通道处理开始"""
+        data = self.data_selection(['Roi_applied'])
         if data is not None:
             dialog = SCSComputePop(self.EM_params)
             if dialog.exec_():
@@ -2321,10 +2204,7 @@ class MainWindow(QMainWindow):
 
     def process_tDFT(self):
         """二维傅里叶变换"""
-        if self.data is None and self.processed_data is None:
-            logging.warning("无数据可处理，请先加载数据")
-            return None
-        aim_data = self.data_pick()
+        aim_data = self.data_selection()
         if aim_data is None:
             return False
         if not self.avi_thread.isRunning():
@@ -2335,10 +2215,7 @@ class MainWindow(QMainWindow):
 
     def process_heartbeat(self):
         """心肌细胞跳动分析"""
-        if self.data is None and self.processed_data is None:
-            logging.warning("无数据可处理，请先加载数据")
-            return None
-        aim_data = self.data_pick()
+        aim_data = self.data_selection()
         if aim_data is None:
             return False
         self.dialog = HeartBeatFrameSelectDialog(aim_data, self)
@@ -2347,8 +2224,37 @@ class MainWindow(QMainWindow):
         self.update_status('心肌细胞跳动分析中...', 'working')
         return True
 
-    """结果处理"""
-    def data_pick(self,need_all = True):
+    def data_selection(self, aim_type:str | list = 'all'):
+        """数据选择代码"""
+        aim_data = None
+        if self.data is None and self.processed_data is None:
+            logging.warning("无数据可处理，请先加载数据")
+            return None
+        match self.mode:
+            case 0:
+                if aim_type == 'data':
+                    aim_data = self.data
+                elif aim_type == 'processed':
+                    aim_data = self.processed_data
+                elif aim_type == 'all':
+                    aim_data = self.data_pick()
+                elif self.processed_data.type_processed in aim_type:
+                    aim_data = self.processed_data
+                else:
+                    aim_data = next(
+                        (data for data in reversed(self.processed_data.history) if
+                         data.type_processed in aim_type),
+                        None)
+            case 1:
+                if self.data.timestamp > self.processed_data.timestamp:
+                    aim_data = self.data
+                else:
+                    aim_data = self.processed_data
+            case 2:
+                aim_data = self.data_pick()
+        return aim_data
+
+    def data_pick(self, need_all=True):
         """数据选择代码"""
         dialog = DataViewAndSelectPop(datadict=self.get_data_all(),
                                       processed_datadict=self.get_processed_data_all(),
@@ -2374,6 +2280,7 @@ class MainWindow(QMainWindow):
             return aim_data
         return None
 
+    """结果处理"""
     def processed_result(self, data):
         """处理过后的数据都来这里重整再分配"""
         if isinstance(data, ProcessedData):

@@ -727,7 +727,6 @@ class STFTComputePop(QDialog):
         batch_size = max(1, optimal_batch_size)
         self.batch_size_input.setValue(batch_size)
 
-
 # 计算cwt参数弹窗
 class CWTComputePop(QDialog):
     def __init__(self,params,case='quality',parent = None):

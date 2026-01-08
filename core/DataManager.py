@@ -500,6 +500,7 @@ class Data:
     image_import 原生成像数据\n
     parameters 其他参数\n
     name 数据命名\n
+    out_processed 在0.11.9版本加入，解决自由调用时总报错的问题，同时减少代码冗余，于是加入了一个空的占位用\n
     timestamp 时间戳（用于识别匹配数据流）\n
     ROI_applied 是否应用ROI蒙版 \n
     history 历史保存（3组）\n
@@ -517,6 +518,7 @@ class Data:
     image_import: np.ndarray
     parameters: dict = None
     name: str = None
+    out_processed : dict = field(init=False,default_factory=dict)
     timestamp: float = field(init=False, default_factory=time.time)
     ROI_applied: bool = field(init=False, default=False)
     history: ClassVar[deque] = deque(maxlen=10)
@@ -735,6 +737,7 @@ class ProcessedData:
     time_point 时间点: np.ndarray\n
     data_processed 处理出来的数据（此处存放尤指具有时空尺度的核心数据）: np.ndarray = None\n
     out_processed 其他处理出来的数据（比如拟合得到的参数，二维序列等等）: dict = None\n
+    parameters 在0.11.9版本加入，解决自由调用时总报错的问题，同时减少代码冗余，于是加入了一个空的占位用\n
     timestamp 新数据时间戳\n
     ROI_applied 是否应用ROI蒙版 \n
     history 历史，无限保留，考虑和绘图挂钩: ClassVar[Dict[str, 'ProcessedData']] = {}\n
@@ -745,6 +748,7 @@ class ProcessedData:
     time_point: np.ndarray = None
     data_processed: np.ndarray = None
     out_processed: dict = None
+    parameters: dict = field(init=False, default_factory=dict)
     timestamp: float = field(init=False, default_factory=time.time)
     ROI_applied: bool = False
     ROI_mask: np.ndarray = None

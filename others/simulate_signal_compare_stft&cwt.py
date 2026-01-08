@@ -102,8 +102,8 @@ def analyze_signals(sig, fs, target_freq=150, wavelet = 'cmor1.5-1'):
 
     # --- 1. STFT (短时傅里叶变换) ---
     # nperseg 决定了频率分辨率。fs=1500, nperseg=256 -> 分辨率约为 5.8Hz
-
-    f_stft, t_stft, Zxx = signal.stft(sig, fs, window='hann' ,nperseg=128, noverlap=127, nfft= fs, return_onesided=True)
+    window = signal.get_window(('gaussian', 128 / 6), 128, fftbins=False)
+    f_stft, t_stft, Zxx = signal.stft(sig, fs, window=window ,nperseg=128, noverlap=127, nfft= fs, return_onesided=True)
 
     # 计算功率谱密度 PSD (取模的平方)
     psd_stft = np.abs(Zxx) ** 2
@@ -144,7 +144,7 @@ def plot_all_results(base_sig, final_sig, analysis_res, fs, target_freq, wavelet
 
     # 创建5行1列的布局
     # sharex=False，因为 FFT 的 x轴是频率，不能和时间的 x轴共享
-    fig, axes = plt.subplots(5, 1, figsize=(18, 16), constrained_layout=True)
+    fig, axes = plt.subplots(4, 1, figsize=(18, 16), constrained_layout=True)
 
     # === 1. 原始信号 (Time) ===
     ax1 = axes[0]
@@ -154,19 +154,19 @@ def plot_all_results(base_sig, final_sig, analysis_res, fs, target_freq, wavelet
     ax1.set_ylabel('Amplitude')
     ax1.legend(loc='upper right')
 
-    # === 2. FFT 频谱 (Frequency) - 这是一个频域图，X轴不同 ===
-    ax2 = axes[1]
-    ax2.semilogy(f_fft, psd_fft, color='darkorange', linewidth=1)
-    ax2.set_title('2. FFT Power Spectrum (Global)')
-    ax2.set_ylabel('Power (Log Scale)')
-    ax2.set_xlabel('Frequency (Hz)')
-    ax2.set_xlim(0, min(400,fs//2))  # 重点关注低频区
-    # 标记目标频率
-    ax2.axvline(target_freq, color='red', linestyle='--', alpha=0.6, label=f'Target {target_freq}Hz')
-    ax2.legend()
+    # # === 2. FFT 频谱 (Frequency) - 这是一个频域图，X轴不同 ===
+    # ax2 = axes[1]
+    # ax2.semilogy(f_fft, psd_fft, color='darkorange', linewidth=1)
+    # ax2.set_title('2. FFT Power Spectrum (Global)')
+    # ax2.set_ylabel('Power (Log Scale)')
+    # ax2.set_xlabel('Frequency (Hz)')
+    # ax2.set_xlim(0, min(400,fs//2))  # 重点关注低频区
+    # # 标记目标频率
+    # ax2.axvline(target_freq, color='red', linestyle='--', alpha=0.6, label=f'Target {target_freq}Hz')
+    # ax2.legend()
 
     # === 3. STFT 谱图 (Time-Freq) ===
-    ax3 = axes[2]
+    ax3 = axes[1]
     # 使用 shading='gouraud' 可以让图像更平滑，且视觉上对齐更准
     mesh_stft = ax3.pcolormesh(t_stft, f_stft, 10 * np.log10(psd_stft + 1e-10),
                                shading='gouraud', cmap='viridis')
@@ -177,7 +177,7 @@ def plot_all_results(base_sig, final_sig, analysis_res, fs, target_freq, wavelet
     plt.colorbar(mesh_stft, ax=ax3, label='dB')
 
     # === 4. CWT 谱图 (Time-Freq) ===
-    ax4 = axes[3]
+    ax4 = axes[2]
     # CWT 的 x 轴直接使用 t_cwt (即 t_full)
     mesh_cwt = ax4.pcolormesh(t_cwt, f_cwt, psd_cwt, shading='auto', cmap='viridis')
     ax4.set_title('4. CWT Scalogram')
@@ -187,7 +187,7 @@ def plot_all_results(base_sig, final_sig, analysis_res, fs, target_freq, wavelet
     plt.colorbar(mesh_cwt, ax=ax4, label='Mag')
 
     # === 5. 目标频率幅值提取 (Time) ===
-    ax5 = axes[4]
+    ax5 = axes[3]
     ax5.plot(t_stft, trace_stft, label='STFT Trace', color='red', linewidth=1.5)
     ax5.plot(t_cwt, trace_cwt, label='CWT Trace', color='purple', linewidth=1)
     ax5.plot(t_full, base_sig, label='Base (Rect)', color='blue', linewidth=1, alpha=0.2, linestyle='--')
@@ -204,7 +204,7 @@ def plot_all_results(base_sig, final_sig, analysis_res, fs, target_freq, wavelet
 
     # 1. 统一设置显示范围
     for ax in time_axes:
-        ax.set_xlim(0, total_time)
+        ax.set_xlim(0.2, total_time-0.2)
 
     # 2. 启用 sharex 机制 (手动链接)
     # 这样你在交互式窗口缩放 ax1 时，ax3/4/5 也会跟着动
@@ -222,7 +222,7 @@ if __name__ == "__main__":
     DURATION = 3.0  # 为了绘图清晰，这里生成2秒数据，你可以改为5秒
     MOD_FREQ = 100
     DENSITY = 0.5
-    WAVELET = 'cmor3-3'
+    WAVELET = 'cmor1.5-1'
     noise_amp = 2
     noise_level = 0.4
     mod_amp = 2
@@ -243,4 +243,4 @@ if __name__ == "__main__":
     results = analyze_signals(full_signal, FS, target_freq=MOD_FREQ, wavelet=WAVELET)
 
     # 3. 绘图
-    plot_all_results(base_sig, full_signal, results, FS, target_freq=MOD_FREQ, wavelet=WAVELET)
+    plot_all_results(base_sig+2, full_signal, results, FS, target_freq=MOD_FREQ, wavelet=WAVELET)

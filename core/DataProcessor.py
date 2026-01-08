@@ -10,7 +10,7 @@ from typing import List
 from scipy import signal
 from scipy.optimize import curve_fit
 from scipy.ndimage import zoom
-import DataManager
+from DataManager import *
 from multiprocessing import shared_memory, Manager, Pool
 import math
 import traceback
@@ -171,7 +171,7 @@ class DataProcessor(QObject):
         return sorted(list(set(bad_frames)))
 
     @pyqtSlot(object, list, int)
-    def fix_bad_frames(self, data: DataManager.ProcessedData|DataManager.Data, bad_frames: List[int], n_frames: int = 2) -> np.ndarray:
+    def fix_bad_frames(self, data: ProcessedData|Data, bad_frames: List[int], n_frames: int = 2) -> np.ndarray:
         """
         修复坏帧 - 使用前后n帧的平均值替换
         """
@@ -197,11 +197,11 @@ class DataProcessor(QObject):
         data.update_data(**self.amend_data(fixed_data))
 
     @pyqtSlot(np.ndarray,str,object)
-    def plot_data_prepare(self, data: np.ndarray,name:str, father_obj: DataManager.Data| DataManager.ProcessedData ):
+    def plot_data_prepare(self, data: np.ndarray,name:str, father_obj: Data| ProcessedData ):
         """完成plot数据的准备操作"""
         try:
             time_point = father_obj.time_point
-            father_dict = father_obj.parameters if isinstance(father_obj, DataManager.Data) else father_obj.out_processed
+            father_dict = father_obj.parameters if isinstance(father_obj, Data) else father_obj.out_processed
             if data.ndim == 2:
                 self.plot_singal.emit(data,{'name':name})
             else:
@@ -261,7 +261,7 @@ class MassDataProcessor(QObject):
         logging.info("大数据处理线程已载入")
         self.abortion = False
 
-    @pyqtSlot(DataManager.Data,int,bool)
+    @pyqtSlot(object,int,bool)
     def pre_process(self,data,bg_num = 360,unfold=True):
         """数据预处理，包含背景去除，数组展开"""
         try:
@@ -316,7 +316,7 @@ class MassDataProcessor(QObject):
                 unfolded_data = None
             self.processing_progress_signal.emit(95, 100)
             # 保存结果
-            processed = DataManager.ProcessedData(data.timestamp,
+            processed = ProcessedData(data.timestamp,
                                                   f'{data.name}@EM_pre',
                                                   'EM_pre_processed',
                                                   time_point=data.time_point,
@@ -334,59 +334,62 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type': "EM_pre_processed", 'error': str(e)})
             return False
 
-    @pyqtSlot(DataManager.ProcessedData,float,int,int,int,int,int,str)
+    @pyqtSlot(object,float,int,int,int,int,int,str)
     def quality_stft(self,data,target_freq: float,scale_range:int,fps:int, window_size: int, noverlap: int,
                     custom_nfft: int, window_type: str):
         """STFT质量分析"""
-        if not data:
-                raise ValueError("请先进行预处理")
+        # try:
         try:
             unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
+        except:
+            processed_data = data.data_origin.copy() if isinstance(data, Data) else data.processed_data.copy()
+            T, H, W = processed_data.shape
+            unfolded_data = processed_data.reshape((T, H * W)).T
 
-            # 窗函数的选择和生成
-            window = self.get_window(window_type, window_size)
+        # 窗函数的选择和生成
+        window = self.get_window(window_type, window_size)
 
-            mean_signal = np.mean(unfolded_data, axis=0)
-            f, t, Zxx = signal.stft(
-                mean_signal,
-                fs=fps,
-                window=window,
-                nperseg=window_size,
-                noverlap=noverlap,
-                nfft=custom_nfft,
-                return_onesided=True,
-                scaling='psd'
-            )
-            # 提取范围内所有对应的索引
-            if scale_range > 0:
-                low_bound = max(0.0, target_freq - scale_range / 2.0)
-                high_bound = min(f[-1], target_freq + scale_range / 2.0)
-                target_idx = np.where((f >= low_bound) & (f <= high_bound))[0]
-                if len(target_idx) == 0:
-                    target_idx = [np.argmin(np.abs(f - target_freq))]
-            else:
+        mean_signal = np.mean(unfolded_data, axis=0)
+        f, t, Zxx = signal.stft(
+            mean_signal,
+            fs=fps,
+            window=window,
+            nperseg=window_size,
+            noverlap=noverlap,
+            nfft=custom_nfft,
+            return_onesided=True,
+            scaling='psd'
+        )
+        # 提取范围内所有对应的索引
+        if scale_range > 0:
+            low_bound = max(0.0, target_freq - scale_range / 2.0)
+            high_bound = min(f[-1], target_freq + scale_range / 2.0)
+            target_idx = np.where((f >= low_bound) & (f <= high_bound))[0]
+            if len(target_idx) == 0:
                 target_idx = [np.argmin(np.abs(f - target_freq))]
-            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
-                                                                 f'{data.name}@stft_q',
-                                                                 'stft_quality',
-                                                                 data_processed=Zxx,
-                                                                 out_processed={
-                                                                     'window_type': window,
-                                                                     'window_size': window_size,
-                                                                     'out_length': Zxx.shape[1],
-                                                                     'frequencies':f,
-                                                                     'time_series':t,
-                                                                     'target_freq':target_freq,
-                                                                     'scale_range':scale_range,
-                                                                     'target_idx':target_idx,
-                                                                 })
-                                       )
-            return True
-        except Exception as e:
-            self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
-            return False
+        else:
+            target_idx = [np.argmin(np.abs(f - target_freq))]
+        self.processed_result.emit(ProcessedData(data.timestamp,
+                                                             f'{data.name}@stft_q',
+                                                             'stft_quality',
+                                                             data_processed=Zxx,
+                                                             out_processed={
+                                                                 'window_type': window,
+                                                                 'window_size': window_size,
+                                                                 'out_length': Zxx.shape[1],
+                                                                 'frequencies':f,
+                                                                 'time_series':t,
+                                                                 'target_freq':target_freq,
+                                                                 'scale_range':scale_range,
+                                                                 'target_idx':target_idx,
+                                                             })
+                                   )
+        return True
+        # except Exception as e:
+        #     self.processed_result.emit({'type': "stft_quality", 'error': str(e)})
+        #     return False
 
-    @pyqtSlot(DataManager.ProcessedData, object, int, int, int, int, int, str, bool, int, int)
+    @pyqtSlot(object, object, int, int, int, int, int, str, bool, int, int)
     def python_stft(self, data, target_freq, scale_range: int, fps: int, window_size: int, noverlap: int,
                     custom_nfft: int, window_type: str, is_multipro: bool, batch_size: int, cpu_num: int):
         """可选并行计算加速
@@ -408,7 +411,12 @@ class MassDataProcessor(QObject):
                 # --- 1. 参数校验与准备 ---
                 window = self.get_window(window_type, window_size)
                 frame_size = data.framesize
-                unfolded_data = data.out_processed['unfolded_data']  # Shape: [Pixels, Frames]
+                try:
+                    unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
+                except:
+                    processed_data = data.data_origin.copy() if isinstance(data, Data) else data.processed_data.copy()
+                    T, H, W = processed_data.shape
+                    unfolded_data = processed_data.reshape((T, H * W)).T  # Shape: [Pixels, Frames]
 
                 mean_signal = np.mean(unfolded_data, axis=0)
                 f0, t0, Zxx0 = signal.stft(
@@ -537,7 +545,7 @@ class MassDataProcessor(QObject):
                 stft_py_out = final_result_flat.reshape(out_length, height, width)
 
                 # 发送结果
-                self.processed_result.emit(DataManager.ProcessedData(
+                self.processed_result.emit(ProcessedData(
                     data.timestamp,
                     f'{data.name}@r_stft',
                     'ROI_stft',
@@ -550,7 +558,8 @@ class MassDataProcessor(QObject):
                         'window_step': window_size - noverlap,
                         'target_freq': target_freq,
                         'FFT_length': nfft,
-                        **{k: data.out_processed.get(k) for k in data.out_processed if k not in {"unfolded_data"}}
+                        **{k: data.out_processed.get(k) for k in data.out_processed if k not in {"unfolded_data"}},
+                        **data.parameters
                     }
                 ))
 
@@ -582,7 +591,12 @@ class MassDataProcessor(QObject):
             try:
                 window = self.get_window(window_type, window_size)
                 frame_size = data.framesize
-                unfolded_data = data.out_processed['unfolded_data']  # Shape: [Pixels, Frames]
+                try:
+                    unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
+                except:
+                    processed_data = data.data_origin.copy() if isinstance(data, Data) else data.processed_data.copy()
+                    T, H, W = processed_data.shape
+                    unfolded_data = processed_data.reshape((T, H * W)).T  # Shape: [Pixels, Frames]
 
                 mean_signal = np.mean(unfolded_data, axis=0)
                 f0, t0, Zxx0 = signal.stft(
@@ -659,7 +673,7 @@ class MassDataProcessor(QObject):
                 #     dset = f.create_dataset('big_array', data=stft_py_out, compression='gzip')
 
                 # 6. 发送完整结果
-                self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+                self.processed_result.emit(ProcessedData(data.timestamp,
                                                                    f'{data.name}@r_stft',
                                                                    'ROI_stft',
                                                                     time_point=time_series,
@@ -670,7 +684,8 @@ class MassDataProcessor(QObject):
                                                                                   'window_step': window_size - noverlap,
                                                                                   'FFT_length': nfft,
                                                                                   **{k:data.out_processed.get(k)
-                                                                                     for k in data.out_processed if k not in {"unfolded_data"}}}))
+                                                                                     for k in data.out_processed if k not in {"unfolded_data"}},
+                                                                                  **data.parameters}))
                 return True
             except Exception as e:
                 self.processed_result.emit({'type': "ROI_stft", 'error': str(e)})
@@ -694,7 +709,7 @@ class MassDataProcessor(QObject):
         except Exception as e:
             logging.error(f'Window Fault:{e}')
 
-    @pyqtSlot(DataManager.ProcessedData,float,int,int,int,str)
+    @pyqtSlot(object,float,int,int,int,str)
     def quality_cwt(self,data, target_freq: float,scale_range:int, fps: int, totalscales: int, wavelet: str = 'morl'):
         """
         CWT(连续小波变换)分析信号评估
@@ -705,10 +720,12 @@ class MassDataProcessor(QObject):
             wavelet: 使用的小波类型(默认为'morl'墨西哥帽小波)
         """
         try:
-            if not data:
-                raise ValueError("请先进行预处理")
-
-            unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
+            try:
+                unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
+            except:
+                processed_data = data.data_origin.copy() if isinstance(data, Data) else data.processed_data.copy()
+                T, H, W = processed_data.shape
+                unfolded_data = processed_data.reshape((T, H * W)).T
             frame_size = data.framesize  # (宽度, 高度)
             cparam = 2 * pywt.central_frequency(wavelet) * totalscales
             scales = cparam/np.arange(totalscales,1,-1)
@@ -725,7 +742,7 @@ class MassDataProcessor(QObject):
             coefficients, frequencies = pywt.cwt(mean_signal, scales, wavelet, sampling_period=1.0 / fps)
             self.processing_progress_signal.emit(70, 100)
             # 发送平均信号CWT结果
-            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+            self.processed_result.emit(ProcessedData(data.timestamp,
                                                                  f'{data.name}@cwt_q',
                                                                  'cwt_quality',
                                                                  data_processed=np.abs(coefficients),
@@ -743,7 +760,7 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type': "cwt_quality", 'error': str(e)})
             return False
 
-    @pyqtSlot(DataManager.ProcessedData,float, int, int,str, float)
+    @pyqtSlot(object,float, int, int,str, float)
     def python_cwt(self,data, target_freq: float, fps: int, totalscales: int, wavelet: str, cwt_scale_range: float):
         """
         执行逐像素CWT分析
@@ -755,12 +772,12 @@ class MassDataProcessor(QObject):
             wavelet: 使用的小波类型(默认为cmor3-3)
         """
         try:
-            if not data:
-                raise ValueError("请先进行预处理")
-
-            data = next(
-                data for data in reversed(data.history) if data.type_processed == "EM_pre_processed")  # [像素数 x 帧数]
-            unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
+            try:
+                unfolded_data = data.out_processed['unfolded_data']  # [像素数 x 帧数]
+            except:
+                processed_data = data.data_origin.copy() if isinstance(data, Data) else data.processed_data.copy()
+                T, H, W = processed_data.shape
+                unfolded_data = processed_data.reshape((T, H * W)).T
             frame_size = data.framesize  # (宽度, 高度)
             # cparam = 2 * pywt.central_frequency(wavelet) * totalscales
             # scales = cparam / np.arange(totalscales, 1, -1)
@@ -803,7 +820,7 @@ class MassDataProcessor(QObject):
 
             # 发送完整结果
             times = np.arange(cwt_py_out.shape[0]) / fps
-            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+            self.processed_result.emit(ProcessedData(data.timestamp,
                                                                  f'{data.name}@cwt',
                                                                  'ROI_cwt',
                                                                  time_point=times,
@@ -814,7 +831,7 @@ class MassDataProcessor(QObject):
                                                                                 'scale_range': cwt_scale_range,
                                                                                 **{k: data.out_processed.get(k)
                                                                                    for k in data.out_processed if
-                                                                                   k not in {"unfolded_data"}}}))
+                                                                                   k not in {"unfolded_data"}},**data.parameters}))
             self.processing_progress_signal.emit(total_pixels, total_pixels)
             return True
         except Exception as e:
@@ -824,11 +841,11 @@ class MassDataProcessor(QObject):
     @pyqtSlot(object)
     def accumulate_amplitude(self,data):
         """累计时间振幅图"""
-        self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+        self.processed_result.emit(ProcessedData(data.timestamp,
                                          f'{data.name}@atam',
                                          "Accumulated_time_amplitude_map",
                                          time_point=data.time_point,
-                                         data_processed=np.mean(data.data_processed if isinstance(data,DataManager.ProcessedData) else data.data_origin, axis=0),
+                                         data_processed=np.mean(data.data_processed if isinstance(data,ProcessedData) else data.data_origin, axis=0),
                                          out_processed={**data.out_processed}
                                                              ))
         logging.info("累计时间振幅计算已完成")
@@ -849,8 +866,8 @@ class MassDataProcessor(QObject):
         x, y = xy[:, 0], xy[:, 1]
         return A * np.exp(-((x - x0) ** 2 / (2 * sigmax ** 2) + (y - y0) ** 2 / (2 * sigmay ** 2))) + b
 
-    @pyqtSlot(DataManager.ProcessedData,int,float,bool)
-    def twoD_gaussian_fit(self,data:DataManager.ProcessedData,zm = 2,thr = 2.5,thr_known = False):
+    @pyqtSlot(object,int,float,bool)
+    def twoD_gaussian_fit(self,data:ProcessedData|Data,zm = 2,thr = 2.5,thr_known = False):
         """
         对三维时序数据逐帧进行二维高斯拟合
 
@@ -948,7 +965,7 @@ class MassDataProcessor(QObject):
                         centers_x[m] = np.nan
                         centers_y[m] = np.nan
             self.processing_progress_signal.emit(T, T)
-            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+            self.processed_result.emit(ProcessedData(data.timestamp,
                                              f'{data.name}@scs',
                                              "Single_channel_signal",
                                              time_point=data.time_point,
@@ -965,8 +982,8 @@ class MassDataProcessor(QObject):
             self.processed_result.emit({'type':"Single_channel_signal",'error':str(e)})
             return False
 
-    @pyqtSlot(DataManager.ProcessedData, int, float, bool)
-    def simple_single_channel(self, data: DataManager.ProcessedData, zm=2, thr=2.5, thr_known=False):
+    @pyqtSlot(object, int, float, bool)
+    def simple_single_channel(self, data: ProcessedData|Data, zm=2, thr=2.5, thr_known=False):
         """简单的单通道信号处理办法"""
         try:
             timer = QElapsedTimer()
@@ -1002,7 +1019,7 @@ class MassDataProcessor(QObject):
                 else:
                     amplitudes[m] = np.max(Z)
             self.processing_progress_signal.emit(T, T)
-            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+            self.processed_result.emit(ProcessedData(data.timestamp,
                                                                  f'{data.name}@scs',
                                                                  "Single_channel_signal",
                                                                  time_point=data.time_point,
@@ -1034,7 +1051,7 @@ class MassDataProcessor(QObject):
             magnitude_log: 幅度谱的log（默认主参数）
             phase_spectra: 傅里叶相位谱数组
             """
-        if isinstance(data, DataManager.ProcessedData):
+        if isinstance(data, ProcessedData):
             data = data.data_processed
         else:
             data = data.data_origin
@@ -1063,7 +1080,7 @@ class MassDataProcessor(QObject):
 
                 magnitude_log[i] = np.log(magnitude_spectra[i]+1)
 
-            self.processed_result.emit(DataManager.ProcessedData(data.timestamp,
+            self.processed_result.emit(ProcessedData(data.timestamp,
                                        f'{data.name}@2DFT',
                                        "2D_Fourier_transform",
                                        time_point = data.time_point,
@@ -1084,7 +1101,7 @@ class MassDataProcessor(QObject):
         # try:
         timer = QElapsedTimer()
         timer.start()
-        if isinstance(data, DataManager.ProcessedData):
+        if isinstance(data, ProcessedData):
             aim_data = data.data_processed
             out_processed = data.out_processed
         else:
@@ -1127,7 +1144,7 @@ class MassDataProcessor(QObject):
             self.processing_progress_signal.emit(i+3,num+2)
 
 
-        result = DataManager.ProcessedData(data.timestamp,
+        result = ProcessedData(data.timestamp,
                                            f'{data.name}@heartbeat',
                                            "Heartbeat",
                                            time_point = time_point,
