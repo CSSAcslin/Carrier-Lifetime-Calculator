@@ -1,8 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 import pywt
 import scipy.signal as signal
-import scipy.fft as fft
+from scipy.fft import fft, fftfreq
 
 
 # ==========================================
@@ -17,12 +18,12 @@ def gen_base_square_wave(fs, duration, density=1.0):
     sig = np.zeros(total_samples)
 
     # 转换为采样点数
-    min_on = int(10e-3 * fs)
-    max_on = int(50e-3 * fs)
+    min_on = int(20e-3 * fs)
+    max_on = int(70e-3 * fs)
 
     # density 控制间隔密度
-    min_off = int((30e-3 * fs) / density)
-    max_off = int((80e-3 * fs) / density)
+    min_off = int((50e-3 * fs) / density)
+    max_off = int((100e-3 * fs) / density)
 
     if min_off < 1: min_off = 1
     if max_off <= min_off: max_off = min_off + 1
@@ -95,15 +96,16 @@ def analyze_signals(sig, fs, target_freq=150, wavelet = 'cmor1.5-1'):
     对信号进行STFT和CWT变换，并提取目标频率幅值
     """
     N = len(sig)
-    xf = fft.rfftfreq(N, 1 / fs)
-    yf = fft.rfft(sig)
-    psd_fft = np.abs(yf) ** 2 / N  # 简单的功率谱估计
+    # xf = fft.rfftfreq(N, 1 / fs)
+    # yf = fft.rfft(sig)
+    # psd_fft = np.abs(yf) ** 2 / N  # 简单的功率谱估计
 
 
     # --- 1. STFT (短时傅里叶变换) ---
     # nperseg 决定了频率分辨率。fs=1500, nperseg=256 -> 分辨率约为 5.8Hz
-    window = signal.get_window(('gaussian', 128 / 6), 128, fftbins=False)
-    f_stft, t_stft, Zxx = signal.stft(sig, fs, window=window ,nperseg=128, noverlap=127, nfft= fs, return_onesided=True)
+    # window = signal.get_window(('gaussian', 128 / 6), 128, fftbins=False)
+    window = 'hann'
+    f_stft, t_stft, Zxx = signal.stft(sig, fs, window=window ,nperseg=100, noverlap=99, nfft= fs, return_onesided=True)
 
     # 计算功率谱密度 PSD (取模的平方)
     psd_stft = np.abs(Zxx) ** 2
@@ -124,10 +126,87 @@ def analyze_signals(sig, fs, target_freq=150, wavelet = 'cmor1.5-1'):
     magnitude_avg = np.mean(np.abs(coefficients), axis=0) / 3.16 # 这个倍数是有公式能算出来的
 
     return {
-        'fft': (xf, psd_fft),
+        'fft': (extract_150hz_amplitude(sig,fs)),
         'stft': (t_stft, f_stft, psd_stft, amp_trace_stft),
         'cwt': (np.arange(len(sig)) / fs, freqs_cwt, psd_cwt, magnitude_avg)
     }
+
+
+def extract_150hz_amplitude(signal, sampling_rate, frame_count=50):
+    """
+    将时序信号分割成指定帧数，对每帧进行FFT，提取150Hz分量的幅值
+
+    参数:
+    ----------
+    signal : numpy.ndarray
+        一维时序信号数组
+    sampling_rate : float
+        采样率(Hz)
+    frame_count : int, optional
+        要分割的帧数，默认为50
+
+    返回:
+    ----------
+    numpy.ndarray
+        包含每帧150Hz分量幅值的数组，长度为frame_count
+    """
+
+    # 输入验证
+    if not isinstance(signal, np.ndarray):
+        raise ValueError("输入信号必须为numpy ndarray")
+    if signal.ndim != 1:
+        raise ValueError("输入信号必须为一维数组")
+    if len(signal) < frame_count:
+        raise ValueError("信号长度必须大于或等于帧数")
+    if sampling_rate <= 0:
+        raise ValueError("采样率必须大于0")
+
+    # 计算每帧的长度
+    total_length = len(signal)
+    frame_length = total_length // frame_count
+
+    # 如果信号长度不能被帧数整除，截断尾部多余的部分
+    signal = signal[:frame_length * frame_count]
+
+    # 目标频率
+    target_freq = 150.0  # Hz
+
+    # 初始化结果数组
+    amplitudes = np.zeros(frame_count)
+
+    for i in range(frame_count):
+        # 提取当前帧
+        start_idx = i * frame_length
+        end_idx = (i + 1) * frame_length
+        frame = signal[start_idx:end_idx]
+
+        # 计算FFT
+        fft_result = fft(frame)
+
+        # 获取FFT的频率分量
+        freqs = fftfreq(frame_length, 1 / sampling_rate)
+
+        # 找到最接近150Hz的频率索引
+        # 取正频率部分
+        pos_freqs = freqs[:frame_length // 2]
+        pos_fft = fft_result[:frame_length // 2]
+
+        # 找到最接近150Hz的频率索引
+        freq_idx = np.argmin(np.abs(pos_freqs - target_freq))
+
+        # 获取该频率对应的幅值（取模）
+        amplitude = np.abs(pos_fft[freq_idx])
+
+        # 由于FFT结果是对称的，需要处理幅值缩放
+        # 对于实际信号，需要乘以2（除了直流分量和Nyquist频率）
+        if 0 < freq_idx < len(pos_freqs) - 1:
+            amplitude = 2 * amplitude / frame_length
+        else:
+            amplitude = amplitude / frame_length
+
+        amplitudes[i] = amplitude
+
+    return np.arange(len(amplitudes))/10,amplitudes-2
 
 
 # ==========================================
@@ -137,7 +216,7 @@ def analyze_signals(sig, fs, target_freq=150, wavelet = 'cmor1.5-1'):
 def plot_all_results(base_sig, final_sig, analysis_res, fs, target_freq, wavelet):
     t_stft, f_stft, psd_stft, trace_stft = analysis_res['stft']
     t_cwt, f_cwt, psd_cwt, trace_cwt = analysis_res['cwt']
-    f_fft, psd_fft = analysis_res['fft']
+    t_fft, f_fft = analysis_res['fft']
 
     total_time = len(final_sig) / fs
     t_full = np.arange(len(final_sig)) / fs
@@ -188,8 +267,9 @@ def plot_all_results(base_sig, final_sig, analysis_res, fs, target_freq, wavelet
 
     # === 5. 目标频率幅值提取 (Time) ===
     ax5 = axes[3]
-    ax5.plot(t_stft, trace_stft, label='STFT Trace', color='red', linewidth=1.5)
-    ax5.plot(t_cwt, trace_cwt, label='CWT Trace', color='purple', linewidth=1)
+    ax5.plot(t_stft, trace_stft, label='STFT Trace', color='red', linewidth=1.5, alpha=0.8)
+    ax5.plot(t_cwt, trace_cwt, label='CWT Trace', color='purple', linewidth=1, alpha=0.8)
+    ax5.plot(t_fft, f_fft, label='FFT Trace', color='green', linewidth=1, alpha=0.8,linestyle=':')
     ax5.plot(t_full, base_sig, label='Base (Rect)', color='blue', linewidth=1, alpha=0.2, linestyle='--')
     ax5.set_title(f'5. Extracted Amplitude @ {target_freq}Hz')
     ax5.set_xlabel('Time (s)')
@@ -218,13 +298,13 @@ def plot_all_results(base_sig, final_sig, analysis_res, fs, target_freq, wavelet
 # ==========================================
 if __name__ == "__main__":
     # 参数设定
-    FS = 1000
-    DURATION = 3.0  # 为了绘图清晰，这里生成2秒数据，你可以改为5秒
-    MOD_FREQ = 100
+    FS = 1500
+    DURATION = 5.0  # 为了绘图清晰，这里生成2秒数据，你可以改为5秒
+    MOD_FREQ = 150
     DENSITY = 0.5
     WAVELET = 'cmor1.5-1'
     noise_amp = 2
-    noise_level = 0.4
+    noise_level = 0.3
     mod_amp = 2
 
     # 1. 生成信号
@@ -232,15 +312,31 @@ if __name__ == "__main__":
     # 2. 正弦调制
     sine_sig = gen_sine_modulation(FS, DURATION, MOD_FREQ, amp=mod_amp)
     # 3. 噪声
-    inner_noise_sig = gen_random_noise(FS, DURATION, amp =noise_amp , level=noise_level)
-    outer_noise_sig = gen_random_noise(FS, DURATION, amp=5, level=noise_level)
+    inner_noise_sig = gen_random_noise(FS, DURATION, amp =2 , level=noise_level)
+    outer_noise_sig = gen_random_noise(FS, DURATION, amp=6, level=1)
     # 叠加
-    full_signal = (base_sig + inner_noise_sig) * sine_sig + outer_noise_sig
+    full_signal0 = (base_sig + inner_noise_sig) * sine_sig + outer_noise_sig
 
-    full_signal = full_signal - np.mean(full_signal[0:300])
+    full_signal = full_signal0 - np.mean(full_signal0[0:300])
 
     # 2. 分析信号
     results = analyze_signals(full_signal, FS, target_freq=MOD_FREQ, wavelet=WAVELET)
 
     # 3. 绘图
-    plot_all_results(base_sig+2, full_signal, results, FS, target_freq=MOD_FREQ, wavelet=WAVELET)
+    plot_all_results(base_sig+2, full_signal0, results, FS, target_freq=MOD_FREQ, wavelet=WAVELET)
+
+    # 4. 保存
+    df1 = pd.DataFrame({
+        'time': np.arange(len(full_signal0)) / FS,
+        'channel_simulate':base_sig,
+        'origin_signal': full_signal0,
+        'stft': results['stft'][3][1:],
+        'cwt': results['cwt'][3]
+    })
+
+    # 导出为CSV
+    df1.to_csv('simulate_compare3.csv', index=False)
+
+    df2 = pd.DataFrame({'fft_time':results['fft'][0],
+                        'fft':results['fft'][1],})
+    df2.to_csv('simulate_compare3-fft.csv', index=False)

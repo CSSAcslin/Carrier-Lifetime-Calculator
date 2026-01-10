@@ -66,6 +66,20 @@ class UpdateDialog(QDialog):
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
 
+        url_layout = QHBoxLayout()
+        url_layout.addWidget(QLabel("关于本软件及更新日志："))
+        url_label = QLabel("""
+                        <style>
+                            a { color: blue; text-decoration: none; }
+                            a:hover { color: red; text-decoration: underline; }
+                        </style>
+                        <a href="https://github.com/CSSAcslin/LifeCalor/releases">请点击访问 Github 本项目页面</a>
+                        """)
+        url_label.setOpenExternalLinks(True)
+        url_layout.addWidget(url_label)
+        status_layout.addLayout(url_layout)
+        status_layout.addStretch()
+
         self.tab_widget.addTab(self.status_tab, "更新状态")
 
         # 更新说明选项卡（初始为空，有更新时填充）

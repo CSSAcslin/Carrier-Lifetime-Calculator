@@ -882,6 +882,7 @@ class ImagingData:
     canvas_num: int = field(default=0)
     fps: int = field(default=None)
     is_temporary: bool = field(init=False, default=False)
+    time_point: np.ndarray = None
     timestamp: float = field(init=False, default_factory=time.time)
 
     def __post_init__(self):
@@ -928,6 +929,7 @@ class ImagingData:
             instance.source_format = data_obj.type_processed
             instance.fps = (getattr(data_obj, 'out_processed') or {}).get('fps', 10)
 
+        instance.time_point = data_obj.time_point.copy()
         # 调用后初始化
         instance.__post_init__()
         return instance
@@ -1185,3 +1187,29 @@ class ColorMapManager:
 
     # 其他colormap实现类似，这里省略以节省空间...
     # 实际使用中我们使用matplotlib的实现
+
+
+class PublicEasyMethod:
+    """各种简单的算法v.11.10加入"""
+    @staticmethod
+    def quick_mask(data,**kwargs):
+        '''快速选取简易ROI'''
+        h, w = data.framesize
+        y, x = kwargs.get('center',(h//2,w//2))
+        shape = kwargs.get('shape','circle')
+        size = kwargs.get('size',5)
+
+        if shape == 'square':
+            y_min = max(0, y - (size - 1) // 2)
+            y_max = min(h, y_min + size)
+            x_min = max(0, x - (size - 1) // 2)
+            x_max = min(w, x_min + size)
+            mask = np.zeros((h, w), dtype=bool)
+            mask[y_min:y_max, x_min:x_max] = True
+        elif shape == 'circle':  # circle
+            yy, xx = np.ogrid[:h, :w]
+            mask = (yy - y) ** 2 + (xx - x) ** 2 <= (size-1) ** 2
+        elif shape == 'custom':  # 留给绘制roi
+            pass
+        return mask
+

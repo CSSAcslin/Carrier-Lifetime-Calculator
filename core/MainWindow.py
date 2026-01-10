@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
     detect_bad_frames_auto_signal = pyqtSignal(np.ndarray, float)
     fix_bad_frames_signal = pyqtSignal(object, list, int)
     # cal
-    start_reg_cal_signal = pyqtSignal(object, float, tuple, str, int, str)
+    start_reg_cal_signal = pyqtSignal(object, float, np.ndarray, str)
     start_dis_cal_signal = pyqtSignal(object, float, str, str, int, str, int, bool, int)
     start_heat_cal_signal = pyqtSignal(object, float, str, str, int, str, int, bool, int)
     start_dif_cal_signal = pyqtSignal(object, float, float, float, str)
@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         # 基本信息初始化
-        self.current_version = "0.11.9"  # 当前程序版本
+        self.current_version = "0.11.10"  # 当前程序版本
         self.repo_owner = "CSSAcslin"  # 程序作者
         self.repo_name = "Carrier-Lifetime-Calculator"  # 程序仓库名
         self.PAT = "Bearer <your PAT>"
@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         self.bool_mask = None
         self.idx = None
         self.vector_array = None
+        self.focus_canvas = None
         self.init_params()
 
         # 界面加载
@@ -645,7 +646,7 @@ class MainWindow(QMainWindow):
         multipro_layout.addWidget(QLabel("启用加速："))
         multipro_layout.addWidget(self.multiprocess_check)
         heatmap_layout.addLayout(multipro_layout)
-        heatmap_layout.addWidget(QLabel("建议启用时关闭无用程序,启用后\n其他软件卡顿属正常现象"))
+        heatmap_layout.addWidget(QLabel("建议关闭无用程序,启用后偶尔卡顿属正常现象"))
         cpunum_layout = QHBoxLayout()
         self.cpu_use_input = QSpinBox()
         self.cpu_use_input.setRange(0, 100)
@@ -1365,6 +1366,7 @@ class MainWindow(QMainWindow):
             canvas.mouse_clicked_signal.connect(self._handle_click)
             canvas.current_canvas_signal.connect(self.image_display.set_cursor_id)
             canvas.draw_result_signal.connect(self.draw_result)
+            canvas.plot_series_signal.connect(self.graph_plot.handle_from_image)
             self.roi_pick.addItem(canvas.windowTitle())
 
     '''上面是初始化预设，下面是功能响应'''
@@ -1539,6 +1541,7 @@ class MainWindow(QMainWindow):
                             break
         if data_display is not None:
             self.image_display.add_canvas(data_display)
+            self.focus_canvas = self.image_display.cursor_id
         # else:
         #     QMessageBox.warning(self,"数据错误","数据已经遗失（不可能错误）")
         #     return
@@ -1635,12 +1638,12 @@ class MainWindow(QMainWindow):
 
         return _handle_hover
 
-    def _handle_click(self, x, y):
+    def _handle_click(self, x, y, id):
         """处理图像点击事件"""
         if self.FS_mode_combo.currentIndex() == 1 :  # 区域分析模式 or self.PA_mode_combo.currentIndex() == 0
             self.region_x_input.setValue(x)
             self.region_y_input.setValue(y)
-
+            self.focus_canvas = id
     """编辑设置对话框"""
     def bad_frame_edit_dialog(self):
         """显示坏点处理对话框"""
@@ -1875,6 +1878,8 @@ class MainWindow(QMainWindow):
         if aim_data is None:
             return False
         # 如果线程没了，要开启
+        if not self.is_thread_active("calc_thread"):
+            self.cal_thread_open()
         if not self.calc_thread.isRunning():
             self.calc_thread.start()
         self.update_status('计算进行中...', 'working')
@@ -1883,7 +1888,9 @@ class MainWindow(QMainWindow):
         shape = 'square' if self.region_shape_combo.currentText() == "正方形" else 'circle'
         size = self.region_size_input.value()
         model_type = 'single' if self.model_combo.currentText() == "单指数衰减" else 'double'
-        self.start_reg_cal_signal.emit(aim_data,self.time_step,center,shape,size,model_type)
+        mask = PublicEasyMethod.quick_mask(aim_data, center = center, shape = shape,size = size)
+        self.image_display.display_canvas[self.focus_canvas].add_fast_selection(*center,mask)
+        self.start_reg_cal_signal.emit(aim_data,self.time_step,mask,model_type)
         return None
 
     def distribution_analyze_start(self):
@@ -1892,6 +1899,8 @@ class MainWindow(QMainWindow):
         if aim_data is None:
             return False
         # 如果线程没了，要创建
+        if not self.is_thread_active("calc_thread"):
+            self.cal_thread_open()
         if not self.calc_thread.isRunning():
             self.calc_thread.start()
         self.update_status('长时计算进行中...', 'working')
@@ -1911,6 +1920,8 @@ class MainWindow(QMainWindow):
         aim_data = self.data_selection('data')
         if aim_data is None:
             return False
+        if not self.is_thread_active("calc_thread"):
+            self.cal_thread_open()
         if not self.calc_thread.isRunning():
             self.calc_thread.start()
         self.update_status('传热系数计算进行中...', 'working')
@@ -1935,6 +1946,8 @@ class MainWindow(QMainWindow):
         # 如果线程没了，要创建
         if not self.is_thread_active("calc_thread"):
             self.cal_thread_open()
+        if not self.is_thread_active("calc_thread"):
+            self.cal_thread_open()
 
         self.calc_thread.start()
         self.update_status('计算进行中...', 'working')
@@ -1955,6 +1968,7 @@ class MainWindow(QMainWindow):
         if not self.avi_thread.isRunning():
             self.avi_thread.start()
         self.pre_process_signal.emit(data, self.bg_nums_input.value(), True)
+        return True
 
     def quality_EM_stft(self):
         """stft质量评价"""

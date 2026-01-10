@@ -309,7 +309,7 @@ class LifetimeCalculator:
                 return [np.nan, np.nan, np.nan, np.nan, np.nan], (np.nan, np.nan), np.nan ,phy_signal
 
     @staticmethod
-    def analyze_region(data, time_points, center, shape='square', size=5, model_type='single'):
+    def analyze_region(data, time_points,mask, model_type='single'):
         """
         分析特定区域的载流子寿命
 
@@ -327,23 +327,7 @@ class LifetimeCalculator:
             fit_curve: 拟合曲线
         """
         global lifetime, fit_curve, phy_signal, r_squared
-        y, x = center
-        h, w = data.framesize
         data_type = ((getattr(data,'parameters')if isinstance(data, Data) else getattr(data,'out_processed')) or {}).get('data_type', None)
-
-        # 创建区域掩模
-        if shape == 'square':
-            y_min = max(0, y - (size - 1) // 2)
-            y_max = min(h, y_min + size)
-            x_min = max(0, x - (size - 1) // 2)
-            x_max = min(w, x_min + size)
-            mask = np.zeros((h, w), dtype=bool)
-            mask[y_min:y_max, x_min:x_max] = True
-        elif shape == 'circle':  # circle
-            yy, xx = np.ogrid[:h, :w]
-            mask = (yy - y) ** 2 + (xx - x) ** 2 <= (size-1) ** 2
-        elif shape == 'custom':  # 留给绘制roi
-            pass
 
         # 计算区域平均时间曲线
         region_data = data.data_origin[:, mask]
@@ -368,7 +352,7 @@ class LifetimeCalculator:
                 fit_curve = LifetimeCalculator.double_exponential(
                 time_points[np.argmax(phy_signal):] - time_points[np.argmax(phy_signal)],
                 popt[0], popt[1], popt[2], popt[3], popt[4])
-        return lifetime, fit_curve, mask, phy_signal, r_squared
+        return lifetime, fit_curve, phy_signal, r_squared
 
     @staticmethod
     def apply_custom_kernel(data, kernel_type='smooth',half_size = 2):
@@ -522,8 +506,8 @@ class CalculationThread(QObject):
         logging.info('计算线程已载入')
         self._is_calculating = False
 
-    @pyqtSlot(object, float, tuple, str, int, str)
-    def region_analyze(self,data,time_unit,center,shape,size,model_type):
+    @pyqtSlot(object, float, np.ndarray, str)
+    def region_analyze(self,data,time_unit,mask,model_type):
         """分析选定区域"""
         logging.info("开始计算选区载流子寿命...")
         self.calculating_progress_signal.emit(1, 3)
@@ -532,9 +516,10 @@ class CalculationThread(QObject):
             # 获取参数
             time_points = data.time_point * time_unit
             self.calculating_progress_signal.emit(2, 3)
+
             # 执行区域分析
-            lifetime, fit_curve, mask, phy_signal, r_squared = LifetimeCalculator.analyze_region(
-                data, time_points, center, shape, size, model_type)
+            lifetime, fit_curve, phy_signal, r_squared = LifetimeCalculator.analyze_region(
+                data, time_points,mask, model_type)
 
             self.processed_result.emit(ProcessedData(data.timestamp,
                                                        f'{data.name}@r-lft',
@@ -798,7 +783,6 @@ class CalculationThread(QObject):
         finally:
             self.cal_running_status.emit(False)
             self.stop_thread_signal.emit()  # 目前来说，计算终止也会关闭线程，后续可考虑分开命令
-
 
     def _run_multiprocess_lifetime_cal(self, aim_data, data_type, time_points, model_type, cpu_num):
         """核心：驱动多进程进行 curve_fit"""

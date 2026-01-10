@@ -278,6 +278,7 @@ class ImageDisplayWindow(QMainWindow):
             logging.warning("已达到最大显示区域数量 (4)")
             return False
         canvas_id = len(self.display_canvas)
+        self.cursor_id = canvas_id
         # self.display_data.append(data)
         data.canvas_num = canvas_id
         new_canvas = SubImageDisplayWidget(name=f'{canvas_id}-{data.source_name}',canvas_id=canvas_id,data=data,args_dict=self.tool_parameters,parent=self)
@@ -371,6 +372,7 @@ class ImageDisplayWindow(QMainWindow):
             canvas.clear_vector_line()
             canvas.clear_vector_rect()
             canvas.clear_draw_layer()
+            canvas.clear_fast_selection()
             canvas.reset_view()
 
     def set_tools(self,tool_name:str):
@@ -545,9 +547,10 @@ class ImageDisplayWindow(QMainWindow):
 class SubImageDisplayWidget(QDockWidget):
     """子图像显示部件"""
     mouse_position_signal = pyqtSignal(int, int, int, object,float)
-    mouse_clicked_signal = pyqtSignal(int, int)
+    mouse_clicked_signal = pyqtSignal(int, int, int)
     current_canvas_signal = pyqtSignal(int)
     draw_result_signal = pyqtSignal(str,int,object,dict)
+    plot_series_signal = pyqtSignal(int, int, int, np.ndarray)
     def __init__(self, parent=None,canvas_id = None,name = None, data :ImagingData = None, args_dict :dict = None):
         super().__init__(name, parent)
         self.parent_window = parent
@@ -927,6 +930,12 @@ class SubImageDisplayWidget(QDockWidget):
                     # 获取并发射图像数据
                     self.get_value(y_int, x_int)
 
+                    if self.anchor_active and self.data.is_temporary:
+                        # anchor模式下取值快速绘图
+                        series_value = self.data.image_backup[:, self.y_img, self.x_img]
+                        plot_data = np.column_stack((self.data.time_point, series_value))
+                        self.plot_series_signal.emit(self.id, self.x_img, self.y_img, plot_data)
+
                     return
 
             else: # 无工具选中的纯单机模式
@@ -934,7 +943,7 @@ class SubImageDisplayWidget(QDockWidget):
                 x, y = int(pos.x()), int(pos.y())
                 h, w = self.current_image.shape[0],self.current_image.shape[1]
                 if 0 <= x < w and 0 <= y < h:
-                    self.mouse_clicked_signal.emit(x, y)
+                    self.mouse_clicked_signal.emit(x, y,self.id)
 
         super(QGraphicsView, self.graphics_view).mousePressEvent(event)
 
@@ -1386,6 +1395,66 @@ class SubImageDisplayWidget(QDockWidget):
             self.max_label = self.scene.addText(f"max={self.max_value:.1f}",font=font)
             self.max_label.setPos(w_point + width-8, h_point -5-size)
             self.max_label.setDefaultTextColor(Qt.black)
+
+    def add_fast_selection(self, y: int, x: int, mask: np.ndarray, color=None, auto_clear=True):
+        """
+        以独立图元形式显示布尔蒙版区域和中心点
+        :param x: 蒙版中心的 x 坐标
+        :param y: 蒙版中心的 y 坐标
+        :param mask: 二维布尔 ndarray
+        :param color: (可选) 指定颜色 QColor，默认为 vector_color
+        :param auto_clear: 是否自动清除上一次调用的蒙版显示（默认为 True）
+        """
+        # 1. 初始化存储列表（如果没有的话）
+        if not hasattr(self, 'mask_overlay_items'):
+            self.mask_overlay_items = []
+
+        # 2. 如果需要，清除旧的蒙版显示
+        if auto_clear:
+            self.clear_fast_selection()
+
+        # 3. 准备颜色
+        c = color if color else QColor(self.vector_color)
+
+        # 4. 创建 BGRA 缓冲区
+        h, w = mask.shape
+        # 初始化全透明 buffer
+        buffer = np.zeros((h, w, 4), dtype=np.uint8)
+
+        # 4.1 填充蒙版区域 (半透明)
+        # 这里的 mask 尺寸即图像尺寸，直接映射
+        # Qt ARGB32 (Little Endian) -> B G R A
+        buffer[mask] = [c.blue(), c.green(), c.red(), 120]
+
+        # 4.2 标记中心点像素 (红色，不透明)
+        # 确保坐标在图像范围内
+        if 0 <= x < w and 0 <= y < h:
+            buffer[y, x] = [0, 0, 255, 150]  # Red=255, Alpha=255 (BGRA顺序: B=0, G=0, R=255, A=255)
+
+        # 5. 生成 QImage 和 QPixmap
+        # copy() 是必须的，防止 buffer 被垃圾回收导致图像花屏
+        qimg = QImage(buffer.data, w, h, w * 4, QImage.Format_ARGB32).copy()
+        pixmap = QPixmap.fromImage(qimg)
+
+        # 6. 创建图元并添加到场景
+        mask_item = QGraphicsPixmapItem(pixmap)
+
+        # 关键修正：因为 mask 也就是整张图的大小，所以位置直接设为 (0,0)
+        mask_item.setPos(0, 0)
+
+        # 设置层级 (ZValue)，保证覆盖在数据层之上
+        mask_item.setZValue(50)
+
+        self.scene.addItem(mask_item)
+        self.mask_overlay_items.append(mask_item)
+
+    def clear_fast_selection(self):
+        """清所有临时显示的蒙版图元"""
+        if hasattr(self, 'mask_overlay_items') and self.mask_overlay_items:
+            for item in self.mask_overlay_items:
+                if item.scene() == self.scene:
+                    self.scene.removeItem(item)
+            self.mask_overlay_items.clear()
 
     def get_value(self,y,x):
         value = self.current_image[y,x]
